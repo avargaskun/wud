@@ -59,5 +59,8 @@ docker run -d --name trueforge_radarr --label 'wud.watch=true' --label 'wud.tag.
 # QUAY
 docker run -d --name quay_prometheus --label 'wud.watch=true' --label 'wud.tag.include=^v\\d+\\.\\d+\\.\\d+$' quay.io/prometheus/prometheus:v2.52.0
 
-echo "✅ Test containers started (10 containers)"
+# Docker Compose Label
+docker run -d --name hub_nginx_compose --label 'wud.watch=true' --label 'wud.compose.file=/tmp/docker-compose.yml' nginx:1.20-alpine
+
+echo "✅ Test containers started (11 containers)"
 docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_)"

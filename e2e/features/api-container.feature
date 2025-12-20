@@ -4,7 +4,7 @@ Feature: WUD Container API Exposure
     When I GET /api/containers
     Then response code should be 200
     And response body should be valid json
-    And response body path $ should be of type array with length 10
+    And response body path $ should be of type array with length 11
 
   # Test one representative container per registry type + update pattern
   Scenario Outline: WUD must handle different registry types and update patterns
@@ -32,6 +32,7 @@ Feature: WUD Container API Exposure
       | 7     | hub.public     | hub_traefik_245          | https://registry-1.docker.io/v2                         | library/traefik                     | 2.4.5              | 3.5.4              | true            | Hub semver major update     |
       | 8     | lscr.private   | lscr_radarr              | https://lscr.io/v2                                      | linuxserver/radarr                  | 5.14.0.9383-ls245  | 5.28.0.10274-ls286 | true            | LSCR complex semver update  |
       | 9     | quay.public    | quay_prometheus          | https://quay.io/v2                                      | prometheus/prometheus               | v2.52.0            | v3.7.3             | true            | Quay semver major update    |
+      | 10    | hub.public     | hub_nginx_compose        | https://registry-1.docker.io/v2                         | library/nginx                       | 1.20-alpine        | 1.29-alpine        | true            | Hub alpine with compose label|
 
   # Test detailed container inspection (semver)
   Scenario: WUD must provide detailed container information for semver containers
