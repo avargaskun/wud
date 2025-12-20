@@ -158,7 +158,7 @@ function getTagCandidates(container, tags, logContainer) {
         // Non semver tag -> do not propose any other registry tag
         filteredTags = [];
     }
-    throw new Error(`Tag is Neither Semver or not-Semver ${container.image.tag.value}`);
+    return filteredTags;
 }
 
 function normalizeContainer(container) {

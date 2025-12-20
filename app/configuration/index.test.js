@@ -34,12 +34,18 @@ test('getWatcherConfiguration should return configured watchers when overridden'
     });
 });
 
-test('getTriggerConfigurations should return empty object by default', () => {
+test('getTriggerConfigurations should return default label trigger by default', () => {
     delete configuration.wudEnvVars.WUD_TRIGGER_TRIGGER1_X;
     delete configuration.wudEnvVars.WUD_TRIGGER_TRIGGER1_Y;
     delete configuration.wudEnvVars.WUD_TRIGGER_TRIGGER2_X;
     delete configuration.wudEnvVars.WUD_TRIGGER_TRIGGER2_Y;
-    expect(configuration.getTriggerConfigurations()).toStrictEqual({});
+    expect(configuration.getTriggerConfigurations()).toStrictEqual({
+        dockercompose: {
+            labels: {
+                mode: 'simple',
+            },
+        },
+    });
 });
 
 test('getTriggerConfigurations should return configured triggers when overridden', () => {
@@ -50,6 +56,11 @@ test('getTriggerConfigurations should return configured triggers when overridden
     expect(configuration.getTriggerConfigurations()).toStrictEqual({
         trigger1: { x: 'x', y: 'y' },
         trigger2: { x: 'x', y: 'y' },
+        dockercompose: {
+            labels: {
+                mode: 'simple',
+            },
+        },
     });
 });
 

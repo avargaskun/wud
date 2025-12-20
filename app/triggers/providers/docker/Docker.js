@@ -383,9 +383,10 @@ class Docker extends Trigger {
     /**
      * Update the container.
      * @param container the container
+     * @param configuration the configuration (optional)
      * @returns {Promise<void>}
      */
-    async trigger(container) {
+    async trigger(container, configuration = this.configuration) {
         // Child logger for the container to process
         const logContainer = this.log.child({ container: fullName(container) });
 
@@ -423,7 +424,7 @@ class Docker extends Trigger {
             const currentContainerState = currentContainerSpec.State;
 
             // Try to remove previous pulled images
-            if (this.configuration.prune) {
+            if (configuration.prune) {
                 await this.pruneImages(
                     dockerApi,
                     registry,
@@ -436,7 +437,7 @@ class Docker extends Trigger {
             await this.pullImage(dockerApi, auth, newImage, logContainer);
 
             // Dry-run?
-            if (this.configuration.dryrun) {
+            if (configuration.dryrun) {
                 logContainer.info(
                     'Do not replace the existing container because dry-run mode is enabled',
                 );
@@ -495,7 +496,7 @@ class Docker extends Trigger {
                 }
 
                 // Remove previous image (only when updateKind is tag)
-                if (this.configuration.prune) {
+                if (configuration.prune) {
                     const tagOrDigestToRemove =
                         container.updateKind.kind === 'tag'
                             ? container.image.tag.value

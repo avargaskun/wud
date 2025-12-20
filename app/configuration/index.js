@@ -75,7 +75,16 @@ function getWatcherConfigurations() {
  * Get trigger configurations.
  */
 function getTriggerConfigurations() {
-    return get('wud.trigger', wudEnvVars);
+    const triggerConfigurations = get('wud.trigger', wudEnvVars);
+    if (!triggerConfigurations.dockercompose) {
+        triggerConfigurations.dockercompose = {};
+    }
+    if (!triggerConfigurations.dockercompose.labels) {
+        triggerConfigurations.dockercompose.labels = {
+            mode: 'simple',
+        };
+    }
+    return triggerConfigurations;
 }
 
 /**

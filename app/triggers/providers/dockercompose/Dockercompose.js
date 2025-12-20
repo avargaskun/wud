@@ -1,8 +1,12 @@
 const fs = require('fs/promises');
 const path = require('path');
 const yaml = require('yaml');
+const { Mutex } = require('async-mutex');
 const Docker = require('../docker/Docker');
 const { getState } = require('../../../registry');
+
+// Static mutex map to handle concurrent access to compose files
+const fileMutexes = new Map();
 
 /**
  * Return true if the container belongs to the compose file.
@@ -45,11 +49,11 @@ class Dockercompose extends Docker {
     }
 
     async initTrigger() {
-        // Force mode=batch to avoid docker-compose concurrent operations
-        this.configuration.mode = 'batch';
-
-        // Check default docker-compose file exists if specified
+        // Force mode=batch only if using global file mode
         if (this.configuration.file) {
+            this.configuration.mode = 'batch';
+
+            // Check default docker-compose file exists if specified
             try {
                 await fs.access(this.configuration.file);
             } catch (e) {
@@ -62,14 +66,49 @@ class Dockercompose extends Docker {
     }
 
     /**
+     * Check if container must trigger.
+     * Overrides Trigger.mustTrigger to support implicit label-based triggering.
+     * @param containerResult
+     * @returns {boolean}
+     */
+    mustTrigger(containerResult) {
+        // Standard check (explicit triggers)
+        const explicitTrigger = super.mustTrigger(containerResult);
+        if (explicitTrigger) {
+            return true;
+        }
+
+        // Only default implicit label trigger if we are in the default "labels" mode (no file configured)
+        // If file is configured, we are in legacy mode and should strictly follow explicit rules
+        if (this.configuration.file) {
+            return false;
+        }
+
+        // Check for implicit label trigger
+        const composeFileLabel = this.configuration.composeFileLabel || 'wud.compose.file';
+        if (containerResult.labels && containerResult.labels[composeFileLabel]) {
+            // Check for explicit auto disable
+            const autoLabel = 'wud.compose.auto';
+            if (containerResult.labels[autoLabel] &&
+                containerResult.labels[autoLabel].toLowerCase() === 'false') {
+                return false;
+            }
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
      * Get the compose file path for a specific container.
      * First checks for a label, then falls back to default configuration.
      * @param container
+     * @param configuration
      * @returns {string|null}
      */
-    getComposeFileForContainer(container) {
+    getComposeFileForContainer(container, configuration = this.configuration) {
         // Check if container has a compose file label
-        const composeFileLabel = this.configuration.composeFileLabel;
+        const composeFileLabel = configuration.composeFileLabel || 'wud.compose.file';
         if (container.labels && container.labels[composeFileLabel]) {
             const labelValue = container.labels[composeFileLabel];
             // Convert relative paths to absolute paths
@@ -77,7 +116,7 @@ class Dockercompose extends Docker {
         }
 
         // Fall back to default configuration file
-        return this.configuration.file || null;
+        return configuration.file || null;
     }
 
     /**
@@ -86,7 +125,64 @@ class Dockercompose extends Docker {
      * @returns {Promise<void>}
      */
     async trigger(container) {
-        return this.triggerBatch([container]);
+        // Determine effective configuration
+        const composeFileLabel = this.configuration.composeFileLabel || 'wud.compose.file';
+        const hasComposeLabel = container.labels && container.labels[composeFileLabel];
+
+        if (hasComposeLabel) {
+            // "Simple" mode with label-derived configuration
+            const labels = container.labels;
+
+            // Helper to parse boolean labels
+            const getBoolLabel = (key, def) => {
+                if (labels[key] !== undefined) {
+                    return labels[key].toLowerCase() === 'true';
+                }
+                return def;
+            };
+
+            const mergedConfiguration = {
+                ...this.configuration,
+                file: this.getComposeFileForContainer(container),
+                dryrun: getBoolLabel('wud.compose.dryrun', this.configuration.dryrun),
+                prune: getBoolLabel('wud.compose.prune', this.configuration.prune),
+                backup: getBoolLabel('wud.compose.backup', this.configuration.backup),
+            };
+
+            const composeFile = mergedConfiguration.file;
+
+            // Filter on containers running on local host
+            const watcher = this.getWatcher(container);
+            if (watcher.dockerApi.modem.socketPath === '') {
+                this.log.warn(
+                    `Cannot update container ${container.name} because not running on local host`,
+                );
+                return;
+            }
+
+            // Get or create mutex for this file
+            if (!fileMutexes.has(composeFile)) {
+                fileMutexes.set(composeFile, new Mutex());
+            }
+            const mutex = fileMutexes.get(composeFile);
+
+            return await mutex.runExclusive(async () => {
+                try {
+                    await fs.access(composeFile);
+                } catch (e) {
+                    this.log.warn(
+                        `Compose file ${composeFile} for container ${container.name} does not exist`,
+                    );
+                    return;
+                }
+
+                await this.processComposeFile(composeFile, [container], mergedConfiguration);
+            });
+
+        } else {
+            // Fallback to legacy batch mode
+            return this.triggerBatch([container]);
+        }
     }
 
     /**
@@ -142,12 +238,13 @@ class Dockercompose extends Docker {
      * Process a specific compose file with its associated containers.
      * @param composeFile
      * @param containers
+     * @param configuration Optional configuration override
      * @returns {Promise<void>}
      */
-    async processComposeFile(composeFile, containers) {
+    async processComposeFile(composeFile, containers, configuration = this.configuration) {
         this.log.info(`Processing compose file: ${composeFile}`);
         
-        const compose = await this.getComposeFileAsObject(composeFile);
+        const compose = await this.getComposeFileAsObject(composeFile, configuration);
 
         // Filter containers that belong to this compose file
         const containersFiltered = containers.filter((container) =>
@@ -169,19 +266,19 @@ class Dockercompose extends Docker {
             .filter((map) => map !== undefined);
 
         // Dry-run?
-        if (this.configuration.dryrun) {
+        if (configuration.dryrun) {
             this.log.info(
                 `Do not replace existing docker-compose file ${composeFile} (dry-run mode enabled)`,
             );
         } else {
             // Backup docker-compose file
-            if (this.configuration.backup) {
+            if (configuration.backup) {
                 const backupFile = `${composeFile}.back`;
                 await this.backup(composeFile, backupFile);
             }
 
             // Read the compose file as a string
-            let composeFileStr = (await this.getComposeFile(composeFile)).toString();
+            let composeFileStr = (await this.getComposeFile(composeFile, configuration)).toString();
 
             // Replace all versions
             currentVersionToUpdateVersionArray.forEach(
@@ -197,7 +294,7 @@ class Dockercompose extends Docker {
         // Update all containers
         // (super.notify will take care of the dry-run mode for each container as well)
         await Promise.all(
-            containersFiltered.map((container) => super.trigger(container)),
+            containersFiltered.map((container) => super.trigger(container, configuration)),
         );
     }
 
@@ -276,10 +373,11 @@ class Dockercompose extends Docker {
     /**
      * Read docker-compose file as a buffer.
      * @param file - Optional file path, defaults to configuration file
+     * @param configuration - Optional configuration object
      * @returns {Promise<any>}
      */
-    getComposeFile(file = null) {
-        const filePath = file || this.configuration.file;
+    getComposeFile(file = null, configuration = this.configuration) {
+        const filePath = file || configuration.file;
         try {
             return fs.readFile(filePath);
         } catch (e) {
@@ -293,13 +391,14 @@ class Dockercompose extends Docker {
     /**
      * Read docker-compose file as an object.
      * @param file - Optional file path, defaults to configuration file
+     * @param configuration - Optional configuration object
      * @returns {Promise<any>}
      */
-    async getComposeFileAsObject(file = null) {
+    async getComposeFileAsObject(file = null, configuration = this.configuration) {
         try {
-            return yaml.parse((await this.getComposeFile(file)).toString());
+            return yaml.parse((await this.getComposeFile(file, configuration)).toString());
         } catch (e) {
-            const filePath = file || this.configuration.file;
+            const filePath = file || configuration.file;
             this.log.error(
                 `Error when parsing the docker-compose yaml file ${filePath} (${e.message})`,
             );
