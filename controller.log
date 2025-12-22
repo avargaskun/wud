@@ -1,0 +1,37 @@
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"level":30,"msg":"WUD is starting (version = unknown)","time":"2025-12-22T16:19:29.924Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"store","level":30,"msg":"Load store from (.store/wud.json)","time":"2025-12-22T16:19:29.925Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"prometheus","level":30,"msg":"Init Prometheus module","time":"2025-12-22T16:19:29.945Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"level":20,"msg":"Start container metrics interval","time":"2025-12-22T16:19:29.949Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry","level":30,"msg":"Register all components of kind registry for provider ecr","time":"2025-12-22T16:19:29.950Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.ecr.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.055Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry","level":30,"msg":"Register all components of kind registry for provider gcr","time":"2025-12-22T16:19:30.055Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.gcr.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.057Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry","level":30,"msg":"Register all components of kind registry for provider ghcr","time":"2025-12-22T16:19:30.057Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.ghcr.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.058Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry","level":30,"msg":"Register all components of kind registry for provider hub","time":"2025-12-22T16:19:30.058Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.hub.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.060Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry","level":30,"msg":"Register all components of kind registry for provider quay","time":"2025-12-22T16:19:30.060Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.quay.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.061Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Register with configuration {\"cron\":\"*/10 * * * * *\",\"socket\":\"/var/run/docker.sock\",\"port\":2375,\"jitter\":60000,\"watchbydefault\":true,\"watchall\":false,\"watchevents\":true,\"watchatstart\":true}","time":"2025-12-22T16:19:30.485Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Cron scheduled (*/10 * * * * *)","time":"2025-12-22T16:19:30.485Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry","level":30,"msg":"No authentication configured => Allow anonymous access","time":"2025-12-22T16:19:30.516Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"authentication.anonymous.anonymous","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.518Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"api","level":20,"msg":"API/UI enabled => Start Http listener on port 3000","time":"2025-12-22T16:19:30.519Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"level":40,"msg":"Anonymous authentication is enabled; please make sure that the app is not exposed to unsecure networks","time":"2025-12-22T16:19:30.523Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"api","level":30,"msg":"Server listening on port 3000 (HTTP)","time":"2025-12-22T16:19:30.528Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Cron started (*/10 * * * * *)","time":"2025-12-22T16:19:31.517Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Listening to docker events","time":"2025-12-22T16:19:31.531Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":40,"msg":"Error when trying to get the list of the containers to watch (connect EACCES /var/run/docker.sock)","time":"2025-12-22T16:19:31.535Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Cron finished (0 containers watched, 0 errors, 0 available updates)","time":"2025-12-22T16:19:31.535Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":40,"msg":"Unable to listen to Docker events [connect EACCES /var/run/docker.sock]","time":"2025-12-22T16:19:31.536Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":20,"err":{"message":"connect EACCES /var/run/docker.sock","name":"Error","stack":"Error: connect EACCES /var/run/docker.sock\n    at PipeConnectWrap.afterConnect [as oncomplete] (node:net:1637:16)","code":"EACCES"},"msg":"connect EACCES /var/run/docker.sock","time":"2025-12-22T16:19:31.536Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.628Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.ecr.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.630Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.gcr.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.630Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.ghcr.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.630Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.hub.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.630Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"registry.quay.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.630Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"authentication.anonymous.anonymous","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.630Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Cron started (*/10 * * * * *)","time":"2025-12-22T16:20:14.142Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":40,"msg":"Error when trying to get the list of the containers to watch (connect EACCES /var/run/docker.sock)","time":"2025-12-22T16:20:14.145Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8202,"component":"watcher.docker.agent","level":30,"msg":"Cron finished (0 containers watched, 0 errors, 0 available updates)","time":"2025-12-22T16:20:14.145Z","v":0}

@@ -1,0 +1,27 @@
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"level":30,"msg":"WUD is starting (version = unknown)","time":"2025-12-22T16:19:29.941Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"store","level":30,"msg":"Load store from (.store/wud.json)","time":"2025-12-22T16:19:29.942Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"prometheus","level":30,"msg":"Init Prometheus module","time":"2025-12-22T16:19:29.962Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"level":20,"msg":"Start container metrics interval","time":"2025-12-22T16:19:29.967Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":30,"msg":"Register all components of kind registry for provider ecr","time":"2025-12-22T16:19:29.968Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.ecr.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.074Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":30,"msg":"Register all components of kind registry for provider gcr","time":"2025-12-22T16:19:30.074Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.gcr.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.075Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":30,"msg":"Register all components of kind registry for provider ghcr","time":"2025-12-22T16:19:30.076Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.ghcr.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.077Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":30,"msg":"Register all components of kind registry for provider hub","time":"2025-12-22T16:19:30.077Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.hub.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.078Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":30,"msg":"Register all components of kind registry for provider quay","time":"2025-12-22T16:19:30.079Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.quay.public","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.080Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":40,"msg":"Some watchers failed to register (Error when registering component docker (\"type\" is not allowed))","time":"2025-12-22T16:19:30.527Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":20,"err":{"message":"Error when registering component docker (\"type\" is not allowed)","name":"Error","stack":"Error: Error when registering component docker (\"type\" is not allowed)\n    at registerComponent (/app/app/registry/index.js:119:15)\n    at async Promise.all (index 0)\n    at async registerWatchers (/app/app/registry/index.js:191:9)\n    at async Object.init (/app/app/registry/index.js:363:5)\n    at async main (/app/app/index.js:18:5)"},"msg":"Error when registering component docker (\"type\" is not allowed)","time":"2025-12-22T16:19:30.528Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry","level":30,"msg":"No authentication configured => Allow anonymous access","time":"2025-12-22T16:19:30.528Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"authentication.anonymous.anonymous","level":30,"msg":"Register with configuration {}","time":"2025-12-22T16:19:30.529Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"api","level":20,"msg":"API/UI enabled => Start Http listener on port 3001","time":"2025-12-22T16:19:30.530Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"level":40,"msg":"Anonymous authentication is enabled; please make sure that the app is not exposed to unsecure networks","time":"2025-12-22T16:19:30.534Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"api","level":30,"msg":"Server listening on port 3001 (HTTP)","time":"2025-12-22T16:19:30.541Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.ecr.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.628Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.gcr.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.629Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.ghcr.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.629Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.hub.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.629Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"registry.quay.public","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.629Z","v":0}
+{"name":"whats-up-docker","hostname":"devbox","pid":8201,"component":"authentication.anonymous.anonymous","level":30,"msg":"Deregister component","time":"2025-12-22T16:19:44.629Z","v":0}

@@ -551,6 +551,7 @@ describe('Docker Watcher', () => {
 
     describe('Version Finding', () => {
         test('should find new version using registry', async () => {
+            await docker.register('watcher', 'docker', 'test', {});
             const container = {
                 image: {
                     registry: { name: 'hub' },
@@ -575,6 +576,7 @@ describe('Docker Watcher', () => {
         });
 
         test('should handle unsupported registry', async () => {
+            await docker.register('watcher', 'docker', 'test', {});
             const container = {
                 image: {
                     registry: { name: 'unknown' },
@@ -593,6 +595,7 @@ describe('Docker Watcher', () => {
         });
 
         test('should handle digest watching with v2 manifest', async () => {
+            await docker.register('watcher', 'docker', 'test', {});
             const container = {
                 image: {
                     id: 'image123',
@@ -660,6 +663,7 @@ describe('Docker Watcher', () => {
         });
 
         test('should handle tag candidates with semver', async () => {
+            await docker.register('watcher', 'docker', 'test', {});
             const container = {
                 includeTags: '^v\\d+',
                 excludeTags: 'beta',
@@ -693,6 +697,7 @@ describe('Docker Watcher', () => {
         });
 
         test('should filter tags with different number of semver parts', async () => {
+            await docker.register('watcher', 'docker', 'test', {});
             const container = {
                 image: {
                     registry: { name: 'hub' },
