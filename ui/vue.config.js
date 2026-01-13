@@ -2,6 +2,7 @@ const { defineConfig } = require("@vue/cli-service");
 const webpack = require("webpack");
 
 module.exports = defineConfig({
+  parallel: false, // Disable parallel build to avoid Thread Loader errors
   devServer: {
     proxy: "http://localhost:3000",
   },
@@ -15,6 +16,18 @@ module.exports = defineConfig({
       short_name: "WUD",
       background_color: "#00355E",
     },
+  },
+
+  chainWebpack: config => {
+    config.module
+      .rule('ts')
+      .test(/\.ts$/)
+      .use('ts-loader')
+      .loader('ts-loader')
+      .options({
+        appendTsSuffixTo: [/\.vue$/],
+        transpileOnly: true
+      });
   },
 
   configureWebpack: {

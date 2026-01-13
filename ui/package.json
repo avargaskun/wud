@@ -23,7 +23,6 @@
   "devDependencies": {
     "@babel/core": "7.26.0",
     "@babel/eslint-parser": "7.25.9",
-    "@babel/preset-env": "^7.20.0",
     "@fontsource/roboto": "5.1.0",
     "@mdi/font": "7.4.47",
     "@vue/cli-plugin-babel": "5.0.8",
@@ -32,6 +31,7 @@
     "@vue/cli-plugin-router": "5.0.8",
     "@vue/cli-service": "5.0.8",
     "@vue/eslint-config-prettier": "9.0.0",
+    "@babel/preset-env": "^7.20.0",
     "@vue/test-utils": "^2.4.0",
     "@vue/vue3-jest": "^27.0.0",
     "babel-jest": "^27.5.1",
