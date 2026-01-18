@@ -63,6 +63,10 @@ export function registerContainerAdded(handler) {
     eventEmitter.on(WUD_CONTAINER_ADDED, handler);
 }
 
+export function unregisterContainerAdded(handler) {
+    eventEmitter.removeListener(WUD_CONTAINER_ADDED, handler);
+}
+
 /**
  * Emit container added.
  * @param containerUpdated
@@ -79,6 +83,10 @@ export function registerContainerUpdated(handler) {
     eventEmitter.on(WUD_CONTAINER_UPDATED, handler);
 }
 
+export function unregisterContainerUpdated(handler) {
+    eventEmitter.removeListener(WUD_CONTAINER_UPDATED, handler);
+}
+
 /**
  * Emit container removed.
  * @param containerRemoved
@@ -93,6 +101,10 @@ export function emitContainerRemoved(containerRemoved) {
  */
 export function registerContainerRemoved(handler) {
     eventEmitter.on(WUD_CONTAINER_REMOVED, handler);
+}
+
+export function unregisterContainerRemoved(handler) {
+    eventEmitter.removeListener(WUD_CONTAINER_REMOVED, handler);
 }
 
 export function emitWatcherStart(watcher) {

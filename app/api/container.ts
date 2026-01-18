@@ -3,6 +3,7 @@ import express from 'express';
 import nocache from 'nocache';
 import * as storeContainer from '../store/container';
 import * as registry from '../registry';
+import * as agentClient from '../agent/client';
 import { getServerConfiguration  } from '../configuration';
 import { mapComponentsToList  } from './component';
 import Trigger from '../triggers/providers/Trigger';
@@ -169,6 +170,26 @@ async function runTrigger(req, res) {
 
     const containerToTrigger = storeContainer.getContainer(id);
     if (containerToTrigger) {
+        if (containerToTrigger.agent) {
+            const allowed = ['docker', 'dockercompose'];
+            if (allowed.includes(triggerType.toLowerCase())) {
+                const client = agentClient.getClient(containerToTrigger.agent);
+                if (client) {
+                    try {
+                        await client.runTrigger(id, triggerType, triggerName);
+                        res.status(200).json({});
+                    } catch (e) {
+                        log.error(
+                            `Error when running remote trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
+                        );
+                        res.status(500).json({
+                            error: `Error when running remote trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
+                        });
+                    }
+                    return;
+                }
+            }
+        }
         const triggerToRun = getTriggers()[`${triggerType}.${triggerName}`];
         if (triggerToRun) {
             try {

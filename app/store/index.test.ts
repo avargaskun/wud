@@ -22,6 +22,7 @@ jest.mock('../configuration', () => ({
         path: '/test/store',
         file: 'test.json',
     })),
+    isAgent: jest.fn(() => false),
 }));
 
 jest.mock('./app', () => ({

@@ -4,7 +4,7 @@ import Loki from 'lokijs';
 import fs from 'fs';
 import logger from '../log';
 const log = logger.child({ component: 'store' });
-import { getStoreConfiguration  } from '../configuration';
+import { getStoreConfiguration, isAgent } from '../configuration';
 
 import * as app from './app';
 import * as container from './container';
@@ -25,9 +25,13 @@ if (configurationToValidate.error) {
 const configuration = configurationToValidate.value;
 
 // Loki DB
-const db = new Loki(`${configuration.path}/${configuration.file}`, {
-    autosave: true,
-});
+const dbOptions = {
+    autosave: !isAgent(),
+};
+if (isAgent()) {
+    dbOptions.persistenceMethod = 'memory';
+}
+const db = new Loki(`${configuration.path}/${configuration.file}`, dbOptions);
 
 function createCollections() {
     app.createCollections(db);

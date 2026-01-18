@@ -65,11 +65,43 @@ export function getVersion() {
 export function getLogLevel() {
     return wudEnvVars.WUD_LOG_LEVEL || 'info';
 }
+
+export function isAgent() {
+    return process.argv.includes('--agent');
+}
+
 /**
  * Get watcher configuration.
  */
 export function getWatcherConfigurations() {
     return get('wud.watcher', wudEnvVars);
+}
+
+/**
+ * Get agent configurations (Controller side).
+ */
+export function getAgentConfigurations() {
+    return get('wud.agent', wudEnvVars);
+}
+
+/**
+ * Get agent mode configuration (Agent side).
+ */
+export function getAgentModeConfiguration() {
+    let secret = wudEnvVars.WUD_AGENT_SECRET;
+    const secretFile = wudEnvVars.WUD_AGENT_SECRET_FILE;
+    if (!secret && secretFile) {
+        try {
+            secret = fs.readFileSync(secretFile, 'utf-8').trim();
+        } catch (e) {
+            // Ignore error, will fail later
+        }
+    }
+    const configurationFromEnv = {
+        secret,
+    };
+    // If not in agent mode, this might be missing, which is fine
+    return configurationFromEnv;
 }
 
 /**

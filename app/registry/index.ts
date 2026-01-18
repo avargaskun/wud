@@ -11,7 +11,9 @@ import { getWatcherConfigurations,
     getTriggerConfigurations,
     getRegistryConfigurations,
     getAuthenticationConfigurations,
+    isAgent,
  } from '../configuration';
+import * as agentClient from '../agent/client';
 
 /**
  * Registry state.
@@ -164,6 +166,10 @@ async function registerWatchers() {
     let watchersToRegister = [];
     try {
         if (Object.keys(configurations).length === 0) {
+            if (isAgent()) {
+                log.error('Agent mode requires at least 1 watcher configured.');
+                process.exit(1);
+            }
             log.info(
                 'No Watcher configured => Init a default one (Docker with default options)',
             );
@@ -202,6 +208,17 @@ async function registerWatchers() {
  */
 async function registerTriggers() {
     const configurations = getTriggerConfigurations();
+    if (isAgent()) {
+        const allowed = ['docker', 'dockercompose'];
+        Object.keys(configurations).forEach((provider) => {
+            if (!allowed.includes(provider.toLowerCase())) {
+                log.warn(
+                    `Trigger type ${provider} is not supported in Agent mode. Ignored.`,
+                );
+                delete configurations[provider];
+            }
+        });
+    }
     try {
         await registerComponents(
             'trigger',
@@ -358,14 +375,21 @@ export async function init() {
     // Register triggers
     await registerTriggers();
 
-    // Register registries
-    await registerRegistries();
+    if (!isAgent()) {
+        // Register registries
+        await registerRegistries();
+    }
 
     // Register watchers
     await registerWatchers();
 
-    // Register authentications
-    await registerAuthentications();
+    if (!isAgent()) {
+        // Init Agent Clients
+        await agentClient.init();
+
+        // Register authentications
+        await registerAuthentications();
+    }
 
     // Gracefully exit when possible
     process.on('SIGINT', deregisterAll);

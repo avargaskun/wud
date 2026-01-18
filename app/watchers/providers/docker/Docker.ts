@@ -24,6 +24,7 @@ import { wudWatch,
     wudTriggerInclude,
     wudTriggerExclude,
  } from './label';
+import { isAgent } from '../../../configuration';
 import * as storeContainer from '../../../store/container';
 import log from '../../../log';
 import Component from '../../../registry/Component';
@@ -44,7 +45,7 @@ const DEBOUNCED_WATCH_CRON_MS = 5000;
  * Return all supported registries
  * @returns {*}
  */
-function getRegistries() {
+export function getRegistries() {
     return registry.getState().registry;
 }
 
@@ -54,7 +55,7 @@ function getRegistries() {
  * @param tags
  * @returns {*}
  */
-function getTagCandidates(container, tags, logContainer) {
+export function getTagCandidates(container, tags, logContainer) {
     let filteredTags = tags;
 
     // Match include tag regex
@@ -163,7 +164,7 @@ function getTagCandidates(container, tags, logContainer) {
     return filteredTags;
 }
 
-function normalizeContainer(container) {
+export function normalizeContainer(container) {
     const containerWithNormalizedImage = container;
     const registryProvider = Object.values(getRegistries()).find((provider) =>
         provider.match(container.image),
@@ -185,7 +186,7 @@ function normalizeContainer(container) {
  * Get the Docker Registry by name.
  * @param registryName
  */
-function getRegistry(registryName) {
+export function getRegistry(registryName) {
     const registryToReturn = getRegistries()[registryName];
     if (!registryToReturn) {
         throw new Error(`Unsupported Registry ${registryName}`);
@@ -683,8 +684,12 @@ class Docker extends Component {
      */
 
     async findNewVersion(container, logContainer) {
-        const registryProvider = getRegistry(container.image.registry.name);
         const result = { tag: container.image.tag.value };
+        if (isAgent()) {
+            return result;
+        }
+        const registryProvider = getRegistry(container.image.registry.name);
+
         if (!registryProvider) {
             logContainer.error(
                 `Unsupported registry (${container.image.registry.name})`,
@@ -731,7 +736,7 @@ class Docker extends Component {
                             container.image.digest.repo,
                         );
                     container.image.digest.value = digestV2.digest;
-                } else {
+                } else if (!container.agent) {
                     // Legacy v1 image => take Image digest as reference for comparison
                     const image = await this.dockerApi
                         .getImage(container.image.id)
@@ -798,6 +803,10 @@ class Docker extends Component {
         const created = image.Created;
         const repoDigest = getRepoDigest(image);
         const imageId = image.Id;
+        const imageDigest =
+            image.Config && image.Config.Image !== ''
+                ? image.Config.Image
+                : undefined;
 
         // Parse image to get registry, organization...
         let imageNameToParse = container.Image;
@@ -853,6 +862,7 @@ class Docker extends Component {
                 digest: {
                     watch: watchDigest,
                     repo: repoDigest,
+                    value: imageDigest,
                 },
                 architecture,
                 os,

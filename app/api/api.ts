@@ -6,6 +6,7 @@ import * as containerRouter from './container';
 import * as watcherRouter from './watcher';
 import * as triggerRouter from './trigger';
 import * as registryRouter from './registry';
+import * as agentRouter from './agent';
 import * as authenticationRouter from './authentication';
 import * as logRouter from './log';
 import * as storeRouter from './store';
@@ -45,6 +46,9 @@ export function init() {
 
     // Mount registry router
     router.use('/registries', registryRouter.init());
+
+    // Mount agent router
+    router.use('/agents', agentRouter.init());
 
     // Mount auth
     router.use('/authentications', authenticationRouter.init());

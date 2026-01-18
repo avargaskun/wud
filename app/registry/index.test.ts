@@ -9,6 +9,11 @@ jest.mock('../configuration', () => ({
     getTriggerConfigurations: jest.fn(),
     getWatcherConfigurations: jest.fn(),
     getAuthenticationConfigurations: jest.fn(),
+    isAgent: jest.fn(() => false),
+}));
+
+jest.mock('../agent/client', () => ({
+    init: jest.fn(),
 }));
 
 let registries = {};

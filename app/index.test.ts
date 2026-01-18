@@ -2,10 +2,20 @@
 // Mock all dependencies
 jest.mock('./configuration', () => ({
     getVersion: jest.fn(() => '1.0.0'),
+    isAgent: jest.fn(() => false),
 }));
 
 jest.mock('./log', () => ({
     info: jest.fn(),
+    child: jest.fn(() => ({
+        info: jest.fn(),
+        warn: jest.fn(),
+        error: jest.fn(),
+    })),
+}));
+
+jest.mock('./agent', () => ({
+    init: jest.fn().mockResolvedValue(),
 }));
 
 jest.mock('./store', () => ({
