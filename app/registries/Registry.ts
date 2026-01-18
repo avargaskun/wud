@@ -91,16 +91,16 @@ class Registry extends Component {
     async getTags(image: ContainerImage): Promise<string[]> {
         this.log.debug(`Get ${image.name} tags`);
         const tags: string[] = [];
-        let page;
+        let page: AxiosResponse<RegistryTagsList> | undefined = undefined;
         let hasNext = true;
-        let link;
+        let link: string | undefined = undefined;
         while (hasNext) {
             const lastItem =
                 page && page.data && page.data.tags
                     ? page.data.tags[page.data.tags.length - 1]
                     : undefined;
 
-            page = await this.getTagsPage(image, lastItem);
+            page = await this.getTagsPage(image, lastItem, link);
             const pageTags =
                 page && page.data && page.data.tags ? page.data.tags : [];
             link = page && page.headers ? page.headers.link : undefined;
@@ -120,7 +120,7 @@ class Registry extends Component {
      * @param lastItem
      * @returns {Promise<*>}
      */
-    getTagsPage(image: ContainerImage, lastItem: string | undefined = undefined) {
+    getTagsPage(image: ContainerImage, lastItem: string | undefined = undefined, _link: string | undefined = undefined) {
         // Default items per page (not honoured by all registries)
         const itemsPerPage = 1000;
         const last = lastItem ? `&last=${lastItem}` : '';

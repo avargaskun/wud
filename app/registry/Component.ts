@@ -1,6 +1,7 @@
 
 import joi from 'joi';
 import log from '../log';
+import Logger from 'bunyan';
 
 export interface ComponentConfiguration {
     [key: string]: any;
@@ -11,7 +12,7 @@ export interface ComponentConfiguration {
  */
 class Component {
     public joi: typeof joi;
-    public log: any;
+    public log: Logger;
     public kind: string = '';
     public type: string = '';
     public name: string = '';
