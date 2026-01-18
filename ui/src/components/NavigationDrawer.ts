@@ -6,6 +6,7 @@ import { getTriggerIcon } from "@/services/trigger";
 import { getServerIcon } from "@/services/server";
 import { getWatcherIcon } from "@/services/watcher";
 import { getAuthenticationIcon } from "@/services/authentication";
+import { getAgentIcon } from "@/services/agent";
 
 export default defineComponent({
   setup() {
@@ -14,6 +15,11 @@ export default defineComponent({
     const darkMode = ref(localStorage.darkMode === "true");
     
     const configurationItems = [
+      {
+        to: "/configuration/agents",
+        name: "agents",
+        icon: getAgentIcon(),
+      },
       {
         to: "/configuration/authentications",
         name: "auth",

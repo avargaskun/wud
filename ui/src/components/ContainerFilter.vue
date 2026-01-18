@@ -4,6 +4,18 @@
       <v-col>
         <v-select
           :hide-details="true"
+          v-model="agentSelected"
+          :items="agents"
+          @update:modelValue="emitAgentChanged"
+          :clearable="true"
+          label="Agent"
+          variant="outlined"
+          density="compact"
+        ></v-select>
+      </v-col>
+      <v-col>
+        <v-select
+          :hide-details="true"
           v-model="watcherSelected"
           :items="watchers"
           @update:modelValue="emitWatcherChanged"

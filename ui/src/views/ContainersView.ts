@@ -13,6 +13,7 @@ export default defineComponent({
     return {
       containers: [] as any[],
       registrySelected: "",
+      agentSelected: "",
       watcherSelected: "",
       updateKindSelected: "",
       updateAvailableSelected: false,
@@ -33,6 +34,16 @@ export default defineComponent({
         ...new Set(
           this.containers
             .map((container) => container.image.registry.name)
+            .sort(),
+        ),
+      ];
+    },
+    agents() {
+      return [
+        ...new Set(
+          this.containers
+            .map((container) => container.agent)
+            .filter((agent) => agent)
             .sort(),
         ),
       ];
@@ -62,6 +73,9 @@ export default defineComponent({
           this.registrySelected
             ? this.registrySelected === container.image.registry.name
             : true,
+        )
+        .filter((container) =>
+          this.agentSelected ? this.agentSelected === container.agent : true,
         )
         .filter((container) =>
           this.watcherSelected
@@ -106,6 +120,10 @@ export default defineComponent({
       this.registrySelected = registrySelected;
       this.updateQueryParams();
     },
+    onAgentChanged(agentSelected: string) {
+      this.agentSelected = agentSelected;
+      this.updateQueryParams();
+    },
     onWatcherChanged(watcherSelected: string) {
       this.watcherSelected = watcherSelected;
       this.updateQueryParams();
@@ -130,6 +148,9 @@ export default defineComponent({
       const query: any = {};
       if (this.registrySelected) {
         query["registry"] = this.registrySelected;
+      }
+      if (this.agentSelected) {
+        query["agent"] = this.agentSelected;
       }
       if (this.watcherSelected) {
         query["watcher"] = this.watcherSelected;
@@ -170,6 +191,7 @@ export default defineComponent({
 
   async beforeRouteEnter(to, from, next) {
     const registrySelected = to.query["registry"];
+    const agentSelected = to.query["agent"];
     const watcherSelected = to.query["watcher"];
     const updateKindSelected = to.query["update-kind"];
     const updateAvailable = to.query["update-available"];
@@ -180,6 +202,9 @@ export default defineComponent({
       next((vm: any) => {
         if (registrySelected) {
           vm.registrySelected = registrySelected;
+        }
+        if (agentSelected) {
+          vm.agentSelected = agentSelected;
         }
         if (watcherSelected) {
           vm.watcherSelected = watcherSelected;

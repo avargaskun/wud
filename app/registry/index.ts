@@ -25,6 +25,10 @@ export interface RegistryState {
     authentication: { [key: string]: Authentication };
 }
 
+export interface RegistrationOptions { 
+    agent?: boolean;
+}
+
 type ComponentKind = keyof RegistryState;
 
 /**
@@ -202,13 +206,19 @@ async function registerComponents(
 
 /**
  * Register watchers.
+ * @param options
  * @returns {Promise}
  */
-async function registerWatchers() {
+async function registerWatchers(options: RegistrationOptions = {}) {
     const configurations = getWatcherConfigurations();
-    let watchersToRegister: Promise<any>[] = [];
+    const discoveryOnly = options.agent;
+    let watchersToRegister = [];
     try {
         if (Object.keys(configurations).length === 0) {
+            if (options.agent) {
+                log.error('Agent mode requires at least one watcher configured.');
+                process.exit(1);
+            }
             log.info(
                 'No Watcher configured => Init a default one (Docker with default options)',
             );
@@ -217,7 +227,7 @@ async function registerWatchers() {
                     'watcher',
                     'docker',
                     'local',
-                    {},
+                    { discoveryonly: discoveryOnly },
                     '../watchers/providers',
                 ),
             );
@@ -225,11 +235,15 @@ async function registerWatchers() {
             watchersToRegister = watchersToRegister.concat(
                 Object.keys(configurations).map((watcherKey) => {
                     const watcherKeyNormalize = watcherKey.toLowerCase();
+                    const config = configurations[watcherKeyNormalize];
+                    if (discoveryOnly) {
+                        config.discoveryonly = true;
+                    }
                     return registerComponent(
                         'watcher',
                         'docker',
                         watcherKeyNormalize,
-                        configurations[watcherKeyNormalize],
+                        config,
                         '../watchers/providers',
                     );
                 }),
@@ -244,9 +258,36 @@ async function registerWatchers() {
 
 /**
  * Register triggers.
+ * @param options
  */
-async function registerTriggers() {
+async function registerTriggers(options: RegistrationOptions = {}) {
     const configurations = getTriggerConfigurations();
+    const allowedTriggers = ['docker', 'dockercompose'];
+
+    if (options.agent && configurations) {
+        // Filter configurations for Agent
+        const filteredConfigurations = {};
+        Object.keys(configurations).forEach((provider) => {
+            if (allowedTriggers.includes(provider.toLowerCase())) {
+                filteredConfigurations[provider] = configurations[provider];
+            } else {
+                log.warn(`Trigger type '${provider}' is not supported in Agent mode and will be ignored.`);
+            }
+        });
+        
+        try {
+            await registerComponents(
+                'trigger',
+                filteredConfigurations,
+                '../triggers/providers',
+            );
+        } catch (e) {
+            log.warn(`Some triggers failed to register (${e.message})`);
+            log.debug(e);
+        }
+        return;
+    }
+
     try {
         await registerComponents(
             'trigger',
@@ -402,18 +443,20 @@ async function deregisterAll() {
     }
 }
 
-export async function init() {
+export async function init(options: RegistrationOptions = {}) {
     // Register triggers
-    await registerTriggers();
-
-    // Register registries
-    await registerRegistries();
+    await registerTriggers(options);
 
     // Register watchers
-    await registerWatchers();
+    await registerWatchers(options);
 
-    // Register authentications
-    await registerAuthentications();
+    if (!options.agent) {
+        // Register registries
+        await registerRegistries();
+
+        // Register authentications
+        await registerAuthentications();
+    }
 
     // Gracefully exit when possible
     process.on('SIGINT', deregisterAll);

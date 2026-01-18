@@ -8,6 +8,7 @@ import { mapComponentsToList } from './component';
 import Trigger from '../triggers/providers/Trigger';
 import logger from '../log';
 const log = logger.child({ component: 'container' });
+import { getAgents } from '../agent';
 
 const router = express.Router();
 
@@ -169,6 +170,32 @@ async function runTrigger(req, res) {
 
     const containerToTrigger = storeContainer.getContainer(id);
     if (containerToTrigger) {
+        if (containerToTrigger.agent) {
+            const agentName = containerToTrigger.agent;
+            const agents = getAgents();
+            const agentClient = agents.find((c) => c.name === agentName);
+
+            if (!agentClient) {
+                return res
+                    .status(500)
+                    .json({ error: `Agent ${agentName} not found` });
+            }
+
+            try {
+                await agentClient.runRemoteTrigger(
+                    id,
+                    triggerType,
+                    triggerName,
+                );
+                res.status(200).json({});
+            } catch (e) {
+                res.status(500).json({
+                    error: `Error running remote trigger: ${e.message}`,
+                });
+            }
+            return;
+        }
+
         const triggerToRun = getTriggers()[`${triggerType}.${triggerName}`];
         if (triggerToRun) {
             try {
