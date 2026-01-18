@@ -24,6 +24,11 @@ const routes = [
     component: () => import("../views/ConfigurationAuthenticationsView.vue"),
   },
   {
+    path: "/configuration/agents",
+    name: "agents",
+    component: () => import("../views/ConfigurationAgentsView.vue"),
+  },
+  {
     path: "/configuration/registries",
     name: "registries",
     component: () => import("../views/ConfigurationRegistriesView.vue"),

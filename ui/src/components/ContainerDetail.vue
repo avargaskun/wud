@@ -37,6 +37,17 @@
       <v-list-item-title>Status</v-list-item-title>
       <v-list-item-subtitle>{{ container.status }}</v-list-item-subtitle>
     </v-list-item>
+    <v-list-item v-if="container.agent">
+      <template v-slot:prepend>
+        <v-icon color="secondary">mdi-server-network</v-icon>
+      </template>
+      <v-list-item-title>Agent</v-list-item-title>
+      <v-list-item-subtitle>
+        <router-link to="/configuration/agents">{{
+          container.agent
+        }}</router-link>
+      </v-list-item-subtitle>
+    </v-list-item>
     <v-list-item>
       <template v-slot:prepend>
         <v-icon color="secondary">mdi-update</v-icon>

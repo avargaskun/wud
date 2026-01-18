@@ -6,6 +6,16 @@
       class="pa-3 d-flex align-center bg-surface"
     >
       <div class="text-body-3">
+        <v-chip
+          v-if="item.agent"
+          label
+          color="warning"
+          variant="outlined"
+          class="mr-2"
+        >
+          <v-icon start icon="mdi-server-network" size="x-small"></v-icon>
+          {{ item.agent }}
+        </v-chip>
         <v-chip label color="info" variant="outlined">{{ item.type }}</v-chip>
         /
         <v-chip label color="info" variant="outlined">{{ item.name }}</v-chip>

@@ -12,6 +12,7 @@ export default defineComponent({
   data() {
     return {
       containers: [] as any[],
+      agentSelected: "",
       registrySelected: "",
       watcherSelected: "",
       updateKindSelected: "",
@@ -27,6 +28,16 @@ export default defineComponent({
         return [...acc, ...Object.keys(container.labels ?? {})];
       }, []);
       return [...new Set(allLabels)].sort();
+    },
+    agents() {
+      return [
+        ...new Set(
+          this.containers
+            .filter((container) => container.agent)
+            .map((container) => container.agent)
+            .sort(),
+        ),
+      ];
     },
     registries() {
       return [
@@ -58,6 +69,9 @@ export default defineComponent({
     },
     containersFiltered() {
       const filteredContainers = this.containers
+        .filter((container) =>
+          this.agentSelected ? this.agentSelected === container.agent : true,
+        )
         .filter((container) =>
           this.registrySelected
             ? this.registrySelected === container.image.registry.name
@@ -102,6 +116,10 @@ export default defineComponent({
   },
 
   methods: {
+    onAgentChanged(agentSelected: string) {
+      this.agentSelected = agentSelected;
+      this.updateQueryParams();
+    },
     onRegistryChanged(registrySelected: string) {
       this.registrySelected = registrySelected;
       this.updateQueryParams();
@@ -128,6 +146,9 @@ export default defineComponent({
     },
     updateQueryParams() {
       const query: any = {};
+      if (this.agentSelected) {
+        query["agent"] = this.agentSelected;
+      }
       if (this.registrySelected) {
         query["registry"] = this.registrySelected;
       }
@@ -169,6 +190,7 @@ export default defineComponent({
   },
 
   async beforeRouteEnter(to, from, next) {
+    const agentSelected = to.query["agent"];
     const registrySelected = to.query["registry"];
     const watcherSelected = to.query["watcher"];
     const updateKindSelected = to.query["update-kind"];
@@ -178,6 +200,9 @@ export default defineComponent({
     try {
       const containers = await getAllContainers();
       next((vm: any) => {
+        if (agentSelected) {
+          vm.agentSelected = agentSelected;
+        }
         if (registrySelected) {
           vm.registrySelected = registrySelected;
         }

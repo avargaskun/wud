@@ -3,6 +3,14 @@ import { defineComponent } from "vue";
 
 export default defineComponent({
   props: {
+    agents: {
+      type: Array,
+      required: true,
+    },
+    agentSelectedInit: {
+      type: String,
+      required: true,
+    },
     registries: {
       type: Array,
       required: true,
@@ -48,6 +56,7 @@ export default defineComponent({
   data() {
     return {
       isRefreshing: false,
+      agentSelected: "",
       registrySelected: "",
       watcherSelected: "",
       updateKindSelected: "",
@@ -58,6 +67,9 @@ export default defineComponent({
   },
 
   methods: {
+    emitAgentChanged() {
+      this.$emit("agent-changed", this.agentSelected ?? "");
+    },
     emitRegistryChanged() {
       this.$emit("registry-changed", this.registrySelected ?? "");
     },
@@ -95,6 +107,7 @@ export default defineComponent({
   },
 
   async beforeUpdate() {
+    this.agentSelected = this.agentSelectedInit;
     this.registrySelected = this.registrySelectedInit;
     this.watcherSelected = this.watcherSelectedInit;
     this.updateKindSelected = this.updateKindSelectedInit;

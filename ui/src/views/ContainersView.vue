@@ -3,6 +3,8 @@
     <v-row dense>
       <v-col>
         <container-filter
+          :agents="agents"
+          :agent-selected-init="agentSelected"
           :registries="registries"
           :registry-selected-init="registrySelected"
           :watchers="watchers"
@@ -13,6 +15,7 @@
           :oldestFirst="oldestFirst"
           :groupByLabel="groupByLabel"
           :groupLabels="allContainerLabels"
+          @agent-changed="onAgentChanged"
           @registry-changed="onRegistryChanged"
           @watcher-changed="onWatcherChanged"
           @update-available-changed="onUpdateAvailableChanged"
