@@ -306,7 +306,7 @@ async function deregisterComponent(component: Component, kind: ComponentKind) {
             `Error when deregistering component ${component.getId()} (${e.message})`,
         );
     } finally {
-        const components: any = getState()[kind];
+        const components = getState()[kind];
         if (components) {
             delete components[component.getId()];
         }

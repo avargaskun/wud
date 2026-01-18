@@ -1,5 +1,5 @@
 
-import axios, { AxiosRequestConfig, Method } from 'axios';
+import axios, { AxiosRequestConfig, Method, AxiosResponse } from 'axios';
 import log from '../log';
 import Component from '../registry/Component';
 import { getSummaryTags } from '../prometheus/registry';
@@ -13,6 +13,32 @@ export interface RegistryManifest {
     digest?: string;
     version?: number;
     created?: string;
+}
+
+export interface RegistryTagsList {
+    name: string;
+    tags: string[];
+}
+
+export interface RegistryManifestResponse {
+    schemaVersion: number;
+    mediaType?: string;
+    manifests?: {
+        digest: string;
+        mediaType: string;
+        platform: {
+            architecture: string;
+            os: string;
+            variant?: string;
+        };
+    }[];
+    config?: {
+        digest: string;
+        mediaType: string;
+    };
+    history?: {
+        v1Compatibility: string;
+    }[];
 }
 
 /**
@@ -34,8 +60,7 @@ class Registry extends Component {
      * @param image the image
      * @returns {boolean}
      */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    match(image: ContainerImage): boolean {
+    match(_image: ContainerImage): boolean {
         return false;
     }
 
@@ -44,7 +69,6 @@ class Registry extends Component {
      * @param image
      * @returns {*}
      */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
     normalizeImage(image: ContainerImage): ContainerImage {
         return image;
     }
@@ -55,8 +79,7 @@ class Registry extends Component {
      * @param requestOptions
      * @returns {*}
      */
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    async authenticate(image: ContainerImage, requestOptions: AxiosRequestConfig): Promise<AxiosRequestConfig> {
+    async authenticate(_image: ContainerImage, requestOptions: AxiosRequestConfig): Promise<AxiosRequestConfig> {
         return requestOptions;
     }
 
@@ -101,7 +124,7 @@ class Registry extends Component {
         // Default items per page (not honoured by all registries)
         const itemsPerPage = 1000;
         const last = lastItem ? `&last=${lastItem}` : '';
-        return this.callRegistry({
+        return this.callRegistry<RegistryTagsList>({
             image,
             url: `${image.registry.url}/${image.name}/tags/list?n=${itemsPerPage}${last}`,
             resolveWithFullResponse: true,
@@ -121,7 +144,7 @@ class Registry extends Component {
         this.log.debug(
             `${this.getId()} - Get ${image.name}:${tagOrDigest} manifest`,
         );
-        const responseManifests = await this.callRegistry({
+        const responseManifests = await this.callRegistry<RegistryManifestResponse>({
             image,
             url: `${image.registry.url}/${image.name}/manifests/${tagOrDigest}`,
             headers: {
@@ -216,7 +239,7 @@ class Registry extends Component {
                 log.debug(
                     'Calling registry to get docker-content-digest header',
                 );
-                const responseManifest = await this.callRegistry({
+                const responseManifest = await this.callRegistry<RegistryManifestResponse>({
                     image,
                     method: 'head',
                     url: `${image.registry.url}/${image.name}/manifests/${manifestDigestFound}`,
@@ -256,7 +279,23 @@ class Registry extends Component {
         throw new Error('Unexpected error; no manifest found');
     }
 
-    async callRegistry({
+    async callRegistry<T = any>(options: {
+        image: ContainerImage;
+        url: string;
+        method?: Method;
+        headers?: any;
+        resolveWithFullResponse: true;
+    }): Promise<AxiosResponse<T>>;
+
+    async callRegistry<T = any>(options: {
+        image: ContainerImage;
+        url: string;
+        method?: Method;
+        headers?: any;
+        resolveWithFullResponse?: false;
+    }): Promise<T>;
+
+    async callRegistry<T = any>({
         image,
         url,
         method = 'get',
@@ -270,7 +309,7 @@ class Registry extends Component {
         method?: Method;
         headers?: any;
         resolveWithFullResponse?: boolean;
-    }) {
+    }): Promise<T | AxiosResponse<T>> {
         const start = new Date().getTime();
 
         // Request options
@@ -287,7 +326,7 @@ class Registry extends Component {
         );
 
         try {
-            const response = await axios(axiosOptionsWithAuth);
+            const response = await axios(axiosOptionsWithAuth) as AxiosResponse<T>;
             const end = new Date().getTime();
             getSummaryTags().observe(
                 { type: this.type, name: this.name },

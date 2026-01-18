@@ -185,7 +185,7 @@ function getLink(container: Container, originalTagValue: string) {
 function addUpdateAvailableProperty(container: Container) {
     Object.defineProperty(container, 'updateAvailable', {
         enumerable: true,
-        get() {
+        get(this: Container) {
             if (this.image === undefined || this.result === undefined) {
                 return false;
             }
@@ -207,18 +207,18 @@ function addUpdateAvailableProperty(container: Container) {
             );
             const remoteTag = transformTag(
                 container.transformTags,
-                this.result!.tag,
+                this.result.tag,
             );
             updateAvailable = localTag !== remoteTag;
 
             // Fallback to image created date (especially for legacy v1 manifests)
             if (
                 this.image.created !== undefined &&
-                this.result!.created !== undefined
+                this.result.created !== undefined
             ) {
                 const createdDate = new Date(this.image.created).getTime();
                 const createdDateResult = new Date(
-                    this.result!.created!,
+                    this.result.created!,
                 ).getTime();
 
                 updateAvailable =
@@ -238,7 +238,7 @@ function addLinkProperty(container: Container) {
     if (container.linkTemplate) {
         Object.defineProperty(container, 'link', {
             enumerable: true,
-            get() {
+            get(this: Container) {
                 return getLink(container, container.image.tag.value);
             },
         });
@@ -247,7 +247,7 @@ function addLinkProperty(container: Container) {
             Object.defineProperty(container.result, 'link', {
                 enumerable: true,
                 get() {
-                    return getLink(container, container.result!.tag!);
+                    return getLink(container, container.result.tag ?? '');
                 },
             });
         }
@@ -262,7 +262,7 @@ function addLinkProperty(container: Container) {
 function addUpdateKindProperty(container: Container) {
     Object.defineProperty(container, 'updateKind', {
         enumerable: true,
-        get() {
+        get(this: Container) {
             const updateKind: ContainerUpdateKind = {
                 kind: 'unknown',
                 localValue: undefined,
@@ -344,9 +344,9 @@ function addUpdateKindProperty(container: Container) {
 function resultChangedFunction(this: Container, otherContainer: Container | undefined) {
     return (
         otherContainer === undefined ||
-        this.result!.tag !== otherContainer.result!.tag ||
-        this.result!.digest !== otherContainer.result!.digest ||
-        this.result!.created !== otherContainer.result!.created
+        this.result?.tag !== otherContainer.result?.tag ||
+        this.result?.digest !== otherContainer.result?.digest ||
+        this.result?.created !== otherContainer.result?.created
     );
 }
 

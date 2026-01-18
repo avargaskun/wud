@@ -325,7 +325,7 @@ function isDigestToWatch(wudWatchDigestLabelValue: string, parsedImage: any, isS
  */
 class Docker extends Watcher {
     public configuration: DockerWatcherConfiguration = {} as DockerWatcherConfiguration;
-    public dockerApi: any;
+    public dockerApi: Dockerode;
     public watchCron: any;
     public watchCronTimeout: any;
     public watchCronDebounced: any;
@@ -412,7 +412,7 @@ class Docker extends Watcher {
     }
 
     initWatcher() {
-        const options: any = {};
+        const options: Dockerode.DockerOptions = {};
         if (this.configuration.host) {
             options.host = this.configuration.host;
             options.port = this.configuration.port;
@@ -459,7 +459,7 @@ class Docker extends Watcher {
             return;
         }
         this.log.info('Listening to docker events');
-        const options = {
+        const options: Dockerode.GetEventsOptions = {
             filters: {
                 type: ['container'],
                 event: [
@@ -474,7 +474,7 @@ class Docker extends Watcher {
                 ],
             },
         };
-        this.dockerApi.getEvents(options, (err: any, stream: any) => {
+        this.dockerApi.getEvents(options, (err, stream) => {
             if (err) {
                 if (this.log && typeof this.log.warn === 'function') {
                     this.log.warn(
@@ -644,7 +644,7 @@ class Docker extends Watcher {
      */
     async getContainers(): Promise<Container[]> {
         this.ensureLogger();
-        const listContainersOptions: any = {};
+        const listContainersOptions: Dockerode.ContainerListOptions = {};
         if (this.configuration.watchall) {
             listContainersOptions.all = true;
         }
