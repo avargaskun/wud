@@ -1,6 +1,6 @@
 import fs from 'fs';
 import https from 'https';
-import express from 'express';
+import express, { Request, Response, NextFunction } from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import logger from '../log';
@@ -8,11 +8,17 @@ import * as storeContainer from '../store/container';
 import * as event from '../event';
 import { getServerConfiguration, getVersion } from '../configuration';
 import * as registry from '../registry';
+import { Container } from '../model/container';
 
 const log = logger.child({ component: 'agent-server' });
 
+interface SseClient {
+    id: number;
+    res: Response;
+}
+
 // SSE Clients
-let sseClients = [];
+let sseClients: SseClient[] = [];
 let cachedSecret: string | undefined;
 
 /**
@@ -20,7 +26,7 @@ let cachedSecret: string | undefined;
  * @param eventName
  * @param data
  */
-function sendSseEvent(eventName, data) {
+function sendSseEvent(eventName: string, data: any) {
     const message = {
         type: eventName,
         data: data,
@@ -32,20 +38,20 @@ function sendSseEvent(eventName, data) {
 }
 
 // Subscribe to store events
-event.registerContainerAdded((container) =>
+event.registerContainerAdded((container: Container) =>
     sendSseEvent('wud:container-added', container),
 );
-event.registerContainerUpdated((container) =>
+event.registerContainerUpdated((container: Container) =>
     sendSseEvent('wud:container-updated', container),
 );
-event.registerContainerRemoved((container) =>
+event.registerContainerRemoved((container: Container) =>
     sendSseEvent('wud:container-removed', { id: container.id }),
 );
 
 /**
  * Authenticate Middleware.
  */
-function authenticate(req, res, next) {
+function authenticate(req: Request, res: Response, next: NextFunction) {
     const requestSecret = req.headers['x-wud-agent-secret'];
     if (!cachedSecret || requestSecret !== cachedSecret) {
         log.warn(`Unauthorized access attempt from ${req.ip}`);
@@ -57,7 +63,7 @@ function authenticate(req, res, next) {
 /**
  * Get Containers (Handshake).
  */
-function getContainers(req, res) {
+function getContainers(req: Request, res: Response) {
     const containers = storeContainer.getContainers();
     res.json(containers);
 }
@@ -65,9 +71,9 @@ function getContainers(req, res) {
 /**
  * Get Watchers.
  */
-function getWatchers(req, res) {
+function getWatchers(req: Request, res: Response) {
     const watchers = registry.getState().watcher;
-    const maskedWatchers = {};
+    const maskedWatchers: Record<string, any> = {};
     Object.keys(watchers).forEach((key) => {
         const component = watchers[key];
         maskedWatchers[key] = {
@@ -83,7 +89,7 @@ function getWatchers(req, res) {
 /**
  * Subscribe to Events (SSE).
  */
-function subscribeEvents(req, res) {
+function subscribeEvents(req: Request, res: Response) {
     log.info(`Controller WUD with ip ${req.ip} connected.`);
 
     const headers = {
@@ -93,7 +99,7 @@ function subscribeEvents(req, res) {
     };
     res.writeHead(200, headers);
 
-    const client = {
+    const client: SseClient = {
         id: Date.now(),
         res,
     };
@@ -115,7 +121,7 @@ function subscribeEvents(req, res) {
 /**
  * Run Remote Trigger.
  */
-async function runTrigger(req, res) {
+async function runTrigger(req: Request, res: Response) {
     const { id, triggerType, triggerName } = req.params;
     const container = storeContainer.getContainer(id);
 
@@ -140,7 +146,7 @@ async function runTrigger(req, res) {
         await trigger.trigger(container);
         log.info(`Trigger executed: ${triggerId} for ${container.name}`);
         res.json({ success: true });
-    } catch (e) {
+    } catch (e: any) {
         log.error(`Error running trigger ${triggerId}: ${e.message}`);
         res.status(500).json({ error: e.message });
     }
@@ -159,7 +165,7 @@ export async function init() {
     } else if (agentSecretFile) {
         try {
             cachedSecret = fs.readFileSync(agentSecretFile, 'utf-8').trim();
-        } catch (e) {
+        } catch (e: any) {
             log.error(`Error reading secret file: ${e.message}`);
             throw new Error(`Error reading secret file: ${e.message}`);
         }

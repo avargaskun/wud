@@ -1,5 +1,6 @@
-import axios from 'axios';
+import axios, { AxiosRequestConfig } from 'axios';
 import https from 'https';
+import fs from 'fs';
 import { StringDecoder } from 'string_decoder';
 import logger from '../log';
 import * as storeContainer from '../store/container';
@@ -7,18 +8,35 @@ import {
     findNewVersion,
     normalizeContainer,
 } from '../watchers/providers/docker/utils';
+import { Container, ContainerResult } from '../model/container';
+
+export interface AgentClientConfig {
+    host: string;
+    port: number;
+    secret: string;
+    cafile?: string;
+    certfile?: string;
+    keyfile?: string;
+}
+
+interface AgentWatcher {
+    id: string;
+    type: string;
+    name: string;
+    configuration: any;
+}
 
 export class AgentClient {
-    name;
-    config;
-    log;
-    baseUrl;
-    axiosOptions;
-    isConnected;
-    watchers;
-    reconnectTimer;
+    public name: string;
+    public config: AgentClientConfig;
+    private log: any;
+    private baseUrl: string;
+    private axiosOptions: AxiosRequestConfig;
+    public isConnected: boolean;
+    private watchers: Record<string, AgentWatcher>;
+    private reconnectTimer: NodeJS.Timeout | null;
 
-    constructor(name, config) {
+    constructor(name: string, config: AgentClientConfig) {
         this.name = name;
         this.config = config;
         this.watchers = {};
@@ -38,13 +56,13 @@ export class AgentClient {
         if (this.config.certfile) {
             this.axiosOptions.httpsAgent = new https.Agent({
                 ca: this.config.cafile
-                    ? require('fs').readFileSync(this.config.cafile)
+                    ? fs.readFileSync(this.config.cafile)
                     : undefined,
                 cert: this.config.certfile
-                    ? require('fs').readFileSync(this.config.certfile)
+                    ? fs.readFileSync(this.config.certfile)
                     : undefined,
                 key: this.config.keyfile
-                    ? require('fs').readFileSync(this.config.keyfile)
+                    ? fs.readFileSync(this.config.keyfile)
                     : undefined,
                 rejectUnauthorized: false,
             });
@@ -60,7 +78,7 @@ export class AgentClient {
     }
 
     async handshake() {
-        const response = await axios.get(
+        const response = await axios.get<Container[]>(
             `${this.baseUrl}/api/containers`,
             this.axiosOptions,
         );
@@ -74,26 +92,25 @@ export class AgentClient {
         }
 
         try {
-            const responseWatchers = await axios.get(
-                `${this.baseUrl}/api/watchers`,
-                this.axiosOptions,
-            );
+            const responseWatchers = await axios.get<
+                Record<string, AgentWatcher>
+            >(`${this.baseUrl}/api/watchers`, this.axiosOptions);
             this.watchers = responseWatchers.data;
-        } catch (e) {
+        } catch (e: any) {
             this.log.warn(`Failed to fetch watchers: ${e.message}`);
         }
 
         this.isConnected = true;
     }
 
-    async processContainer(container) {
+    async processContainer(container: Container) {
         container.agent = this.name;
         const logContainer = this.log.child({ container: container.name });
 
         try {
             // Normalize container to resolve Registry (Agent only does discovery)
             container = normalizeContainer(container);
-        } catch (e) {
+        } catch (e: any) {
             this.log.warn(
                 `Error normalizing container ${container.name}: ${e.message}`,
             );
@@ -103,8 +120,8 @@ export class AgentClient {
             // Check for updates using local Registry logic
             // Pass null as dockerApi because we can't check legacy v1 digests remotely easily
             const result = await findNewVersion(container, null, logContainer);
-            container.result = result;
-        } catch (e) {
+            container.result = result as ContainerResult;
+        } catch (e: any) {
             this.log.warn(
                 `Error checking update for ${container.name}: ${e.message}`,
             );
@@ -121,7 +138,7 @@ export class AgentClient {
         }
     }
 
-    scheduleReconnect(delay) {
+    scheduleReconnect(delay: number) {
         if (this.reconnectTimer) {
             return;
         }
@@ -148,7 +165,7 @@ export class AgentClient {
                 const decoder = new StringDecoder('utf8');
                 let buffer = '';
 
-                stream.on('data', (chunk) => {
+                stream.on('data', (chunk: Buffer) => {
                     buffer += decoder.write(chunk);
                     const messages = buffer.split('\n\n');
                     // The last element is either empty (if buffer ended with \n\n) or incomplete
@@ -168,7 +185,7 @@ export class AgentClient {
                                             payload.data,
                                         );
                                     }
-                                } catch (e) {
+                                } catch (e: any) {
                                     this.log.warn(
                                         `Error parsing SSE data: ${e.message}`,
                                     );
@@ -177,7 +194,7 @@ export class AgentClient {
                         }
                     }
                 });
-                stream.on('error', (e) => {
+                stream.on('error', (e: Error) => {
                     this.log.error(`SSE Connection failed: ${e.message}`);
                     this.scheduleReconnect(1000);
                 });
@@ -194,7 +211,7 @@ export class AgentClient {
             });
     }
 
-    async handleEvent(eventName, data) {
+    async handleEvent(eventName: string, data: any) {
         if (eventName === 'wud:ack') {
             this.log.info(
                 `Agent ${this.name} connected (version: ${data.version})`,
@@ -204,20 +221,24 @@ export class AgentClient {
             eventName === 'wud:container-added' ||
             eventName === 'wud:container-updated'
         ) {
-            await this.processContainer(data);
+            await this.processContainer(data as Container);
         } else if (eventName === 'wud:container-removed') {
             storeContainer.deleteContainer(data.id);
         }
     }
 
-    async runRemoteTrigger(containerId, triggerType, triggerName) {
+    async runRemoteTrigger(
+        containerId: string,
+        triggerType: string,
+        triggerName: string,
+    ) {
         try {
             await axios.post(
                 `${this.baseUrl}/api/containers/${containerId}/triggers/${triggerType}/${triggerName}`,
                 {},
                 this.axiosOptions,
             );
-        } catch (e) {
+        } catch (e: any) {
             this.log.error(`Error running remote trigger: ${e.message}`);
             throw e;
         }

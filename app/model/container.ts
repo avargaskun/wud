@@ -47,6 +47,7 @@ export interface Container {
     displayIcon: string;
     status: string;
     watcher: string;
+    agent?: string;
     includeTags?: string;
     excludeTags?: string;
     transformTags?: string;
