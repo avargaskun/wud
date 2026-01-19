@@ -51,7 +51,9 @@ describe('Agent Server', () => {
     });
 
     test('should throw error if no secret is provided', async () => {
-        await expect(init()).rejects.toThrow('WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE');
+        await expect(init()).rejects.toThrow(
+            'WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE',
+        );
     });
 
     test('should initialize agent server with WUD_AGENT_SECRET', async () => {
@@ -81,21 +83,32 @@ describe('Agent Server', () => {
     test('should setup routes', async () => {
         process.env.WUD_AGENT_SECRET = 'test-secret';
         await init();
-        expect(mockApp.get).toHaveBeenCalledWith('/api/containers', expect.any(Function));
-        expect(mockApp.get).toHaveBeenCalledWith('/api/events', expect.any(Function));
-        expect(mockApp.post).toHaveBeenCalledWith('/api/containers/:id/triggers/:triggerType/:triggerName', expect.any(Function));
+        expect(mockApp.get).toHaveBeenCalledWith(
+            '/api/containers',
+            expect.any(Function),
+        );
+        expect(mockApp.get).toHaveBeenCalledWith(
+            '/api/events',
+            expect.any(Function),
+        );
+        expect(mockApp.post).toHaveBeenCalledWith(
+            '/api/containers/:id/triggers/:triggerType/:triggerName',
+            expect.any(Function),
+        );
     });
 
     test('authenticate middleware should accept valid secret', async () => {
         process.env.WUD_AGENT_SECRET = 'valid-secret';
         await init();
-        
+
         // Extract the middleware function
-        const authMiddleware = mockApp.use.mock.calls.find(call => call[0].name === 'authenticate')[0];
-        
+        const authMiddleware = mockApp.use.mock.calls.find(
+            (call) => call[0].name === 'authenticate',
+        )[0];
+
         const req = {
             headers: { 'x-wud-agent-secret': 'valid-secret' },
-            ip: '127.0.0.1'
+            ip: '127.0.0.1',
         };
         const res = { status: jest.fn().mockReturnThis(), send: jest.fn() };
         const next = jest.fn();
@@ -108,12 +121,14 @@ describe('Agent Server', () => {
     test('authenticate middleware should reject invalid secret', async () => {
         process.env.WUD_AGENT_SECRET = 'valid-secret';
         await init();
-        
-        const authMiddleware = mockApp.use.mock.calls.find(call => call[0].name === 'authenticate')[0];
-        
+
+        const authMiddleware = mockApp.use.mock.calls.find(
+            (call) => call[0].name === 'authenticate',
+        )[0];
+
         const req = {
             headers: { 'x-wud-agent-secret': 'invalid-secret' },
-            ip: '127.0.0.1'
+            ip: '127.0.0.1',
         };
         const res = { status: jest.fn().mockReturnThis(), send: jest.fn() };
         const next = jest.fn();
@@ -126,12 +141,14 @@ describe('Agent Server', () => {
     test('authenticate middleware should reject if no secret header', async () => {
         process.env.WUD_AGENT_SECRET = 'valid-secret';
         await init();
-        
-        const authMiddleware = mockApp.use.mock.calls.find(call => call[0].name === 'authenticate')[0];
-        
+
+        const authMiddleware = mockApp.use.mock.calls.find(
+            (call) => call[0].name === 'authenticate',
+        )[0];
+
         const req = {
             headers: {},
-            ip: '127.0.0.1'
+            ip: '127.0.0.1',
         };
         const res = { status: jest.fn().mockReturnThis(), send: jest.fn() };
         const next = jest.fn();

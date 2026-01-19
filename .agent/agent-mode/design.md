@@ -57,12 +57,16 @@ All requests from Controller to Agent must include:
 ### 1. Handshake (Snapshot)
 **Request:** `GET /api/containers`
 **Response:** JSON array of current containers discovered by the Agent.
-**Purpose:** Initial state synchronization.
+**Purpose:** Initial state synchronization. Triggered by Controller upon receiving `wud:ack` via SSE.
 
 ### 2. Real-time Updates (SSE)
 **Request:** `GET /api/events`
 **Headers:** `Accept: text/event-stream`
-**Events:**
+**Protocol:**
+SSE events are sent as a single JSON blob containing both type and data.
+Format: `data: { "type": "...", "data": ... }`
+**Event Types:**
+- `wud:ack`: Sent immediately on connection. Payload `{ version: string }`.
 - `wud:container-added`: Payload `Container` object.
 - `wud:container-updated`: Payload `Container` object.
 - `wud:container-removed`: Payload `{ id: string }`.
@@ -108,7 +112,7 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 - New component on Controller.
 - Manages connection to one specific Agent.
 - Performs Handshake.
-- Maintains SSE connection (reconnect logic).
+- Maintains SSE connection (robust reconnect logic with error handling).
 - On event, normalizes container data (adds `agent` field) and updates the **Main Store**.
 - **Crucial**: When receiving a container from Agent, the Controller must trigger an "Update Check" (Registry lookup) because the Agent didn't do it.
 - The Controller must also call `normalizeContainer` on incoming containers to resolve the Registry provider (since the Agent doesn't know about registries).

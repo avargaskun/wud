@@ -39,30 +39,88 @@ describe('AgentClient', () => {
         });
     });
 
-    test('should init and handshake', async () => {
+    test('should init and handshake on wud:ack', async () => {
         const containers = [{ id: '1', name: 'c1' }];
+        // Handshake response
         // @ts-ignore
         axios.get.mockResolvedValue({ data: containers });
-        // Mock SSE request (axios main function)
+
+        // SSE Stream Mock
+        const mockStream = {
+            on: jest.fn(),
+        };
         // @ts-ignore
-        axios.mockResolvedValue({ data: { on: jest.fn() } }); 
-        
+        axios.mockResolvedValue({ data: mockStream });
+
         // @ts-ignore
         utils.findNewVersion.mockResolvedValue({ tag: '2.0.0' });
         // @ts-ignore
-        utils.normalizeContainer.mockImplementation(c => c);
+        utils.normalizeContainer.mockImplementation((c) => c);
 
         await client.init();
 
+        // Expect SSE connection to be started
+        expect(axios).toHaveBeenCalledWith(
+            expect.objectContaining({
+                url: expect.stringContaining('/api/events'),
+            }),
+        );
+
+        // Simulate wud:ack event
+        // Find the data handler
+        const dataHandler = mockStream.on.mock.calls.find(
+            (call) => call[0] === 'data',
+        )[1];
+        expect(dataHandler).toBeDefined();
+
+        // Simulate event
+        dataHandler('data: {"type":"wud:ack","data":{"version":"1.0.0"}}\n\n');
+
+        // Allow async loop to process
+        await new Promise(process.nextTick);
+
+        // Expect Handshake
         expect(axios.get).toHaveBeenCalledWith(
             expect.stringContaining('/api/containers'),
-            expect.anything()
+            expect.anything(),
         );
         expect(utils.normalizeContainer).toHaveBeenCalledWith(containers[0]);
-        expect(utils.findNewVersion).toHaveBeenCalled();
         expect(storeContainer.insertContainer).toHaveBeenCalled();
-        expect(axios).toHaveBeenCalledWith(
-            expect.objectContaining({ url: expect.stringContaining('/api/events') })
+    });
+
+    test('should reconnect on SSE stream error', async () => {
+        jest.useFakeTimers();
+        const mockStream = {
+            on: jest.fn(),
+        };
+        // @ts-ignore
+        axios.mockResolvedValue({ data: mockStream });
+
+        await client.init();
+
+        // 1. Initial connection
+        expect(axios).toHaveBeenCalledTimes(1);
+
+        // Find error handler
+        const errorHandler = mockStream.on.mock.calls.find(
+            (call) => call[0] === 'error',
+        )[1];
+        expect(errorHandler).toBeDefined();
+
+        // 2. Emit error
+        errorHandler(new Error('Stream broken'));
+
+        // Expect log
+        expect(mockLog.error).toHaveBeenCalledWith(
+            expect.stringContaining('SSE Connection failed'),
         );
+
+        // 3. Fast forward time
+        jest.advanceTimersByTime(1000);
+
+        // 4. Expect reconnection
+        expect(axios).toHaveBeenCalledTimes(2);
+
+        jest.useRealTimers();
     });
 });

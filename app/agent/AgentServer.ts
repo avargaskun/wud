@@ -4,11 +4,12 @@ import express from 'express';
 import cors from 'cors';
 import bodyParser from 'body-parser';
 import logger from '../log';
-const log = logger.child({ component: 'agent-server' });
 import * as storeContainer from '../store/container';
 import * as event from '../event';
-import { getServerConfiguration } from '../configuration';
+import { getServerConfiguration, getVersion } from '../configuration';
 import * as registry from '../registry';
+
+const log = logger.child({ component: 'agent-server' });
 
 // SSE Clients
 let sseClients = [];
@@ -20,17 +21,26 @@ let cachedSecret: string | undefined;
  * @param data
  */
 function sendSseEvent(eventName, data) {
-    const payload = JSON.stringify(data);
+    const message = {
+        type: eventName,
+        data: data,
+    };
+    const payload = JSON.stringify(message);
     sseClients.forEach((client) => {
-        client.res.write(`event: ${eventName}\n`);
         client.res.write(`data: ${payload}\n\n`);
     });
 }
 
 // Subscribe to store events
-event.registerContainerAdded((container) => sendSseEvent('wud:container-added', container));
-event.registerContainerUpdated((container) => sendSseEvent('wud:container-updated', container));
-event.registerContainerRemoved((container) => sendSseEvent('wud:container-removed', { id: container.id }));
+event.registerContainerAdded((container) =>
+    sendSseEvent('wud:container-added', container),
+);
+event.registerContainerUpdated((container) =>
+    sendSseEvent('wud:container-updated', container),
+);
+event.registerContainerRemoved((container) =>
+    sendSseEvent('wud:container-removed', { id: container.id }),
+);
 
 /**
  * Authenticate Middleware.
@@ -74,9 +84,11 @@ function getWatchers(req, res) {
  * Subscribe to Events (SSE).
  */
 function subscribeEvents(req, res) {
+    log.info(`Controller WUD with ip ${req.ip} connected.`);
+
     const headers = {
         'Content-Type': 'text/event-stream',
-        'Connection': 'keep-alive',
+        Connection: 'keep-alive',
         'Cache-Control': 'no-cache',
     };
     res.writeHead(200, headers);
@@ -87,7 +99,15 @@ function subscribeEvents(req, res) {
     };
     sseClients.push(client);
 
+    // Send Welcome / Ack
+    const ackMessage = {
+        type: 'wud:ack',
+        data: { version: getVersion() },
+    };
+    client.res.write(`data: ${JSON.stringify(ackMessage)}\n\n`);
+
     req.on('close', () => {
+        log.info(`Controller WUD with ip ${req.ip} disconnected.`);
         sseClients = sseClients.filter((c) => c.id !== client.id);
     });
 }
@@ -100,6 +120,7 @@ async function runTrigger(req, res) {
     const container = storeContainer.getContainer(id);
 
     if (!container) {
+        log.warn(`Received trigger request for invalid container: ${id}`);
         return res.status(404).json({ error: 'Container not found' });
     }
 
@@ -109,7 +130,10 @@ async function runTrigger(req, res) {
     const trigger = registry.getState().trigger[triggerId];
 
     if (!trigger) {
-        return res.status(404).json({ error: `Trigger ${triggerId} not found on Agent` });
+        log.warn(`Received trigger request for invalid trigger: ${triggerId}`);
+        return res
+            .status(404)
+            .json({ error: `Trigger ${triggerId} not found on Agent` });
     }
 
     try {
@@ -142,8 +166,12 @@ export async function init() {
     }
 
     if (!cachedSecret) {
-        log.error('WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE to be defined.');
-        throw new Error('WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE');
+        log.error(
+            'WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE to be defined.',
+        );
+        throw new Error(
+            'WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE',
+        );
     }
 
     const configuration = getServerConfiguration();
@@ -151,10 +179,12 @@ export async function init() {
 
     app.use(bodyParser.json());
     if (configuration.cors.enabled) {
-        app.use(cors({
-            origin: configuration.cors.origin,
-            methods: configuration.cors.methods,
-        }));
+        app.use(
+            cors({
+                origin: configuration.cors.origin,
+                methods: configuration.cors.methods,
+            }),
+        );
     }
 
     // Auth Middleware
@@ -164,7 +194,10 @@ export async function init() {
     app.get('/api/containers', getContainers);
     app.get('/api/watchers', getWatchers);
     app.get('/api/events', subscribeEvents);
-    app.post('/api/containers/:id/triggers/:triggerType/:triggerName', runTrigger);
+    app.post(
+        '/api/containers/:id/triggers/:triggerType/:triggerName',
+        runTrigger,
+    );
 
     // Start Server
     if (configuration.tls.enabled) {
@@ -173,11 +206,15 @@ export async function init() {
             cert: fs.readFileSync(configuration.tls.cert),
         };
         https.createServer(options, app).listen(configuration.port, () => {
-            log.info(`Agent Server listening on port ${configuration.port} (HTTPS)`);
+            log.info(
+                `Agent Server listening on port ${configuration.port} (HTTPS)`,
+            );
         });
     } else {
         app.listen(configuration.port, () => {
-            log.info(`Agent Server listening on port ${configuration.port} (HTTP)`);
+            log.info(
+                `Agent Server listening on port ${configuration.port} (HTTP)`,
+            );
         });
     }
 }
