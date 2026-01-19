@@ -5,13 +5,21 @@ import express from 'express';
 import nocache from 'nocache';
 import * as registry from '../registry';
 
+export interface ApiComponent {
+    id: string;
+    type: string;
+    name: string;
+    configuration: any;
+    agent?: string;
+}
+
 /**
  * Map a Component to a displayable (api/ui) item.
  * @param key
  * @param component
  * @returns {{id: *}}
  */
-function mapComponentToItem(key, component) {
+export function mapComponentToItem(key, component): ApiComponent {
     return {
         id: key,
         type: component.type,
@@ -25,7 +33,7 @@ function mapComponentToItem(key, component) {
  * @param listFunction
  * @returns {{id: string}[]}
  */
-export function mapComponentsToList(components) {
+export function mapComponentsToList(components): ApiComponent[] {
     return Object.keys(components)
         .map((key) => mapComponentToItem(key, components[key]))
         .sort(
@@ -51,7 +59,7 @@ function getAll(req, res, kind) {
  * @param res
  * @param listFunction
  */
-export function getById(req, res, kind) {
+function getById(req, res, kind) {
     const { type, name } = req.params;
     const id = `${type}.${name}`;
     const component = registry.getState()[kind][id];

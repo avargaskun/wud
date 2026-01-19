@@ -9,7 +9,7 @@ import * as authenticationRouter from './authentication';
 import * as logRouter from './log';
 import * as storeRouter from './store';
 import * as serverRouter from './server';
-import * as auth from './auth';
+import { requireAuthentication } from './auth';
 import * as agentRouter from './agent';
 
 /**
@@ -23,7 +23,7 @@ export function init() {
     router.use('/app', appRouter.init());
 
     // Routes to protect after this line
-    router.use(auth.requireAuthentication);
+    router.use(requireAuthentication);
 
     // Mount log router
     router.use('/log', logRouter.init());
@@ -45,7 +45,14 @@ export function init() {
 
     // Mount registry router
     router.use('/registries', registryRouter.init());
+
+    // Mount auth
     router.use('/authentications', authenticationRouter.init());
+
     router.use('/agents', agentRouter.init());
+
+    // All other API routes => 404
+    router.get('/*', (req, res) => res.sendStatus(404));
+
     return router;
 }

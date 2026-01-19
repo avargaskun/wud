@@ -102,6 +102,9 @@ agent?: string; // Name of the agent. Undefined/Null if local.
     - `getContainers()` is called.
     - `findNewVersion()` (Registry check) is SKIPPED.
     - `result` object in Container is left empty or minimal.
+- **API**:
+    - `GET /api/watchers` returns both local and agent watchers.
+    - New endpoint `GET /api/watchers/:agent/:type/:name` for agent watcher details.
 
 ### 3. Agent Server (`app/agent/AgentServer.ts`)
 - New component.
@@ -120,6 +123,11 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 ### 5. Registry Logic
 - The Controller needs a way to "hydrate" a container with registry info when it comes from an Agent.
 - Current logic is tied to `Watcher.watch()`. We might need a `Registry.checkUpdate(container)` function that can be called independently.
+
+### 6. Agent Configuration & Management
+- **Agent Component (`app/agent/Agent.ts`)**: New Component class representing a remote agent configuration.
+- **Registry Integration (`app/registry/index.ts`)**: Agents are registered as components (`registry.getState().agent`) based on environment variables.
+- **Agent Manager (`app/agent/index.ts`)**: Iterates over registered Agent components to instantiate and manage `AgentClient` runtime instances.
 
 ## Frontend Changes
 - **Configuration**: Add "Agents" section.

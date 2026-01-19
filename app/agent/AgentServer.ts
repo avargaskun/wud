@@ -9,6 +9,7 @@ import * as event from '../event';
 import { getServerConfiguration, getVersion } from '../configuration';
 import * as registry from '../registry';
 import { Container } from '../model/container';
+import { mapComponentsToList } from '../api/component';
 
 const log = logger.child({ component: 'agent-server' });
 
@@ -72,18 +73,9 @@ function getContainers(req: Request, res: Response) {
  * Get Watchers.
  */
 function getWatchers(req: Request, res: Response) {
-    const watchers = registry.getState().watcher;
-    const maskedWatchers: Record<string, any> = {};
-    Object.keys(watchers).forEach((key) => {
-        const component = watchers[key];
-        maskedWatchers[key] = {
-            id: component.getId(),
-            type: component.type,
-            name: component.name,
-            configuration: component.maskConfiguration(),
-        };
-    });
-    res.json(maskedWatchers);
+    const localWatchers = registry.getState().watcher;
+    const items = mapComponentsToList(localWatchers);
+    res.json(items);
 }
 
 /**

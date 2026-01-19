@@ -11,21 +11,24 @@ import {
     getTriggerConfigurations,
     getRegistryConfigurations,
     getAuthenticationConfigurations,
+    getAgentConfigurations,
 } from '../configuration';
 import Component, { ComponentConfiguration } from './Component';
 import Trigger from '../triggers/providers/Trigger';
 import Watcher from '../watchers/Watcher';
 import Registry from '../registries/Registry';
 import Authentication from '../authentications/providers/Authentication';
+import Agent from '../agent/Agent';
 
 export interface RegistryState {
     trigger: { [key: string]: Trigger };
     watcher: { [key: string]: Watcher };
     registry: { [key: string]: Registry };
     authentication: { [key: string]: Authentication };
+    agent: { [key: string]: Agent };
 }
 
-export interface RegistrationOptions { 
+export interface RegistrationOptions {
     agent?: boolean;
 }
 
@@ -39,6 +42,7 @@ const state: RegistryState = {
     watcher: {},
     registry: {},
     authentication: {},
+    agent: {},
 };
 
 export function getState() {
@@ -81,6 +85,7 @@ function getDocumentationLink(kind: ComponentKind) {
             'https://github.com/getwud/wud/tree/main/docs/configuration/registries',
         authentication:
             'https://github.com/getwud/wud/tree/main/docs/configuration/authentications',
+        agent: 'https://github.com/getwud/wud/blob/main/AGENT.md',
     };
     return (
         docLinks[kind] ||
@@ -141,7 +146,6 @@ async function registerComponent(
     const nameLowercase = name.toLowerCase();
     const componentFile = `${componentPath}/${providerLowercase.toLowerCase()}/${capitalize(provider)}`;
     try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const ComponentClass = (await import(componentFile)).default;
         const component: Component = new ComponentClass();
         const componentRegistered = await component.register(
@@ -216,7 +220,9 @@ async function registerWatchers(options: RegistrationOptions = {}) {
     try {
         if (Object.keys(configurations).length === 0) {
             if (options.agent) {
-                log.error('Agent mode requires at least one watcher configured.');
+                log.error(
+                    'Agent mode requires at least one watcher configured.',
+                );
                 process.exit(1);
             }
             log.info(
@@ -271,10 +277,12 @@ async function registerTriggers(options: RegistrationOptions = {}) {
             if (allowedTriggers.includes(provider.toLowerCase())) {
                 filteredConfigurations[provider] = configurations[provider];
             } else {
-                log.warn(`Trigger type '${provider}' is not supported in Agent mode and will be ignored.`);
+                log.warn(
+                    `Trigger type '${provider}' is not supported in Agent mode and will be ignored.`,
+                );
             }
         });
-        
+
         try {
             await registerComponents(
                 'trigger',
@@ -357,6 +365,30 @@ async function registerAuthentications() {
 }
 
 /**
+ * Register agents.
+ */
+async function registerAgents() {
+    const configurations = getAgentConfigurations();
+    const promises = Object.keys(configurations).map(async (name) => {
+        try {
+            const config = configurations[name];
+            const agent = new Agent();
+            const registered = await agent.register(
+                'agent',
+                'wud',
+                name,
+                config,
+            );
+            state.agent[registered.getId()] = registered as Agent;
+        } catch (e: any) {
+            log.warn(`Agent ${name} failed to register (${e.message})`);
+            log.debug(e);
+        }
+    });
+    await Promise.all(promises);
+}
+
+/**
  * Deregister a component.
  * @param component
  * @param kind
@@ -429,6 +461,14 @@ async function deregisterAuthentications() {
 }
 
 /**
+ * Deregister all agents.
+ * @returns {Promise<unknown>}
+ */
+async function deregisterAgents() {
+    return deregisterComponents(Object.values(getState().agent), 'agent');
+}
+
+/**
  * Deregister all components.
  * @returns {Promise}
  */
@@ -438,6 +478,7 @@ async function deregisterAll() {
         await deregisterTriggers();
         await deregisterRegistries();
         await deregisterAuthentications();
+        await deregisterAgents();
     } catch (e: any) {
         throw new Error(`Error when trying to deregister ${e.message}`);
     }
@@ -456,6 +497,9 @@ export async function init(options: RegistrationOptions = {}) {
 
         // Register authentications
         await registerAuthentications();
+
+        // Register agents
+        await registerAgents();
     }
 
     // Gracefully exit when possible

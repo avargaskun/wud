@@ -21,6 +21,10 @@ jest.mock('./api', () => ({
     init: jest.fn().mockResolvedValue(),
 }));
 
+jest.mock('./agent', () => ({
+    init: jest.fn().mockResolvedValue(),
+}));
+
 jest.mock('./prometheus', () => ({
     init: jest.fn(),
 }));
@@ -37,6 +41,7 @@ describe('Main Application', () => {
         const store = await import('./store');
         const registry = await import('./registry');
         const api = await import('./api');
+        const agent = await import('./agent');
         const prometheus = await import('./prometheus');
         const { getVersion } = await import('./configuration');
 
@@ -54,6 +59,7 @@ describe('Main Application', () => {
         expect(store.init).toHaveBeenCalled();
         expect(prometheus.init).toHaveBeenCalled();
         expect(registry.init).toHaveBeenCalled();
+        expect(agent.init).toHaveBeenCalled();
         expect(api.init).toHaveBeenCalled();
     });
 });

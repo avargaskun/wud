@@ -33,13 +33,13 @@ export class AgentClient {
     private baseUrl: string;
     private axiosOptions: AxiosRequestConfig;
     public isConnected: boolean;
-    private watchers: Record<string, AgentWatcher>;
+    public watchers: AgentWatcher[];
     private reconnectTimer: NodeJS.Timeout | null;
 
     constructor(name: string, config: AgentClientConfig) {
         this.name = name;
         this.config = config;
-        this.watchers = {};
+        this.watchers = [];
         this.log = logger.child({ component: `agent-client.${name}` });
         this.baseUrl = `${this.config.host}:${this.config.port || 3000}`;
         // Add protocol if not present
@@ -92,9 +92,10 @@ export class AgentClient {
         }
 
         try {
-            const responseWatchers = await axios.get<
-                Record<string, AgentWatcher>
-            >(`${this.baseUrl}/api/watchers`, this.axiosOptions);
+            const responseWatchers = await axios.get<AgentWatcher[]>(
+                `${this.baseUrl}/api/watchers`,
+                this.axiosOptions,
+            );
             this.watchers = responseWatchers.data;
         } catch (e: any) {
             this.log.warn(`Failed to fetch watchers: ${e.message}`);

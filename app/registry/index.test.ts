@@ -9,12 +9,14 @@ jest.mock('../configuration', () => ({
     getTriggerConfigurations: jest.fn(),
     getWatcherConfigurations: jest.fn(),
     getAuthenticationConfigurations: jest.fn(),
+    getAgentConfigurations: jest.fn(),
 }));
 
 let registries = {};
 let triggers = {};
 let watchers = {};
 let authentications = {};
+let agents = {};
 
 // Override the mocked functions
 // We need to cast to jest.Mock or assume they are mocks because of the factory above
@@ -23,11 +25,13 @@ const mockGetTriggerConfigurations = configuration.getTriggerConfigurations;
 const mockGetWatcherConfigurations = configuration.getWatcherConfigurations;
 const mockGetAuthenticationConfigurations =
     configuration.getAuthenticationConfigurations;
+const mockGetAgentConfigurations = configuration.getAgentConfigurations;
 
 mockGetRegistryConfigurations.mockImplementation(() => registries);
 mockGetTriggerConfigurations.mockImplementation(() => triggers);
 mockGetWatcherConfigurations.mockImplementation(() => watchers);
 mockGetAuthenticationConfigurations.mockImplementation(() => authentications);
+mockGetAgentConfigurations.mockImplementation(() => agents);
 
 import * as registry from './index';
 
@@ -38,6 +42,7 @@ beforeEach(async () => {
     triggers = {};
     watchers = {};
     authentications = {};
+    agents = {};
 
     // Ensure default implementations return the variables
     mockGetRegistryConfigurations.mockImplementation(() => registries);
@@ -46,6 +51,7 @@ beforeEach(async () => {
     mockGetAuthenticationConfigurations.mockImplementation(
         () => authentications,
     );
+    mockGetAgentConfigurations.mockImplementation(() => agents);
 });
 
 afterEach(async () => {
@@ -54,6 +60,7 @@ afterEach(async () => {
         await registry.testable_deregisterTriggers();
         await registry.testable_deregisterWatchers();
         await registry.testable_deregisterAuthentications();
+        await registry.testable_deregisterAll(); // Added to clean agents too
     } catch (e) {
         // ignore error
     }
@@ -281,6 +288,16 @@ test('init should register all components', async () => {
             },
         },
     };
+    agents = {
+        agent1: {
+            host: 'host1',
+            secret: 'secret1',
+        },
+        agent2: {
+            host: 'host2',
+            secret: 'secret2',
+        },
+    };
     await registry.init();
     expect(Object.keys(registry.getState().registry).sort()).toEqual([
         'ecr.private',
@@ -300,6 +317,10 @@ test('init should register all components', async () => {
     expect(Object.keys(registry.getState().authentication)).toEqual([
         'basic.john',
         'basic.jane',
+    ]);
+    expect(Object.keys(registry.getState().agent)).toEqual([
+        'wud.agent1',
+        'wud.agent2',
     ]);
 });
 
@@ -341,12 +362,19 @@ test('deregisterAll should deregister all components', async () => {
             },
         },
     };
+    agents = {
+        agent1: {
+            host: 'host1',
+            secret: 'secret1',
+        },
+    };
     await registry.init();
     await registry.testable_deregisterAll();
     expect(Object.keys(registry.getState().registry).length).toEqual(0);
     expect(Object.keys(registry.getState().trigger).length).toEqual(0);
     expect(Object.keys(registry.getState().watcher).length).toEqual(0);
     expect(Object.keys(registry.getState().authentication).length).toEqual(0);
+    expect(Object.keys(registry.getState().agent).length).toEqual(0);
 });
 
 test('deregisterAll should throw an error when any component fails to deregister', async () => {
@@ -398,5 +426,23 @@ test('deregisterWatchers should throw when errors occurred', async () => {
     };
     expect(registry.testable_deregisterWatchers()).rejects.toThrowError(
         'Error when deregistering component .',
+    );
+});
+
+test('registerAgents should warn when registration errors occur', async () => {
+    const spyLog = jest.spyOn(registry.testable_log, 'warn');
+    agents = {
+        agent1: {
+            // Missing host and secret
+            port: 3000,
+        },
+    };
+    // Initialize standard registry state before running individual registration
+    // This is because registerAgents relies on getAgentConfigurations mock
+    await registry.init({ agent: false }); // or just call private function if exported?
+    // Wait, init calls registerAgents.
+    // So the warning should happen during init.
+    expect(spyLog).toHaveBeenCalledWith(
+        expect.stringContaining('Agent agent1 failed to register'),
     );
 });
