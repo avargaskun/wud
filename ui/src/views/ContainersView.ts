@@ -1,6 +1,7 @@
 import ContainerItem from "@/components/ContainerItem.vue";
 import ContainerFilter from "@/components/ContainerFilter.vue";
 import { deleteContainer, getAllContainers } from "@/services/container";
+import agentService from "@/services/agent";
 import { defineComponent } from "vue";
 
 export default defineComponent({
@@ -12,6 +13,7 @@ export default defineComponent({
   data() {
     return {
       containers: [] as any[],
+      agentsList: [] as any[],
       registrySelected: "",
       agentSelected: "",
       watcherSelected: "",
@@ -198,7 +200,10 @@ export default defineComponent({
     const oldestFirst = to.query["oldest-first"];
     const groupByLabel = to.query["group-by-label"];
     try {
-      const containers = await getAllContainers();
+      const [containers, agents] = await Promise.all([
+        getAllContainers(),
+        agentService.getAgents(),
+      ]);
       next((vm: any) => {
         if (registrySelected) {
           vm.registrySelected = registrySelected;
@@ -222,6 +227,7 @@ export default defineComponent({
           vm.groupByLabel = groupByLabel;
         }
         vm.containers = containers;
+        vm.agentsList = agents;
       });
     } catch (e: any) {
       next((vm: any) => {

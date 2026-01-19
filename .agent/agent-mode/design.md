@@ -134,6 +134,7 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 - **Containers**:
     - Filter by Agent.
     - Show "Agent: {name}" in details.
+    - Container Card Title: Shows `[Agent] / [Watcher] / [Name] : [Version]` (Agent pill is green if connected, red if disconnected).
 - **Watchers**: Show which Agent a watcher belongs to.
 
 ## Security

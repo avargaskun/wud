@@ -35,6 +35,7 @@
             :groupingLabel="groupByLabel"
             :previousContainer="containersFiltered[index - 1]"
             :container="container"
+            :agents="agentsList"
             :oldest-first="oldestFirst"
             @delete-container="deleteContainer(container)"
             @container-deleted="removeContainerFromList(container)"

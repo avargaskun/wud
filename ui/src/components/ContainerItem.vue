@@ -23,17 +23,17 @@
           class="text-body-3 d-flex align-center"
           style="gap: 5px"
         >
+          <span v-if="smAndUp && container.agent">
+            <v-chip label :color="agentStatusColor" variant="outlined" disabled>
+              <v-icon left>mdi-lan</v-icon>
+              {{ container.agent }}
+            </v-chip>
+            /
+          </span>
           <span v-if="smAndUp">
             <v-chip label color="info" variant="outlined" disabled>
               <v-icon left>mdi-update</v-icon>
               {{ container.watcher }}
-            </v-chip>
-            /
-          </span>
-          <span v-if="smAndUp && container.agent">
-            <v-chip label color="info" variant="outlined" disabled>
-              <v-icon left>mdi-lan</v-icon>
-              {{ container.agent }}
             </v-chip>
             /
           </span>
