@@ -1,4 +1,5 @@
 {
+    "exec": "ts-node index.ts | bunyan -L -o short",
     "env": {
         "WUD_VERSION": "dev",
         "WUD_STORE_PATH": ".store",

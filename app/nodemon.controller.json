@@ -1,0 +1,26 @@
+{
+    "exec": "ts-node index.ts | bunyan -L -o short",
+    "env": {
+        "WUD_VERSION": "dev",
+        "WUD_STORE_PATH": ".store",
+        "WUD_LOG_LEVEL": "debug",
+        "WUD_WATCHER_DISABLED_SOCKET": "/bad/path/docker.sock",
+        "WUD_AGENT_REMOTE_HOST": "127.0.0.1",
+        "WUD_AGENT_REMOTE_PORT": "3001",
+        "WUD_AGENT_REMOTE_SECRET": "Rr5Kn37vxbTj8KwNHY6hODDtelSP2TDZ",
+        "WUD_REGISTRY_ECR_PRIVATE_ACCESSKEYID": "dummy",
+        "WUD_REGISTRY_ECR_PRIVATE_SECRETACCESSKEY": "dummy",
+        "WUD_REGISTRY_ECR_PRIVATE_REGION": "eu-west-1",
+        "WUD_REGISTRY_GHCR_PRIVATE_USERNAME": "dummy",
+        "WUD_REGISTRY_GHCR_PRIVATE_TOKEN": "dummy",
+        "WUD_REGISTRY_GITLAB_PRIVATE_TOKEN": "dummy",
+        "WUD_REGISTRY_LSCR_PRIVATE_USERNAME": "dummy",
+        "WUD_REGISTRY_LSCR_PRIVATE_TOKEN": "dummy",
+        "WUD_REGISTRY_ACR_PRIVATE_CLIENTID": "89dcf54b-ef99-4dc1-bebb-8e0eacafdac8",
+        "WUD_REGISTRY_ACR_PRIVATE_CLIENTSECRET": "dummy",
+        "WUD_REGISTRY_TRUEFORGE_PRIVATE_USERNAME": "dummy",
+        "WUD_REGISTRY_TRUEFORGE_PRIVATE_TOKEN": "dummy",
+        "WUD_REGISTRY_GCR_PRIVATE_CLIENTEMAIL": "wud-test.iam.gserviceaccount.com",
+        "WUD_REGISTRY_GCR_PRIVATE_PRIVATEKEY": "------BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQDZ\n-----END PRIVATE KEY-----"
+    }
+}

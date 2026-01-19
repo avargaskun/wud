@@ -1,0 +1,11 @@
+{
+    "exec": "ts-node index.ts --agent | bunyan -L -o short",
+    "env": {
+        "WUD_VERSION": "dev",
+        "WUD_LOG_LEVEL": "debug",
+        "WUD_SERVER_PORT": 3001,
+        "WUD_AGENT_SECRET": "Rr5Kn37vxbTj8KwNHY6hODDtelSP2TDZ",
+        "WUD_WATCHER_REMOTE_WATCHBYDEFAULT": "false",
+        "WUD_TRIGGER_DOCKER_REMOTE_AUTO": "false"
+    }
+}

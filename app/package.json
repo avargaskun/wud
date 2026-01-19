@@ -5,7 +5,9 @@
     "main": "dist/index.js",
     "scripts": {
         "build": "tsc",
-        "start": "nodemon --exec ts-node index.ts | bunyan -L -o short",
+        "start": "nodemon",
+        "start:agent": "nodemon --config nodemon.agent.json",
+        "start:controller": "nodemon --config nodemon.controller.json",
         "doc": ".docsify serve ./docs",
         "format": "prettier --write .",
         "lint:fix": "prettier --write . && eslint '**/*.ts'",
