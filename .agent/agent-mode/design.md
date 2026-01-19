@@ -111,6 +111,7 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 - Maintains SSE connection (reconnect logic).
 - On event, normalizes container data (adds `agent` field) and updates the **Main Store**.
 - **Crucial**: When receiving a container from Agent, the Controller must trigger an "Update Check" (Registry lookup) because the Agent didn't do it.
+- The Controller must also call `normalizeContainer` on incoming containers to resolve the Registry provider (since the Agent doesn't know about registries).
 
 ### 5. Registry Logic
 - The Controller needs a way to "hydrate" a container with registry info when it comes from an Agent.

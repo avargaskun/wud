@@ -155,6 +155,9 @@ export function normalizeContainer(container) {
     if (!registryProvider) {
         log.warn(`${fullName(container)} - No Registry Provider found`);
         containerWithNormalizedImage.image.registry.name = 'unknown';
+        if (!containerWithNormalizedImage.image.registry.url) {
+            containerWithNormalizedImage.image.registry.url = 'unknown';
+        }
     } else {
         containerWithNormalizedImage.image = registryProvider.normalizeImage(
             container.image,

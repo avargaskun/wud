@@ -49,6 +49,8 @@ describe('AgentClient', () => {
         
         // @ts-ignore
         utils.findNewVersion.mockResolvedValue({ tag: '2.0.0' });
+        // @ts-ignore
+        utils.normalizeContainer.mockImplementation(c => c);
 
         await client.init();
 
@@ -56,6 +58,8 @@ describe('AgentClient', () => {
             expect.stringContaining('/api/containers'),
             expect.anything()
         );
+        expect(utils.normalizeContainer).toHaveBeenCalledWith(containers[0]);
+        expect(utils.findNewVersion).toHaveBeenCalled();
         expect(storeContainer.insertContainer).toHaveBeenCalled();
         expect(axios).toHaveBeenCalledWith(
             expect.objectContaining({ url: expect.stringContaining('/api/events') })

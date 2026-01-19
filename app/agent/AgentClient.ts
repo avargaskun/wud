@@ -2,7 +2,7 @@ import axios from 'axios';
 import https from 'https';
 import logger from '../log';
 import * as storeContainer from '../store/container';
-import { findNewVersion } from '../watchers/providers/docker/utils';
+import { findNewVersion, normalizeContainer } from '../watchers/providers/docker/utils';
 
 export class AgentClient {
     name;
@@ -76,6 +76,13 @@ export class AgentClient {
         container.agent = this.name;
         const logContainer = this.log.child({ container: container.name });
         
+        try {
+            // Normalize container to resolve Registry (Agent only does discovery)
+            container = normalizeContainer(container);
+        } catch (e) {
+            this.log.warn(`Error normalizing container ${container.name}: ${e.message}`);
+        }
+
         try {
             // Check for updates using local Registry logic
             // Pass null as dockerApi because we can't check legacy v1 digests remotely easily

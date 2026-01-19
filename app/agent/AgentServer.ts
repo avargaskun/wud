@@ -12,6 +12,7 @@ import * as registry from '../registry';
 
 // SSE Clients
 let sseClients = [];
+let cachedSecret: string | undefined;
 
 /**
  * Send SSE event to all clients.
@@ -35,21 +36,8 @@ event.registerContainerRemoved((container) => sendSseEvent('wud:container-remove
  * Authenticate Middleware.
  */
 function authenticate(req, res, next) {
-    const agentSecret = process.env.WUD_AGENT_SECRET;
-    const agentSecretFile = process.env.WUD_AGENT_SECRET_FILE;
-    
-    let secret = agentSecret;
-    if (!secret && agentSecretFile) {
-        try {
-            secret = fs.readFileSync(agentSecretFile, 'utf-8').trim();
-        } catch (e) {
-            log.error(`Error reading secret file: ${e.message}`);
-            return res.status(500).send();
-        }
-    }
-
     const requestSecret = req.headers['x-wud-agent-secret'];
-    if (!secret || requestSecret !== secret) {
+    if (!cachedSecret || requestSecret !== cachedSecret) {
         log.warn(`Unauthorized access attempt from ${req.ip}`);
         return res.status(401).send();
     }
@@ -138,6 +126,26 @@ async function runTrigger(req, res) {
  * Init Agent Server.
  */
 export async function init() {
+    cachedSecret = undefined;
+    const agentSecret = process.env.WUD_AGENT_SECRET;
+    const agentSecretFile = process.env.WUD_AGENT_SECRET_FILE;
+
+    if (agentSecret) {
+        cachedSecret = agentSecret;
+    } else if (agentSecretFile) {
+        try {
+            cachedSecret = fs.readFileSync(agentSecretFile, 'utf-8').trim();
+        } catch (e) {
+            log.error(`Error reading secret file: ${e.message}`);
+            throw new Error(`Error reading secret file: ${e.message}`);
+        }
+    }
+
+    if (!cachedSecret) {
+        log.error('WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE to be defined.');
+        throw new Error('WUD Agent mode requires WUD_AGENT_SECRET or WUD_AGENT_SECRET_FILE');
+    }
+
     const configuration = getServerConfiguration();
     const app = express();
 
