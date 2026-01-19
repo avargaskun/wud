@@ -1,4 +1,3 @@
-
 import fs from 'fs';
 import Dockerode from 'dockerode';
 import Joi from 'joi';
@@ -13,7 +12,8 @@ import {
     transform as transformTag,
 } from '../../../tag';
 import * as event from '../../../event';
-import { wudWatch,
+import {
+    wudWatch,
     wudTagInclude,
     wudTagExclude,
     wudTagTransform,
@@ -23,7 +23,7 @@ import { wudWatch,
     wudDisplayIcon,
     wudTriggerInclude,
     wudTriggerExclude,
- } from './label';
+} from './label';
 import * as storeContainer from '../../../store/container';
 import log from '../../../log';
 import {
@@ -33,7 +33,7 @@ import {
     ContainerImage,
 } from '../../../model/container';
 import * as registry from '../../../registry';
-import { getWatchContainerGauge  } from '../../../prometheus/watcher';
+import { getWatchContainerGauge } from '../../../prometheus/watcher';
 import Watcher from '../../Watcher';
 import { ComponentConfiguration } from '../../../registry/Component';
 
@@ -73,7 +73,11 @@ function getRegistries() {
  * @param tags
  * @returns {*}
  */
-function getTagCandidates(container: Container, tags: string[], logContainer: any) {
+function getTagCandidates(
+    container: Container,
+    tags: string[],
+    logContainer: any,
+) {
     let filteredTags = tags;
 
     // Match include tag regex
@@ -222,7 +226,10 @@ function getRegistry(registryName: string) {
  * @param containersFromTheStore
  * @returns {*[]|*}
  */
-function getOldContainers(newContainers: Container[], containersFromTheStore: Container[]) {
+function getOldContainers(
+    newContainers: Container[],
+    containersFromTheStore: Container[],
+) {
     if (!containersFromTheStore || !newContainers) {
         return [];
     }
@@ -239,7 +246,10 @@ function getOldContainers(newContainers: Container[], containersFromTheStore: Co
  * @param newContainers
  * @param containersFromTheStore
  */
-function pruneOldContainers(newContainers: Container[], containersFromTheStore: Container[]) {
+function pruneOldContainers(
+    newContainers: Container[],
+    containersFromTheStore: Container[],
+) {
     const containersToRemove = getOldContainers(
         newContainers,
         containersFromTheStore,
@@ -283,7 +293,10 @@ function getRepoDigest(containerImage: any) {
  * @param watchByDefault true if containers must be watched by default
  * @returns {boolean}
  */
-function isContainerToWatch(wudWatchLabelValue: string, watchByDefault: boolean) {
+function isContainerToWatch(
+    wudWatchLabelValue: string,
+    watchByDefault: boolean,
+) {
     return wudWatchLabelValue !== undefined && wudWatchLabelValue !== ''
         ? wudWatchLabelValue.toLowerCase() === 'true'
         : watchByDefault;
@@ -295,7 +308,11 @@ function isContainerToWatch(wudWatchLabelValue: string, watchByDefault: boolean)
  * @param {object} parsedImage - object containing at least `domain` property
  * @returns {boolean}
  */
-function isDigestToWatch(wudWatchDigestLabelValue: string, parsedImage: any, isSemver: boolean) {
+function isDigestToWatch(
+    wudWatchDigestLabelValue: string,
+    parsedImage: any,
+    isSemver: boolean,
+) {
     const domain = parsedImage.domain;
     const isDockerHub =
         !domain ||
@@ -327,7 +344,8 @@ function isDigestToWatch(wudWatchDigestLabelValue: string, parsedImage: any, isS
  * Docker Watcher Component.
  */
 class Docker extends Watcher {
-    public configuration: DockerWatcherConfiguration = {} as DockerWatcherConfiguration;
+    public configuration: DockerWatcherConfiguration =
+        {} as DockerWatcherConfiguration;
     public dockerApi: Dockerode;
     public watchCron: any;
     public watchCronTimeout: any;
@@ -920,7 +938,7 @@ class Docker extends Watcher {
                 tag: tagName,
             },
             updateAvailable: false,
-            updateKind: { kind: 'unknown' }
+            updateKind: { kind: 'unknown' },
         } as Container);
     }
 

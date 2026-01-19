@@ -6,11 +6,12 @@ import fs from 'fs';
 import path from 'path';
 import logger from '../log';
 const log = logger.child({ component: 'registry' });
-import { getWatcherConfigurations,
+import {
+    getWatcherConfigurations,
     getTriggerConfigurations,
     getRegistryConfigurations,
     getAuthenticationConfigurations,
- } from '../configuration';
+} from '../configuration';
 import Component, { ComponentConfiguration } from './Component';
 import Trigger from '../triggers/providers/Trigger';
 import Watcher from '../watchers/Watcher';
@@ -68,10 +69,14 @@ function getAvailableProviders(basePath: string) {
  */
 function getDocumentationLink(kind: ComponentKind) {
     const docLinks: Record<ComponentKind, string> = {
-        trigger: 'https://github.com/getwud/wud/tree/main/docs/configuration/triggers',
-        watcher: 'https://github.com/getwud/wud/tree/main/docs/configuration/watchers',
-        registry: 'https://github.com/getwud/wud/tree/main/docs/configuration/registries',
-        authentication: 'https://github.com/getwud/wud/tree/main/docs/configuration/authentications',
+        trigger:
+            'https://github.com/getwud/wud/tree/main/docs/configuration/triggers',
+        watcher:
+            'https://github.com/getwud/wud/tree/main/docs/configuration/watchers',
+        registry:
+            'https://github.com/getwud/wud/tree/main/docs/configuration/registries',
+        authentication:
+            'https://github.com/getwud/wud/tree/main/docs/configuration/authentications',
     };
     return (
         docLinks[kind] ||
@@ -87,7 +92,12 @@ function getDocumentationLink(kind: ComponentKind) {
  * @param {string[]} availableProviders list of available providers
  * @returns {string} formatted error message
  */
-function getHelpfulErrorMessage(kind: ComponentKind, provider: string, error: string, availableProviders: string[]) {
+function getHelpfulErrorMessage(
+    kind: ComponentKind,
+    provider: string,
+    error: string,
+    availableProviders: string[],
+) {
     let message = `Error when registering component ${provider} (${error})`;
 
     if (error.includes('Cannot find module')) {
@@ -121,7 +131,7 @@ async function registerComponent(
     provider: string,
     name: string,
     configuration: ComponentConfiguration,
-    componentPath: string
+    componentPath: string,
 ): Promise<Component> {
     const providerLowercase = provider.toLowerCase();
     const nameLowercase = name.toLowerCase();
@@ -160,7 +170,11 @@ async function registerComponent(
  * @param path
  * @returns {*[]}
  */
-async function registerComponents(kind: ComponentKind, configurations: Record<string, any>, path: string) {
+async function registerComponents(
+    kind: ComponentKind,
+    configurations: Record<string, any>,
+    path: string,
+) {
     if (configurations) {
         const providers = Object.keys(configurations);
         const providerPromises = providers
@@ -329,7 +343,10 @@ async function deregisterComponent(component: Component, kind: ComponentKind) {
  * @param kind
  * @returns {Promise}
  */
-async function deregisterComponents(components: Component[], kind: ComponentKind) {
+async function deregisterComponents(
+    components: Component[],
+    kind: ComponentKind,
+) {
     const deregisterPromises = components.map(async (component) =>
         deregisterComponent(component, kind),
     );

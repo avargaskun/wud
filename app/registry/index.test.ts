@@ -21,7 +21,8 @@ let authentications = {};
 const mockGetRegistryConfigurations = configuration.getRegistryConfigurations;
 const mockGetTriggerConfigurations = configuration.getTriggerConfigurations;
 const mockGetWatcherConfigurations = configuration.getWatcherConfigurations;
-const mockGetAuthenticationConfigurations = configuration.getAuthenticationConfigurations;
+const mockGetAuthenticationConfigurations =
+    configuration.getAuthenticationConfigurations;
 
 mockGetRegistryConfigurations.mockImplementation(() => registries);
 mockGetTriggerConfigurations.mockImplementation(() => triggers);
@@ -42,7 +43,9 @@ beforeEach(async () => {
     mockGetRegistryConfigurations.mockImplementation(() => registries);
     mockGetTriggerConfigurations.mockImplementation(() => triggers);
     mockGetWatcherConfigurations.mockImplementation(() => watchers);
-    mockGetAuthenticationConfigurations.mockImplementation(() => authentications);
+    mockGetAuthenticationConfigurations.mockImplementation(
+        () => authentications,
+    );
 });
 
 afterEach(async () => {

@@ -3,7 +3,7 @@ import fs from 'fs/promises';
 import path from 'path';
 import yaml from 'yaml';
 import Docker from '../docker/Docker';
-import { getState  } from '../../../registry';
+import { getState } from '../../../registry';
 
 /**
  * Return true if the container belongs to the compose file.

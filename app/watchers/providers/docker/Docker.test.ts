@@ -3,7 +3,7 @@ import Docker from './Docker';
 import * as event from '../../../event';
 import * as storeContainer from '../../../store/container';
 import * as registry from '../../../registry';
-import { fullName  } from '../../../model/container';
+import { fullName } from '../../../model/container';
 
 // Mock all dependencies
 jest.mock('dockerode');
@@ -742,14 +742,12 @@ describe('Docker Watcher', () => {
                 },
             };
             const mockRegistry = {
-                getTags: jest
-                    .fn()
-                    .mockResolvedValue([
-                        '1.2.1', // 3 parts, should be filtered out
-                        '1.3', // 2 parts, should be kept
-                        '1.1', // 2 parts, should be kept (but lower)
-                        '2', // 1 part, should be filtered out
-                    ]),
+                getTags: jest.fn().mockResolvedValue([
+                    '1.2.1', // 3 parts, should be filtered out
+                    '1.3', // 2 parts, should be kept
+                    '1.1', // 2 parts, should be kept (but lower)
+                    '2', // 1 part, should be filtered out
+                ]),
             };
             registry.getState.mockReturnValue({
                 registry: { hub: mockRegistry },
@@ -815,7 +813,7 @@ describe('Docker Watcher', () => {
             // Mock the validateContainer function to return the container
             const containerModule = await import('../../../model/container');
             const validateContainer = containerModule.validate;
-        // @ts-ignore
+            // @ts-ignore
             validateContainer.mockReturnValue({
                 id: '123',
                 name: 'test-container',
@@ -907,7 +905,7 @@ describe('Docker Watcher', () => {
             // Mock the validateContainer function to return the container
             const containerModule = await import('../../../model/container');
             const validateContainer = containerModule.validate;
-        // @ts-ignore
+            // @ts-ignore
             validateContainer.mockReturnValue({
                 id: '123',
                 name: 'test',
@@ -1145,7 +1143,7 @@ describe('isDigestToWatch Logic', () => {
             Os: 'linux',
             Created: '2023-01-01',
             RepoDigests: ['repo/image@sha256:abc'],
-            RepoTags: [`${domain ? domain + '/' : ''}repo/image:${tag}`]
+            RepoTags: [`${domain ? domain + '/' : ''}repo/image:${tag}`],
         };
         mockImage.inspect.mockResolvedValue(imageDetails);
         // Mock parse to return appropriate structure
@@ -1174,7 +1172,7 @@ describe('isDigestToWatch Logic', () => {
         const containerModule = await import('../../../model/container');
         const validateContainer = containerModule.validate;
         // @ts-ignore
-        validateContainer.mockImplementation(c => c);
+        validateContainer.mockImplementation((c) => c);
 
         return container;
     };
