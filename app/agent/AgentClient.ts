@@ -109,6 +109,15 @@ export class AgentClient {
         const logContainer = this.log.child({ container: container.name });
 
         try {
+            // If the Agent couldn't resolve the registry (likely Docker Hub), it sets it to 'unknown'.
+            // We reset it here so the Controller's registry providers can attempt to match it.
+            if (
+                container.image?.registry?.name === 'unknown' &&
+                container.image?.registry?.url === 'unknown'
+            ) {
+                container.image.registry.url = '';
+            }
+
             // Normalize container to resolve Registry (Agent only does discovery)
             container = normalizeContainer(container);
         } catch (e: any) {

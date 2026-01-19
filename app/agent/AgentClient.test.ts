@@ -123,4 +123,32 @@ describe('AgentClient', () => {
 
         jest.useRealTimers();
     });
+
+    test('should reset unknown registry url before normalization', async () => {
+        const container = {
+            id: '1',
+            name: 'mongo',
+            image: {
+                registry: { name: 'unknown', url: 'unknown' },
+            },
+        };
+
+        // @ts-ignore
+        utils.normalizeContainer.mockImplementation((c) => c);
+        // @ts-ignore
+        utils.findNewVersion.mockResolvedValue({});
+
+        // @ts-ignore
+        await client.processContainer(container);
+
+        expect(utils.normalizeContainer).toHaveBeenCalledWith(
+            expect.objectContaining({
+                image: expect.objectContaining({
+                    registry: expect.objectContaining({
+                        url: '',
+                    }),
+                }),
+            }),
+        );
+    });
 });
