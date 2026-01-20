@@ -2,6 +2,7 @@
 import { init } from './AgentServer';
 import * as storeContainer from '../store/container';
 import * as registry from '../registry';
+import * as triggerApi from '../api/trigger';
 
 jest.mock('express');
 jest.mock('fs');
@@ -24,6 +25,9 @@ jest.mock('../store/container');
 jest.mock('../event');
 jest.mock('../configuration');
 jest.mock('../registry');
+jest.mock('../api/trigger', () => ({
+    runTrigger: jest.fn(),
+}));
 
 import express from 'express';
 import fs from 'fs';
@@ -92,7 +96,7 @@ describe('Agent Server', () => {
             expect.any(Function),
         );
         expect(mockApp.post).toHaveBeenCalledWith(
-            '/api/containers/:id/triggers/:triggerType/:triggerName',
+            '/api/triggers/:type/:name',
             expect.any(Function),
         );
     });
@@ -156,5 +160,25 @@ describe('Agent Server', () => {
         authMiddleware(req, res, next);
         expect(next).not.toHaveBeenCalled();
         expect(res.status).toHaveBeenCalledWith(401);
+    });
+
+    test('runTrigger should sanitize body and delegate', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const runTriggerHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/triggers/:type/:name',
+        )[1];
+
+        const req = {
+            params: { type: 'docker', name: 'restart' },
+            body: { id: '123', agent: 'remote-agent' },
+        };
+        const res = {};
+
+        await runTriggerHandler(req, res);
+
+        expect(req.body.agent).toBeUndefined();
+        expect(triggerApi.runTrigger).toHaveBeenCalledWith(req, res);
     });
 });

@@ -21,10 +21,7 @@ import {
 } from './label';
 import * as storeContainer from '../../../store/container';
 import log from '../../../log';
-import {
-    fullName,
-    Container,
-} from '../../../model/container';
+import { fullName, Container } from '../../../model/container';
 import { getWatchContainerGauge } from '../../../prometheus/watcher';
 import Watcher from '../../Watcher';
 import { ComponentConfiguration } from '../../../registry/Component';
@@ -33,12 +30,9 @@ import {
     isDigestToWatch,
     normalizeContainer,
     getContainerName,
-    findNewVersion
+    findNewVersion,
 } from './utils';
-import {
-    parse as parseSemver,
-    transform as transformTag,
-} from '../../../tag';
+import { parse as parseSemver, transform as transformTag } from '../../../tag';
 
 export interface DockerWatcherConfiguration extends ComponentConfiguration {
     socket: string;

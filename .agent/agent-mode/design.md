@@ -35,7 +35,7 @@ Run with `--agent` flag.
 - `WUD_WATCHER_{name}_*`: Watcher configuration (must have at least one).
 - `WUD_LOG_LEVEL`: Log level.
 
-*Registries, Triggers, and Authentication (for UI) are ignored in Agent mode.*
+*Registries and Authentication (for UI) are ignored in Agent mode.*
 
 ### Controller Configuration
 Configured via `WUD_AGENT_{name}_*` variables.
@@ -55,9 +55,8 @@ All requests from Controller to Agent must include:
 `X-Wud-Agent-Secret: <SECRET>`
 
 ### 1. Handshake (Snapshot)
-**Request:** `GET /api/containers`
-**Response:** JSON array of current containers discovered by the Agent.
-**Purpose:** Initial state synchronization. Triggered by Controller upon receiving `wud:ack` via SSE.
+**Request:** `GET /api/containers`, `GET /api/watchers`, `GET /api/triggers`
+**Purpose:** Initial state synchronization (containers, watchers, triggers).
 
 ### 2. Real-time Updates (SSE)
 **Request:** `GET /api/events`
@@ -72,8 +71,15 @@ Format: `data: { "type": "...", "data": ... }`
 - `wud:container-removed`: Payload `{ id: string }`.
 
 ### 3. Remote Triggers
-**Request:** `POST /api/containers/:id/triggers/:type/:name`
+**Request:** `POST /api/triggers/:type/:name`
+**Body:** JSON object of the container to trigger.
 **Purpose:** Controller instructs Agent to execute a trigger (e.g. Docker Compose update) locally on the Agent.
+**Logic:**
+- Trigger execution requests for remote containers are proxied to the Agent.
+
+### 4. Remote Trigger Discovery
+**Request:** `GET /api/triggers`
+**Response:** JSON array of triggers configured on the Agent.
 
 ## Data Model Changes
 
@@ -105,6 +111,9 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 - **API**:
     - `GET /api/watchers` returns both local and agent watchers.
     - New endpoint `GET /api/watchers/:agent/:type/:name` for agent watcher details.
+    - `GET /api/triggers` returns both local and agent triggers.
+    - New endpoint `GET /api/triggers/:agent/:type/:name` for agent trigger details.
+    - New endpoint `POST /api/triggers/:agent/:type/:name` to execute agent trigger.
 
 ### 3. Agent Server (`app/agent/AgentServer.ts`)
 - New component.

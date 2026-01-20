@@ -47,7 +47,7 @@ export function getTagCandidates(container, tags, logContainer) {
         filteredTags = filteredTags.filter((tag) => includeTagsRegex.test(tag));
     } else {
         // If no includeTags, filter out tags starting with "sha"
-        filteredTags = filteredTags.filter(tag => !tag.startsWith('sha'));
+        filteredTags = filteredTags.filter((tag) => !tag.startsWith('sha'));
     }
 
     // Match exclude tag regex
@@ -59,8 +59,8 @@ export function getTagCandidates(container, tags, logContainer) {
     }
 
     // Always filter out tags ending with ".sig"
-    filteredTags = filteredTags.filter(tag => !tag.endsWith('.sig'));
-    
+    filteredTags = filteredTags.filter((tag) => !tag.endsWith('.sig'));
+
     // Semver image -> find higher semver tag
     if (container.image.tag.semver) {
         if (filteredTags.length === 0) {
@@ -75,24 +75,28 @@ export function getTagCandidates(container, tags, logContainer) {
             const currentTag = container.image.tag.value;
             const match = currentTag.match(/^(.*?)(\d+.*)$/);
             const currentPrefix = match ? match[1] : '';
-        
+
             if (currentPrefix) {
                 // Retain only tags with the same non-empty prefix
-                filteredTags = filteredTags.filter(tag => tag.startsWith(currentPrefix));
+                filteredTags = filteredTags.filter((tag) =>
+                    tag.startsWith(currentPrefix),
+                );
             } else {
                 // Retain only tags that start with a number (no prefix)
-                filteredTags = filteredTags.filter(tag => /^\d/.test(tag));
+                filteredTags = filteredTags.filter((tag) => /^\d/.test(tag));
             }
-        
+
             // Ensure we throw good errors when we've prefix-related issues
             if (filteredTags.length === 0) {
                 if (currentPrefix) {
                     logContainer.warn(
-                        "No tags found with existing prefix: '" + currentPrefix + "'; check your regex filters",
+                        "No tags found with existing prefix: '" +
+                            currentPrefix +
+                            "'; check your regex filters",
                     );
                 } else {
                     logContainer.warn(
-                        "No tags found starting with a number (no prefix); check your regex filters",
+                        'No tags found starting with a number (no prefix); check your regex filters',
                     );
                 }
             }
@@ -107,18 +111,18 @@ export function getTagCandidates(container, tags, logContainer) {
 
         // Remove prefix and suffix (keep only digits and dots)
         const numericPart = container.image.tag.value.match(/(\d+(\.\d+)*)/);
-        
+
         if (numericPart) {
-          const referenceGroups = numericPart[0].split('.').length;
-        
-          filteredTags = filteredTags.filter((tag) => {
-            const tagNumericPart = tag.match(/(\d+(\.\d+)*)/);
-            if (!tagNumericPart) return false; // skip tags without numeric part
-            const tagGroups = tagNumericPart[0].split('.').length;
-        
-            // Keep only tags with the same number of numeric segments
-            return tagGroups === referenceGroups;
-          });
+            const referenceGroups = numericPart[0].split('.').length;
+
+            filteredTags = filteredTags.filter((tag) => {
+                const tagNumericPart = tag.match(/(\d+(\.\d+)*)/);
+                if (!tagNumericPart) return false; // skip tags without numeric part
+                const tagGroups = tagNumericPart[0].split('.').length;
+
+                // Keep only tags with the same number of numeric segments
+                return tagGroups === referenceGroups;
+            });
         }
 
         // Keep only greater semver
@@ -214,7 +218,11 @@ export function isContainerToWatch(wudWatchLabelValue, watchByDefault) {
  * @param {object} parsedImage - object containing at least `domain` property
  * @returns {boolean}
  */
-export function isDigestToWatch(wudWatchDigestLabelValue, parsedImage, isSemver) {
+export function isDigestToWatch(
+    wudWatchDigestLabelValue,
+    parsedImage,
+    isSemver,
+) {
     const domain = parsedImage.domain;
     const isDockerHub =
         !domain ||
@@ -261,11 +269,7 @@ export async function findNewVersion(container, dockerApi, logContainer) {
         const tags = await registryProvider.getTags(container.image);
 
         // Get candidate tags (based on tag name)
-        const tagsCandidates = getTagCandidates(
-            container,
-            tags,
-            logContainer,
-        );
+        const tagsCandidates = getTagCandidates(container, tags, logContainer);
 
         // Must watch digest? => Find local/remote digests on registry
         if (container.image.digest.watch && container.image.digest.repo) {
@@ -291,11 +295,10 @@ export async function findNewVersion(container, dockerApi, logContainer) {
             if (remoteDigest.version === 2) {
                 // Regular v2 manifest => Get manifest digest
 
-                const digestV2 =
-                    await registryProvider.getImageManifestDigest(
-                        imageToGetDigestFrom,
-                        container.image.digest.repo,
-                    );
+                const digestV2 = await registryProvider.getImageManifestDigest(
+                    imageToGetDigestFrom,
+                    container.image.digest.repo,
+                );
                 container.image.digest.value = digestV2.digest;
             } else {
                 if (dockerApi) {
@@ -308,7 +311,9 @@ export async function findNewVersion(container, dockerApi, logContainer) {
                             ? undefined
                             : image.Config.Image;
                 } else {
-                    logContainer.warn('Cannot check legacy v1 image digest without Docker API access');
+                    logContainer.warn(
+                        'Cannot check legacy v1 image digest without Docker API access',
+                    );
                 }
             }
         }

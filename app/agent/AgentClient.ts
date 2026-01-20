@@ -26,6 +26,13 @@ interface AgentWatcher {
     configuration: any;
 }
 
+interface AgentTrigger {
+    id: string;
+    type: string;
+    name: string;
+    configuration: any;
+}
+
 export class AgentClient {
     public name: string;
     public config: AgentClientConfig;
@@ -34,12 +41,14 @@ export class AgentClient {
     private axiosOptions: AxiosRequestConfig;
     public isConnected: boolean;
     public watchers: AgentWatcher[];
+    public triggers: AgentTrigger[];
     private reconnectTimer: NodeJS.Timeout | null;
 
     constructor(name: string, config: AgentClientConfig) {
         this.name = name;
         this.config = config;
         this.watchers = [];
+        this.triggers = [];
         this.log = logger.child({ component: `agent-client.${name}` });
         this.baseUrl = `${this.config.host}:${this.config.port || 3000}`;
         // Add protocol if not present
@@ -99,6 +108,16 @@ export class AgentClient {
             this.watchers = responseWatchers.data;
         } catch (e: any) {
             this.log.warn(`Failed to fetch watchers: ${e.message}`);
+        }
+
+        try {
+            const responseTriggers = await axios.get<AgentTrigger[]>(
+                `${this.baseUrl}/api/triggers`,
+                this.axiosOptions,
+            );
+            this.triggers = responseTriggers.data;
+        } catch (e: any) {
+            this.log.warn(`Failed to fetch triggers: ${e.message}`);
         }
 
         this.isConnected = true;
@@ -238,14 +257,14 @@ export class AgentClient {
     }
 
     async runRemoteTrigger(
-        containerId: string,
+        container: any,
         triggerType: string,
         triggerName: string,
     ) {
         try {
             await axios.post(
-                `${this.baseUrl}/api/containers/${containerId}/triggers/${triggerType}/${triggerName}`,
-                {},
+                `${this.baseUrl}/api/triggers/${triggerType}/${triggerName}`,
+                container,
                 this.axiosOptions,
             );
         } catch (e: any) {

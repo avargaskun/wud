@@ -105,7 +105,7 @@ describe('Docker Watcher', () => {
 
         // Setup utils mock
         utils.findNewVersion.mockResolvedValue({ tag: '1.0.0' });
-        utils.normalizeContainer.mockImplementation(c => c);
+        utils.normalizeContainer.mockImplementation((c) => c);
         utils.getContainerName.mockReturnValue('test-container');
         utils.getRepoDigest.mockReturnValue('sha256:123');
         utils.isContainerToWatch.mockReturnValue(true);
@@ -136,9 +136,9 @@ describe('Docker Watcher', () => {
         test('should watch containers', async () => {
             docker.getContainers = jest.fn().mockResolvedValue([{ id: '1' }]);
             docker.watchContainer = jest.fn().mockResolvedValue({});
-            
+
             await docker.watch();
-            
+
             expect(docker.getContainers).toHaveBeenCalled();
             expect(docker.watchContainer).toHaveBeenCalled();
         });
@@ -148,7 +148,9 @@ describe('Docker Watcher', () => {
         test('should watch individual container', async () => {
             const container = { id: 'test123', name: 'test' };
             const mockLog = {
-                child: jest.fn().mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
             };
             docker.log = mockLog;
             docker.configuration = { discoveryonly: false };
@@ -170,11 +172,13 @@ describe('Docker Watcher', () => {
         test('should skip update check if discoveryonly', async () => {
             const container = { id: 'test123', name: 'test' };
             const mockLog = {
-                child: jest.fn().mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
             };
             docker.log = mockLog;
             docker.configuration = { discoveryonly: true };
-            
+
             await docker.watchContainer(container);
 
             expect(utils.findNewVersion).not.toHaveBeenCalled();

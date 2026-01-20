@@ -8,6 +8,7 @@ import * as storeContainer from '../store/container';
 import * as event from '../event';
 import { getServerConfiguration, getVersion } from '../configuration';
 import * as registry from '../registry';
+import * as triggerApi from '../api/trigger';
 import { Container } from '../model/container';
 import { mapComponentsToList } from '../api/component';
 
@@ -79,6 +80,15 @@ function getWatchers(req: Request, res: Response) {
 }
 
 /**
+ * Get Triggers.
+ */
+function getTriggers(req: Request, res: Response) {
+    const localTriggers = registry.getState().trigger;
+    const items = mapComponentsToList(localTriggers);
+    res.json(items);
+}
+
+/**
  * Subscribe to Events (SSE).
  */
 function subscribeEvents(req: Request, res: Response) {
@@ -112,36 +122,13 @@ function subscribeEvents(req: Request, res: Response) {
 
 /**
  * Run Remote Trigger.
+ * Delegates to the common API handler but ensures no proxying happens.
  */
 async function runTrigger(req: Request, res: Response) {
-    const { id, triggerType, triggerName } = req.params;
-    const container = storeContainer.getContainer(id);
-
-    if (!container) {
-        log.warn(`Received trigger request for invalid container: ${id}`);
-        return res.status(404).json({ error: 'Container not found' });
+    if (req.body && req.body.agent) {
+        delete req.body.agent;
     }
-
-    // In Agent mode, triggers are loaded from configuration but we need to find the specific one.
-    // The Registry holds the registered components.
-    const triggerId = `${triggerType}.${triggerName}`;
-    const trigger = registry.getState().trigger[triggerId];
-
-    if (!trigger) {
-        log.warn(`Received trigger request for invalid trigger: ${triggerId}`);
-        return res
-            .status(404)
-            .json({ error: `Trigger ${triggerId} not found on Agent` });
-    }
-
-    try {
-        await trigger.trigger(container);
-        log.info(`Trigger executed: ${triggerId} for ${container.name}`);
-        res.json({ success: true });
-    } catch (e: any) {
-        log.error(`Error running trigger ${triggerId}: ${e.message}`);
-        res.status(500).json({ error: e.message });
-    }
+    return triggerApi.runTrigger(req, res);
 }
 
 /**
@@ -191,11 +178,9 @@ export async function init() {
     // Routes
     app.get('/api/containers', getContainers);
     app.get('/api/watchers', getWatchers);
+    app.get('/api/triggers', getTriggers);
     app.get('/api/events', subscribeEvents);
-    app.post(
-        '/api/containers/:id/triggers/:triggerType/:triggerName',
-        runTrigger,
-    );
+    app.post('/api/triggers/:type/:name', runTrigger);
 
     // Start Server
     if (configuration.tls.enabled) {

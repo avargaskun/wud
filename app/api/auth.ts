@@ -38,7 +38,11 @@ export function requireAuthentication(req, res, next): any {
     if (req.isAuthenticated()) {
         return next();
     }
-    return passport.authenticate(getAllIds(), { session: true })(req, res, next);
+    return passport.authenticate(getAllIds(), { session: true })(
+        req,
+        res,
+        next,
+    );
 }
 
 /**
