@@ -76,3 +76,9 @@
 - [x] **Step 13: Documentation**
     - [x] Create `AGENT.md`.
     - [x] Update `README.md` and `docs/`.
+
+## TODO
+
+- [ ] **Propagate 'container delete' operations to remote agents**
+    - [ ] Modify `containerDelete()` in @app/api/container.ts to find the appropriate `AgentClient` and forward the request
+    - [ ] Implement API in `AgentServer` to handle the request. Must revalidate that `serverConfiguration.feature.delete` is enabled.

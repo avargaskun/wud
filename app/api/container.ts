@@ -129,11 +129,18 @@ export async function getContainerTriggers(req, res) {
             : undefined;
         const associatedTriggers = [];
         allTriggers.forEach((trigger) => {
+            if (trigger.agent && trigger.agent !== container.agent) {
+                // Remote triggers can only act on remote containers defined in the same Agent
+                return;
+            }
             const triggerToAssociate = { ...trigger };
+            // Use 'local' trigger id syntax - which is the syntax that will be used in remote Agents
+            // This causes overlap between remote and local agents - a known issue that users must be aware of
+            const triggerId = `${trigger.type}.${trigger.name}`;
             let associated = true;
             if (includedTriggers) {
                 const includedTrigger = includedTriggers.find(
-                    (tr) => tr.id === trigger.id,
+                    (tr) => tr.id === triggerId,
                 );
                 if (includedTrigger) {
                     triggerToAssociate.configuration.threshold =
@@ -146,7 +153,7 @@ export async function getContainerTriggers(req, res) {
                 excludedTriggers &&
                 excludedTriggers
                     .map((excludedTrigger) => excludedTrigger.id)
-                    .includes(trigger.id)
+                    .includes(triggerId)
             ) {
                 associated = false;
             }
