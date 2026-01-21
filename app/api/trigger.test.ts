@@ -14,6 +14,32 @@ jest.mock('../registry');
 jest.mock('./component', () => ({
     mapComponentsToList: jest.fn(),
     mapComponentToItem: jest.fn(),
+    init: jest.fn((kind) => {
+        const router = require('express').Router();
+        const registry = require('../registry');
+        const component = require('./component');
+
+        router.get('/', (req, res) => {
+            res.status(200).json(
+                component.mapComponentsToList(registry.getState()[kind]),
+            );
+        });
+
+        const getById = (req, res) => {
+            const { agent, type, name } = req.params;
+            const id = agent ? `${agent}.${type}.${name}` : `${type}.${name}`;
+            const item = registry.getState()[kind][id];
+            if (item) {
+                res.status(200).json(component.mapComponentToItem(id, item));
+            } else {
+                res.sendStatus(404);
+            }
+        };
+
+        router.get('/:type/:name', getById);
+        router.get('/:agent/:type/:name', getById);
+        return router;
+    }),
 }));
 jest.mock('../log', () => ({
     child: jest.fn(() => ({
@@ -25,9 +51,8 @@ jest.mock('../log', () => ({
 
 describe('Trigger API', () => {
     let getAll;
-    let getLocal;
+    let getTrigger;
     let runTrigger;
-    let getRemote;
     let runRemoteTrigger;
     let mockRes;
     let mockReq;
@@ -47,9 +72,8 @@ describe('Trigger API', () => {
 
         // Extract handlers
         getAll = mockRouter.get.mock.calls[0][1];
-        getLocal = mockRouter.get.mock.calls[1][1];
+        getTrigger = mockRouter.get.mock.calls[1][1]; // Combined getter
         runTrigger = mockRouter.post.mock.calls[0][1];
-        getRemote = mockRouter.get.mock.calls[2][1];
         runRemoteTrigger = mockRouter.post.mock.calls[1][1];
 
         mockRes = {
@@ -59,41 +83,45 @@ describe('Trigger API', () => {
         };
     });
 
-    test('should return all triggers (local + remote)', () => {
-        const localTriggers = {
+    test('should return all triggers from registry', () => {
+        const allTriggers = {
             'docker.default': { type: 'docker', name: 'default' },
+            'agent.agent1-web': {
+                type: 'agent',
+                name: 'agent1-web',
+                configuration: {
+                    agent: 'agent1',
+                    remoteType: 'dockercompose',
+                    remoteName: 'web',
+                },
+            },
         };
         // @ts-ignore
-        registry.getState.mockReturnValue({ trigger: localTriggers });
-        // @ts-ignore
-        component.mapComponentsToList.mockReturnValue([
+        registry.getState.mockReturnValue({ trigger: allTriggers });
+        const mappedTriggers = [
             { type: 'docker', name: 'default' },
-        ]);
-
-        const mockAgent1 = {
-            name: 'agent1',
-            isConnected: true,
-            triggers: [{ type: 'dockercompose', name: 'web' }],
-        };
-        const mockAgent2 = {
-            name: 'agent2',
-            isConnected: false,
-            triggers: [{ type: 'docker', name: 'app' }],
-        };
+            {
+                type: 'dockercompose',
+                name: 'web',
+                agent: 'agent1',
+            },
+        ];
         // @ts-ignore
-        agent.getAgents.mockReturnValue([mockAgent1, mockAgent2]);
+        component.mapComponentsToList.mockReturnValue(mappedTriggers);
 
         mockReq = {};
         getAll(mockReq, mockRes);
 
-        expect(mockRes.json).toHaveBeenCalledWith([
-            { type: 'docker', name: 'default' },
-            { type: 'dockercompose', name: 'web', agent: 'agent1' },
-        ]);
+        expect(component.mapComponentsToList).toHaveBeenCalledWith(allTriggers);
+        expect(mockRes.json).toHaveBeenCalledWith(mappedTriggers);
     });
 
     test('should return local trigger', () => {
-        const mockTrigger = { type: 'docker', name: 'default' };
+        const mockTrigger = {
+            type: 'docker',
+            name: 'default',
+            getId: () => 'docker.default',
+        };
         // @ts-ignore
         registry.getState.mockReturnValue({
             trigger: { 'docker.default': mockTrigger },
@@ -102,7 +130,7 @@ describe('Trigger API', () => {
         component.mapComponentToItem.mockReturnValue(mockTrigger);
 
         mockReq = { params: { type: 'docker', name: 'default' } };
-        getLocal(mockReq, mockRes);
+        getTrigger(mockReq, mockRes);
 
         expect(mockRes.status).toHaveBeenCalledWith(200);
         expect(mockRes.json).toHaveBeenCalledWith(mockTrigger);
@@ -113,55 +141,47 @@ describe('Trigger API', () => {
         registry.getState.mockReturnValue({ trigger: {} });
 
         mockReq = { params: { type: 'docker', name: 'unknown' } };
-        getLocal(mockReq, mockRes);
+        getTrigger(mockReq, mockRes);
 
         expect(mockRes.sendStatus).toHaveBeenCalledWith(404);
     });
 
-    test('should return remote trigger', () => {
-        const mockAgent = {
-            name: 'my-agent',
-            triggers: [{ type: 'docker', name: 'default' }],
+    test('should return remote trigger from registry', () => {
+        const mockAgentTrigger = {
+            type: 'docker',
+            name: 'default',
+            agent: 'my-agent',
+            getId: () => 'my-agent.docker.default',
         };
+        const mappedTrigger = {
+            type: 'docker',
+            name: 'default',
+            agent: 'my-agent',
+        };
+
         // @ts-ignore
-        agent.getAgent.mockReturnValue(mockAgent);
+        registry.getState.mockReturnValue({
+            trigger: { 'my-agent.docker.default': mockAgentTrigger },
+        });
+        // @ts-ignore
+        component.mapComponentToItem.mockReturnValue(mappedTrigger);
 
         mockReq = {
             params: { agent: 'my-agent', type: 'docker', name: 'default' },
         };
-        getRemote(mockReq, mockRes);
+        getTrigger(mockReq, mockRes);
 
-        expect(mockRes.json).toHaveBeenCalledWith({
-            type: 'docker',
-            name: 'default',
-            agent: 'my-agent',
-        });
+        expect(mockRes.json).toHaveBeenCalledWith(mappedTrigger);
     });
 
-    test('should return 404 if remote agent not found', () => {
+    test('should return 404 if remote trigger not found in registry', () => {
         // @ts-ignore
-        agent.getAgent.mockReturnValue(undefined);
-
-        mockReq = {
-            params: { agent: 'unknown', type: 'docker', name: 'default' },
-        };
-        getRemote(mockReq, mockRes);
-
-        expect(mockRes.sendStatus).toHaveBeenCalledWith(404);
-    });
-
-    test('should return 404 if remote trigger not found on agent', () => {
-        const mockAgent = {
-            name: 'my-agent',
-            triggers: [],
-        };
-        // @ts-ignore
-        agent.getAgent.mockReturnValue(mockAgent);
+        registry.getState.mockReturnValue({ trigger: {} });
 
         mockReq = {
             params: { agent: 'my-agent', type: 'docker', name: 'unknown' },
         };
-        getRemote(mockReq, mockRes);
+        getTrigger(mockReq, mockRes);
 
         expect(mockRes.sendStatus).toHaveBeenCalledWith(404);
     });
@@ -182,18 +202,12 @@ describe('Trigger API', () => {
         );
     });
 
-    test('should proxy to agent if container has agent field AND trigger is local', async () => {
+    test('should return 400 for local trigger on remote container', async () => {
         const container = { id: '123', agent: 'my-agent' };
         mockReq = {
             params: { type: 'dockercompose', name: 'default' },
             body: container,
         };
-
-        const mockAgentClient = {
-            runRemoteTrigger: jest.fn().mockResolvedValue({}),
-        };
-        // @ts-ignore
-        agent.getAgent.mockReturnValue(mockAgentClient);
 
         await runTrigger(mockReq, mockRes);
 
@@ -201,8 +215,6 @@ describe('Trigger API', () => {
     });
 
     test('should run explicitly targeted remote trigger', async () => {
-        const runRemoteTrigger = mockRouter.post.mock.calls[1][1]; // The second post call is /:agent/:type/:name
-
         const container = { id: '123' };
         mockReq = {
             params: { agent: 'my-agent', type: 'docker', name: 'default' },

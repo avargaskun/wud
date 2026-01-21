@@ -103,7 +103,7 @@ async function watchContainers(req, res) {
     }
 }
 
-async function getContainerTriggers(req, res) {
+export async function getContainerTriggers(req, res) {
     const { id } = req.params;
 
     const container = storeContainer.getContainer(id);

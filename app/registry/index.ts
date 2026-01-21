@@ -135,16 +135,20 @@ function getHelpfulErrorMessage(
  * @param {*} configuration
  * @param {*} componentPath
  */
-async function registerComponent(
+export async function registerComponent(
     kind: ComponentKind,
     provider: string,
     name: string,
     configuration: ComponentConfiguration,
     componentPath: string,
+    agent?: string,
 ): Promise<Component> {
     const providerLowercase = provider.toLowerCase();
     const nameLowercase = name.toLowerCase();
-    const componentFile = `${componentPath}/${providerLowercase.toLowerCase()}/${capitalize(provider)}`;
+    let componentFile = `${componentPath}/${providerLowercase.toLowerCase()}/${capitalize(provider)}`;
+    if (agent) {
+        componentFile = `${componentPath}/Agent${capitalize(kind)}`;
+    }
     try {
         const ComponentClass = (await import(componentFile)).default;
         const component: Component = new ComponentClass();
@@ -153,6 +157,7 @@ async function registerComponent(
             providerLowercase,
             nameLowercase,
             configuration,
+            agent,
         );
 
         // Type assertion is safe here because we know the kind matches the expected type
@@ -458,6 +463,21 @@ async function deregisterAuthentications() {
         Object.values(getState().authentication),
         'authentication',
     );
+}
+
+/**
+ * Deregister all components registered against the specified agent.
+ * @returns {Promise}
+ */
+export async function deregisterAgentComponents(agent: string) {
+    const watchers = Object.values(getState().watcher).filter(
+        (watcher) => watcher.agent === agent,
+    );
+    const triggers = Object.values(getState().trigger).filter(
+        (trigger) => trigger.agent === agent,
+    );
+    await deregisterComponents(watchers, 'watcher');
+    await deregisterComponents(triggers, 'trigger');
 }
 
 /**

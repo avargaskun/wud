@@ -9,65 +9,6 @@ import logger from '../log';
 const log = logger.child({ component: 'trigger' });
 
 /**
- * Get all triggers (local + remote).
- */
-function getAll(req, res) {
-    // Local
-    const localTriggers = registry.getState().trigger;
-    const items = component.mapComponentsToList(localTriggers);
-
-    // Remote
-    const agents = agent.getAgents();
-    for (const agentClient of agents) {
-        if (agentClient.isConnected) {
-            const remoteTriggers = agentClient.triggers.map((t) => ({
-                ...t,
-                agent: agentClient.name,
-            }));
-            items.push(...remoteTriggers);
-        }
-    }
-    res.json(items);
-}
-
-/**
- * Get a local trigger by id.
- */
-function getLocal(req, res) {
-    const { type, name } = req.params;
-    const id = `${type}.${name}`;
-    const trigger = registry.getState().trigger[id];
-    if (trigger) {
-        res.status(200).json(component.mapComponentToItem(id, trigger));
-    } else {
-        res.sendStatus(404);
-    }
-}
-
-/**
- * Get a remote trigger.
- */
-function getRemote(req, res) {
-    const { agent: agentName, type, name } = req.params;
-    const agentClient = agent.getAgent(agentName);
-    if (!agentClient) {
-        res.sendStatus(404);
-        return;
-    }
-    const trigger = agentClient.triggers.find(
-        (t) => t.type === type && t.name === name,
-    );
-    if (trigger) {
-        res.json({
-            ...trigger,
-            agent: agentName,
-        });
-    } else {
-        res.sendStatus(404);
-    }
-}
-
-/**
  * Run a specific trigger on a specific container provided in the payload.
  */
 export async function runTrigger(req, res) {
@@ -88,10 +29,10 @@ export async function runTrigger(req, res) {
     // Running local triggers on remote containers is not supported
     if (containerToTrigger.agent) {
         log.warn(
-            `Cannot execute local trigger ${triggerType}.${triggerName} on remote container ${containerToTrigger.agent}.${containerToTrigger.id}`
+            `Cannot execute local trigger ${triggerType}.${triggerName} on remote container ${containerToTrigger.agent}.${containerToTrigger.id}`,
         );
         res.status(400).json({
-            error: `Cannot execute local trigger ${triggerType}.${triggerName} on remote container ${containerToTrigger.agent}.${containerToTrigger.id}`
+            error: `Cannot execute local trigger ${triggerType}.${triggerName} on remote container ${containerToTrigger.agent}.${containerToTrigger.id}`,
         });
         return;
     }
@@ -171,15 +112,8 @@ async function runRemoteTrigger(req, res) {
  * @returns {*}
  */
 export function init() {
-    const router = express.Router();
-    router.use(nocache());
-
-    router.get('/', getAll);
-    router.get('/:type/:name', getLocal);
+    const router = component.init('trigger');
     router.post('/:type/:name', runTrigger);
-
-    router.get('/:agent/:type/:name', getRemote);
     router.post('/:agent/:type/:name', runRemoteTrigger);
-
     return router;
 }

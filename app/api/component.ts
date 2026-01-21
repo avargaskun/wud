@@ -25,6 +25,7 @@ export function mapComponentToItem(key, component): ApiComponent {
         type: component.type,
         name: component.name,
         configuration: component.maskConfiguration(),
+        agent: component.agent,
     };
 }
 
@@ -60,8 +61,8 @@ function getAll(req, res, kind) {
  * @param listFunction
  */
 function getById(req, res, kind) {
-    const { type, name } = req.params;
-    const id = `${type}.${name}`;
+    const { agent, type, name } = req.params;
+    const id = agent ? `${agent}.${type}.${name}` : `${type}.${name}`;
     const component = registry.getState()[kind][id];
     if (component) {
         res.status(200).json(mapComponentToItem(id, component));
@@ -80,5 +81,6 @@ export function init(kind) {
     router.use(nocache());
     router.get('/', (req, res) => getAll(req, res, kind));
     router.get('/:type/:name', (req, res) => getById(req, res, kind));
+    router.get('/:agent/:type/:name', (req, res) => getById(req, res, kind));
     return router;
 }

@@ -9,6 +9,7 @@ import {
     normalizeContainer,
 } from '../watchers/providers/docker/utils';
 import { Container, ContainerResult } from '../model/container';
+import * as registry from '../registry';
 
 export interface AgentClientConfig {
     host: string;
@@ -19,20 +20,6 @@ export interface AgentClientConfig {
     keyfile?: string;
 }
 
-interface AgentWatcher {
-    id: string;
-    type: string;
-    name: string;
-    configuration: any;
-}
-
-interface AgentTrigger {
-    id: string;
-    type: string;
-    name: string;
-    configuration: any;
-}
-
 export class AgentClient {
     public name: string;
     public config: AgentClientConfig;
@@ -40,15 +27,11 @@ export class AgentClient {
     private baseUrl: string;
     private axiosOptions: AxiosRequestConfig;
     public isConnected: boolean;
-    public watchers: AgentWatcher[];
-    public triggers: AgentTrigger[];
     private reconnectTimer: NodeJS.Timeout | null;
 
     constructor(name: string, config: AgentClientConfig) {
         this.name = name;
         this.config = config;
-        this.watchers = [];
-        this.triggers = [];
         this.log = logger.child({ component: `agent-client.${name}` });
         this.baseUrl = `${this.config.host}:${this.config.port || 3000}`;
         // Add protocol if not present
@@ -86,6 +69,22 @@ export class AgentClient {
         this.startSse();
     }
 
+    private async registerAgentComponents(
+        kind: 'watcher' | 'trigger',
+        remoteComponents: any[],
+    ) {
+        for (const remoteComponent of remoteComponents) {
+            await registry.registerComponent(
+                kind,
+                remoteComponent.type,
+                remoteComponent.name,
+                remoteComponent.configuration,
+                '../agent',
+                this.name,
+            );
+        }
+    }
+
     async handshake() {
         const response = await axios.get<Container[]>(
             `${this.baseUrl}/api/containers`,
@@ -100,24 +99,29 @@ export class AgentClient {
             await this.processContainer(container);
         }
 
+        // Unregister any existing components for this agent
+        await registry.deregisterAgentComponents(this.name);
+
+        // Fetch and register watchers
         try {
-            const responseWatchers = await axios.get<AgentWatcher[]>(
+            const responseWatchers = await axios.get<any[]>(
                 `${this.baseUrl}/api/watchers`,
                 this.axiosOptions,
             );
-            this.watchers = responseWatchers.data;
+            await this.registerAgentComponents('watcher', responseWatchers.data);
         } catch (e: any) {
-            this.log.warn(`Failed to fetch watchers: ${e.message}`);
+            this.log.warn(`Failed to fetch/register watchers: ${e.message}`);
         }
 
+        // Fetch and register triggers
         try {
-            const responseTriggers = await axios.get<AgentTrigger[]>(
+            const responseTriggers = await axios.get<any[]>(
                 `${this.baseUrl}/api/triggers`,
                 this.axiosOptions,
             );
-            this.triggers = responseTriggers.data;
+            await this.registerAgentComponents('trigger', responseTriggers.data);
         } catch (e: any) {
-            this.log.warn(`Failed to fetch triggers: ${e.message}`);
+            this.log.warn(`Failed to fetch/register triggers: ${e.message}`);
         }
 
         this.isConnected = true;
