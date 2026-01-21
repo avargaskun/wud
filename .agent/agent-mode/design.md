@@ -9,7 +9,7 @@ The Agent Mode allows running WUD in a distributed manner.
 ```mermaid
 graph TD
     subgraph Agent Node
-        A[Agent Watcher (Docker)] -->|Discovery| B(In-Memory Store)
+        A[Agent Watcher #40;Docker#41;] -->|Discovery| B(In-Memory Store)
         B -->|SSE Push| C[Agent API]
     end
     subgraph Controller Node
