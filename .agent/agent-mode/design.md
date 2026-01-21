@@ -145,6 +145,7 @@ agent?: string; // Name of the agent. Undefined/Null if local.
     - Show "Agent: {name}" in details.
     - Container Card Title: Shows `[Agent] / [Watcher] / [Name] : [Version]` (Agent pill is green if connected, red if disconnected).
 - **Watchers**: Show which Agent a watcher belongs to.
+- **ID Handling**: Since Agents might return Watchers/Triggers with the same IDs as the Controller (or other Agents), the Frontend uses a composite key (e.g. `${agent || '_local'}.${id}`) in lists to ensure uniqueness and prevent rendering collisions.
 
 ## Security
 - Agent endpoints protected by Secret.
