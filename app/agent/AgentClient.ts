@@ -79,7 +79,7 @@ export class AgentClient {
                 remoteComponent.type,
                 remoteComponent.name,
                 remoteComponent.configuration,
-                '../agent',
+                '../agent/components',
                 this.name,
             );
         }
@@ -267,11 +267,16 @@ export class AgentClient {
     }
 
     async runRemoteTrigger(
-        container: any,
+        container: Container,
         triggerType: string,
         triggerName: string,
     ) {
         try {
+            this.log.debug(
+                `Running remote trigger ${triggerType}.${triggerName} (container=${JSON.stringify(
+                    container,
+                )})`,
+            );
             await axios.post(
                 `${this.baseUrl}/api/triggers/${triggerType}/${triggerName}`,
                 container,
@@ -284,7 +289,7 @@ export class AgentClient {
     }
 
     async runRemoteTriggerBatch(
-        containers: any[],
+        containers: Container[],
         triggerType: string,
         triggerName: string,
     ) {

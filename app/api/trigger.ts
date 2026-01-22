@@ -48,6 +48,11 @@ export async function runTrigger(req, res) {
     }
 
     try {
+        log.debug(
+            `Running trigger ${triggerType}.${triggerName} (container=${JSON.stringify(
+                containerToTrigger,
+            )})`,
+        );
         await triggerToRun.trigger(containerToTrigger);
         log.info(
             `Trigger executed with success (type=${triggerType}, name=${triggerName}, container=${JSON.stringify(containerToTrigger)})`,

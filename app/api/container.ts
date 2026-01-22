@@ -173,37 +173,14 @@ export async function getContainerTriggers(req, res) {
  * @param {*} res
  */
 async function runTrigger(req, res) {
-    const { id, triggerType, triggerName } = req.params;
+    const { id, triggerAgent, triggerType, triggerName } = req.params;
 
     const containerToTrigger = storeContainer.getContainer(id);
+    const triggerId = triggerAgent
+        ? `${triggerAgent}.${triggerType}.${triggerName}`
+        : `${triggerType}.${triggerName}`;
     if (containerToTrigger) {
-        if (containerToTrigger.agent) {
-            const agentName = containerToTrigger.agent;
-            const agents = getAgents();
-            const agentClient = agents.find((c) => c.name === agentName);
-
-            if (!agentClient) {
-                return res
-                    .status(500)
-                    .json({ error: `Agent ${agentName} not found` });
-            }
-
-            try {
-                await agentClient.runRemoteTrigger(
-                    id,
-                    triggerType,
-                    triggerName,
-                );
-                res.status(200).json({});
-            } catch (e) {
-                res.status(500).json({
-                    error: `Error running remote trigger: ${e.message}`,
-                });
-            }
-            return;
-        }
-
-        const triggerToRun = getTriggers()[`${triggerType}.${triggerName}`];
+        const triggerToRun = getTriggers()[triggerId];
         if (triggerToRun) {
             try {
                 await triggerToRun.trigger(containerToTrigger);
@@ -287,6 +264,10 @@ export function init() {
     router.delete('/:id', deleteContainer);
     router.get('/:id/triggers', getContainerTriggers);
     router.post('/:id/triggers/:triggerType/:triggerName', runTrigger);
+    router.post(
+        '/:id/triggers/:triggerAgent/:triggerType/:triggerName',
+        runTrigger,
+    );
     router.post('/:id/watch', watchContainer);
     return router;
 }
