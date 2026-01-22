@@ -13,7 +13,11 @@ describe('manager', () => {
     });
 
     test('should add and get agents', () => {
-        const mockClient = new AgentClient('test-agent', { host: 'host', port: 3000, secret: 'secret' }) as jest.Mocked<AgentClient>;
+        const mockClient = new AgentClient('test-agent', {
+            host: 'host',
+            port: 3000,
+            secret: 'secret',
+        }) as jest.Mocked<AgentClient>;
         mockClient.name = 'test-agent';
 
         addAgent(mockClient);

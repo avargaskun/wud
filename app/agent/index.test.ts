@@ -17,14 +17,14 @@ describe('agent index', () => {
 
     test('should initialize agents from registry', async () => {
         const mockAgents = {
-            'agent1': {
+            agent1: {
                 name: 'agent1',
                 configuration: {
                     host: 'host1',
                     secret: 'secret1',
                 },
             },
-            'agent2': {
+            agent2: {
                 name: 'agent2',
                 configuration: {
                     host: 'host2',
@@ -46,7 +46,7 @@ describe('agent index', () => {
 
     test('should skip agents with missing configuration', async () => {
         const mockAgents = {
-            'invalid': {
+            invalid: {
                 name: 'invalid',
                 configuration: {
                     // host missing
@@ -61,6 +61,8 @@ describe('agent index', () => {
         await init();
 
         expect(AgentClient).not.toHaveBeenCalled();
-        expect(log.warn).toHaveBeenCalledWith(expect.stringContaining('Skipping agent invalid'));
+        expect(log.warn).toHaveBeenCalledWith(
+            expect.stringContaining('Skipping agent invalid'),
+        );
     });
 });

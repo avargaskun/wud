@@ -27,19 +27,27 @@ describe('AgentTrigger', () => {
         const result = await trigger.trigger(container);
 
         expect(getAgent).toHaveBeenCalledWith('agent1');
-        expect(mockClient.runRemoteTrigger).toHaveBeenCalledWith(container, 'docker', 'test');
+        expect(mockClient.runRemoteTrigger).toHaveBeenCalledWith(
+            container,
+            'docker',
+            'test',
+        );
         expect(result).toEqual({ success: true });
     });
 
     test('should throw error if agent not assigned', async () => {
         trigger.agent = undefined;
-        await expect(trigger.trigger({})).rejects.toThrow('AgentTrigger must have an agent assigned');
+        await expect(trigger.trigger({})).rejects.toThrow(
+            'AgentTrigger must have an agent assigned',
+        );
     });
 
     test('should throw error if agent client not found', async () => {
         // @ts-ignore
         getAgent.mockReturnValue(undefined);
-        await expect(trigger.trigger({})).rejects.toThrow('Agent agent1 not found');
+        await expect(trigger.trigger({})).rejects.toThrow(
+            'Agent agent1 not found',
+        );
     });
 
     test('should triggerBatch by calling trigger for each container', async () => {

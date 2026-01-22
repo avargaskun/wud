@@ -29,7 +29,9 @@ class AgentTrigger extends Trigger {
      * Delegates to the agent.
      */
     async triggerBatch(containers: Container[]): Promise<any> {
-        return Promise.all(containers.map((container) => this.trigger(container)));
+        return Promise.all(
+            containers.map((container) => this.trigger(container)),
+        );
     }
 
     /**
