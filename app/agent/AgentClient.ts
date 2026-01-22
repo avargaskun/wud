@@ -283,6 +283,23 @@ export class AgentClient {
         }
     }
 
+    async runRemoteTriggerBatch(
+        containers: any[],
+        triggerType: string,
+        triggerName: string,
+    ) {
+        try {
+            await axios.post(
+                `${this.baseUrl}/api/triggers/${triggerType}/${triggerName}/batch`,
+                containers,
+                this.axiosOptions,
+            );
+        } catch (e: any) {
+            this.log.error(`Error running remote batch trigger: ${e.message}`);
+            throw e;
+        }
+    }
+
     async watch(watcherType: string, watcherName: string) {
         try {
             const response = await axios.post<Container[]>(

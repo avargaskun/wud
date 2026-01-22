@@ -181,6 +181,41 @@ async function runTrigger(req: Request, res: Response) {
 }
 
 /**
+ * Run Remote Trigger Batch.
+ */
+async function runTriggerBatch(req: Request, res: Response) {
+    const { type, name } = req.params;
+    const containers = req.body;
+
+    if (!Array.isArray(containers)) {
+        return res
+            .status(400)
+            .json({ error: 'Body must be an array of containers' });
+    }
+
+    const triggerId = `${type}.${name}`;
+    const trigger = registry.getState().trigger[triggerId];
+
+    if (!trigger) {
+        return res.status(404).json({ error: `Trigger ${name} not found` });
+    }
+
+    try {
+        const sanitizedContainers = containers.map((container) => {
+            if (container.agent) {
+                delete container.agent;
+            }
+            return container;
+        });
+        await trigger.triggerBatch(sanitizedContainers);
+        res.status(200).json({});
+    } catch (e: any) {
+        log.error(`Error running batch trigger ${name}: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+}
+
+/**
  * Init Agent Server.
  */
 export async function init() {
@@ -230,6 +265,7 @@ export async function init() {
     app.get('/api/triggers', getTriggers);
     app.get('/api/events', subscribeEvents);
     app.post('/api/triggers/:type/:name', runTrigger);
+    app.post('/api/triggers/:type/:name/batch', runTriggerBatch);
     app.post('/api/watchers/:type/:name', watchWatcher);
     app.post('/api/watchers/:type/:name/container/:id', watchContainer);
 

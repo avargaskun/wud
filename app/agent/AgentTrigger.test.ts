@@ -8,6 +8,7 @@ describe('AgentTrigger', () => {
     let trigger;
     const mockClient = {
         runRemoteTrigger: jest.fn(),
+        runRemoteTriggerBatch: jest.fn(),
     };
 
     beforeEach(() => {
@@ -50,16 +51,21 @@ describe('AgentTrigger', () => {
         );
     });
 
-    test('should triggerBatch by calling trigger for each container', async () => {
+    test('should delegate triggerBatch to agent client', async () => {
         const containers = [{ id: 'c1' }, { id: 'c2' }];
         // @ts-ignore
         getAgent.mockReturnValue(mockClient);
-        mockClient.runRemoteTrigger.mockResolvedValue({ success: true });
+        mockClient.runRemoteTriggerBatch.mockResolvedValue({ success: true });
 
-        const results = await trigger.triggerBatch(containers);
+        const result = await trigger.triggerBatch(containers);
 
-        expect(mockClient.runRemoteTrigger).toHaveBeenCalledTimes(2);
-        expect(results).toHaveLength(2);
+        expect(getAgent).toHaveBeenCalledWith('agent1');
+        expect(mockClient.runRemoteTriggerBatch).toHaveBeenCalledWith(
+            containers,
+            'docker',
+            'test',
+        );
+        expect(result).toEqual({ success: true });
     });
 
     test('should return relaxed configuration schema', () => {

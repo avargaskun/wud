@@ -77,6 +77,11 @@ Format: `data: { "type": "...", "data": ... }`
 **Logic:**
 - Trigger execution requests for remote containers are proxied to the Agent.
 
+**Request:** `POST /api/triggers/:type/:name/batch`
+**Body:** JSON array of containers to trigger.
+**Purpose:** Batch execution of triggers on the Agent.
+
+
 ### 4. Remote Trigger Discovery
 **Request:** `GET /api/triggers`
 **Response:** JSON array of triggers configured on the Agent.

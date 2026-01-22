@@ -196,4 +196,18 @@ describe('AgentClient', () => {
         expect(utils.normalizeContainer).toHaveBeenCalledWith(container);
         expect(result.container).toEqual(container);
     });
+
+    test('runRemoteTriggerBatch should post to /api/triggers/.../batch', async () => {
+        // @ts-ignore
+        axios.post.mockResolvedValue({});
+        const containers = [{ id: '1' }, { id: '2' }];
+
+        await client.runRemoteTriggerBatch(containers, 'docker', 'restart');
+
+        expect(axios.post).toHaveBeenCalledWith(
+            expect.stringContaining('/api/triggers/docker/restart/batch'),
+            containers,
+            expect.anything(),
+        );
+    });
 });

@@ -29,9 +29,15 @@ class AgentTrigger extends Trigger {
      * Delegates to the agent.
      */
     async triggerBatch(containers: Container[]): Promise<any> {
-        return Promise.all(
-            containers.map((container) => this.trigger(container)),
-        );
+        const agentName = this.agent;
+        if (!agentName) {
+            throw new Error('AgentTrigger must have an agent assigned');
+        }
+        const client = getAgent(agentName);
+        if (!client) {
+            throw new Error(`Agent ${agentName} not found`);
+        }
+        return client.runRemoteTriggerBatch(containers, this.type, this.name);
     }
 
     /**

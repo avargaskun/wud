@@ -320,4 +320,114 @@ describe('Agent Server', () => {
             }),
         );
     });
+
+    test('runTriggerBatch should return 400 if body is not array', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const runTriggerBatchHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/triggers/:type/:name/batch',
+        )[1];
+
+        const req = {
+            params: { type: 'docker', name: 'restart' },
+            body: { id: '123' },
+        };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await runTriggerBatchHandler(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(400);
+        expect(res.json).toHaveBeenCalledWith({
+            error: 'Body must be an array of containers',
+        });
+    });
+
+    test('runTriggerBatch should return 404 if trigger not found', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const runTriggerBatchHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/triggers/:type/:name/batch',
+        )[1];
+
+        // @ts-ignore
+        registry.getState.mockReturnValue({ trigger: {} });
+
+        const req = {
+            params: { type: 'docker', name: 'unknown' },
+            body: [],
+        };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await runTriggerBatchHandler(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(404);
+        expect(res.json).toHaveBeenCalledWith({
+            error: 'Trigger unknown not found',
+        });
+    });
+
+    test('runTriggerBatch should execute trigger for each container', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const runTriggerBatchHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/triggers/:type/:name/batch',
+        )[1];
+
+        const mockTrigger = {
+            triggerBatch: jest.fn().mockResolvedValue(true),
+        };
+        // @ts-ignore
+        registry.getState.mockReturnValue({
+            trigger: { 'docker.restart': mockTrigger },
+        });
+
+        const req = {
+            params: { type: 'docker', name: 'restart' },
+            body: [
+                { id: '1', agent: 'remote' },
+                { id: '2', agent: 'remote' },
+            ],
+        };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await runTriggerBatchHandler(req, res);
+
+        expect(mockTrigger.triggerBatch).toHaveBeenCalledWith([
+            { id: '1' },
+            { id: '2' },
+        ]);
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.json).toHaveBeenCalledWith({});
+    });
+
+    test('runTriggerBatch should return 500 if execution fails', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const runTriggerBatchHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/triggers/:type/:name/batch',
+        )[1];
+
+        const mockTrigger = {
+            triggerBatch: jest.fn().mockRejectedValue(new Error('Failed')),
+        };
+        // @ts-ignore
+        registry.getState.mockReturnValue({
+            trigger: { 'docker.restart': mockTrigger },
+        });
+
+        const req = {
+            params: { type: 'docker', name: 'restart' },
+            body: [{ id: '1' }],
+        };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await runTriggerBatchHandler(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(500);
+        expect(res.json).toHaveBeenCalledWith({ error: 'Failed' });
+    });
 });
