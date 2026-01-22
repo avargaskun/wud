@@ -81,6 +81,15 @@ Format: `data: { "type": "...", "data": ... }`
 **Request:** `GET /api/triggers`
 **Response:** JSON array of triggers configured on the Agent.
 
+### 5. On-Demand Watch
+**Request:** `POST /api/watchers/:type/:name`
+**Purpose:** Trigger a specific watcher on the Agent to perform a discovery pass immediately.
+**Response:** JSON array of discovered containers.
+
+**Request:** `POST /api/watchers/:type/:name/container/:id`
+**Purpose:** Trigger a specific watcher on the Agent to discover a single container (looked up by ID in Agent's store).
+**Response:** JSON object of the discovered container.
+
 ## Data Model Changes
 
 ### Container

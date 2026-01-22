@@ -121,6 +121,55 @@ function subscribeEvents(req: Request, res: Response) {
 }
 
 /**
+ * Watch a specific watcher.
+ */
+async function watchWatcher(req: Request, res: Response) {
+    const { type, name } = req.params;
+    const watcherId = `${type.toLowerCase()}.${name.toLowerCase()}`;
+    const watcher = registry.getState().watcher[watcherId];
+
+    if (!watcher) {
+        return res.status(404).json({ error: `Watcher ${name} not found` });
+    }
+
+    try {
+        const results = await watcher.watch();
+        res.json(results);
+    } catch (e: any) {
+        log.error(`Error watching watcher ${name}: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+}
+
+/**
+ * Watch a specific container.
+ */
+async function watchContainer(req: Request, res: Response) {
+    const { type, name, id } = req.params;
+    const watcherId = `${type.toLowerCase()}.${name.toLowerCase()}`;
+    const watcher = registry.getState().watcher[watcherId];
+
+    if (!watcher) {
+        return res.status(404).json({ error: `Watcher ${name} not found` });
+    }
+
+    const container = storeContainer.getContainer(id);
+    if (!container) {
+        return res
+            .status(404)
+            .json({ error: `Container ${id} not found in agent store` });
+    }
+
+    try {
+        const result = await watcher.watchContainer(container);
+        res.json(result);
+    } catch (e: any) {
+        log.error(`Error watching container ${id}: ${e.message}`);
+        res.status(500).json({ error: e.message });
+    }
+}
+
+/**
  * Run Remote Trigger.
  * Delegates to the common API handler but ensures no proxying happens.
  */
@@ -181,6 +230,8 @@ export async function init() {
     app.get('/api/triggers', getTriggers);
     app.get('/api/events', subscribeEvents);
     app.post('/api/triggers/:type/:name', runTrigger);
+    app.post('/api/watchers/:type/:name', watchWatcher);
+    app.post('/api/watchers/:type/:name/container/:id', watchContainer);
 
     // Start Server
     if (configuration.tls.enabled) {

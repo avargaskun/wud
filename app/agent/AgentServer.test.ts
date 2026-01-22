@@ -99,6 +99,14 @@ describe('Agent Server', () => {
             '/api/triggers/:type/:name',
             expect.any(Function),
         );
+        expect(mockApp.post).toHaveBeenCalledWith(
+            '/api/watchers/:type/:name',
+            expect.any(Function),
+        );
+        expect(mockApp.post).toHaveBeenCalledWith(
+            '/api/watchers/:type/:name/container/:id',
+            expect.any(Function),
+        );
     });
 
     test('authenticate middleware should accept valid secret', async () => {
@@ -180,5 +188,136 @@ describe('Agent Server', () => {
 
         expect(req.body.agent).toBeUndefined();
         expect(triggerApi.runTrigger).toHaveBeenCalledWith(req, res);
+    });
+
+    test('watchWatcher should find watcher and delegate', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const watchWatcherHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/watchers/:type/:name',
+        )[1];
+
+        const mockWatcher = {
+            type: 'docker',
+            watch: jest.fn().mockResolvedValue(['c1']),
+        };
+        // @ts-ignore
+        registry.getState.mockReturnValue({
+            watcher: { 'docker.w1': mockWatcher },
+        });
+
+        const req = { params: { type: 'docker', name: 'w1' } };
+        const res = { json: jest.fn() };
+
+        await watchWatcherHandler(req, res);
+
+        expect(mockWatcher.watch).toHaveBeenCalled();
+        expect(res.json).toHaveBeenCalledWith(['c1']);
+    });
+
+    test('watchWatcher should return 404 if watcher not found', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const watchWatcherHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/watchers/:type/:name',
+        )[1];
+
+        // @ts-ignore
+        registry.getState.mockReturnValue({ watcher: {} });
+
+        const req = { params: { type: 'docker', name: 'unknown' } };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await watchWatcherHandler(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(404);
+    });
+
+    test('watchContainer should find watcher/container and delegate', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const watchContainerHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/watchers/:type/:name/container/:id',
+        )[1];
+
+        const mockWatcher = {
+            type: 'docker',
+            watchContainer: jest.fn().mockResolvedValue('result'),
+        };
+        const mockContainer = { id: 'c1' };
+
+        // @ts-ignore
+        registry.getState.mockReturnValue({
+            watcher: { 'docker.w1': mockWatcher },
+        });
+        // @ts-ignore
+        storeContainer.getContainer.mockReturnValue(mockContainer);
+
+        const req = { params: { type: 'docker', name: 'w1', id: 'c1' } };
+        const res = { json: jest.fn() };
+
+        await watchContainerHandler(req, res);
+
+        expect(storeContainer.getContainer).toHaveBeenCalledWith('c1');
+        expect(mockWatcher.watchContainer).toHaveBeenCalledWith(mockContainer);
+        expect(res.json).toHaveBeenCalledWith('result');
+    });
+
+    test('watchContainer should return 404 if watcher not found', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const watchContainerHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/watchers/:type/:name/container/:id',
+        )[1];
+
+        // @ts-ignore
+        registry.getState.mockReturnValue({
+            watcher: {},
+        });
+
+        const req = { params: { type: 'docker', name: 'unknown', id: 'c1' } };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await watchContainerHandler(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(404);
+        expect(res.json).toHaveBeenCalledWith(
+            expect.objectContaining({
+                error: expect.stringContaining('Watcher unknown not found'),
+            }),
+        );
+    });
+
+    test('watchContainer should return 404 if container not found', async () => {
+        process.env.WUD_AGENT_SECRET = 'valid-secret';
+        await init();
+
+        const watchContainerHandler = mockApp.post.mock.calls.find(
+            (call) => call[0] === '/api/watchers/:type/:name/container/:id',
+        )[1];
+
+        const mockWatcher = { type: 'docker' };
+        // @ts-ignore
+        registry.getState.mockReturnValue({
+            watcher: { 'docker.w1': mockWatcher },
+        });
+        // @ts-ignore
+        storeContainer.getContainer.mockReturnValue(undefined);
+
+        const req = { params: { type: 'docker', name: 'w1', id: 'unknown' } };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await watchContainerHandler(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(404);
+        expect(res.json).toHaveBeenCalledWith(
+            expect.objectContaining({
+                error: expect.stringContaining('Container unknown not found'),
+            }),
+        );
     });
 });

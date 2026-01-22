@@ -108,7 +108,10 @@ export class AgentClient {
                 `${this.baseUrl}/api/watchers`,
                 this.axiosOptions,
             );
-            await this.registerAgentComponents('watcher', responseWatchers.data);
+            await this.registerAgentComponents(
+                'watcher',
+                responseWatchers.data,
+            );
         } catch (e: any) {
             this.log.warn(`Failed to fetch/register watchers: ${e.message}`);
         }
@@ -119,7 +122,10 @@ export class AgentClient {
                 `${this.baseUrl}/api/triggers`,
                 this.axiosOptions,
             );
-            await this.registerAgentComponents('trigger', responseTriggers.data);
+            await this.registerAgentComponents(
+                'trigger',
+                responseTriggers.data,
+            );
         } catch (e: any) {
             this.log.warn(`Failed to fetch/register triggers: ${e.message}`);
         }
@@ -273,6 +279,57 @@ export class AgentClient {
             );
         } catch (e: any) {
             this.log.error(`Error running remote trigger: ${e.message}`);
+            throw e;
+        }
+    }
+
+    async watch(watcherType: string, watcherName: string) {
+        try {
+            const response = await axios.post<Container[]>(
+                `${this.baseUrl}/api/watchers/${watcherType}/${watcherName}`,
+                {},
+                this.axiosOptions,
+            );
+            const containers = response.data;
+            const reports: any[] = [];
+            for (const container of containers) {
+                await this.processContainer(container);
+                reports.push({
+                    container,
+                    changed: false, // Calculated in processContainer implicitly via store update
+                });
+            }
+            return reports;
+        } catch (e: any) {
+            this.log.error(`Error watching on agent: ${e.message}`);
+            throw e;
+        }
+    }
+
+    async watchContainer(
+        watcherType: string,
+        watcherName: string,
+        container: Container,
+    ) {
+        try {
+            const response = await axios.post<any>(
+                `${this.baseUrl}/api/watchers/${watcherType}/${watcherName}/container/${container.id}`,
+                {},
+                this.axiosOptions,
+            );
+            const containerWithResult = response.data;
+
+            // Process the result (registry check, store update)
+            await this.processContainer(containerWithResult);
+
+            return {
+                container: containerWithResult,
+                changed: false,
+            };
+        } catch (e: any) {
+            this.log.error(
+                `Error watching container ${container.name} on agent: ${e.message}`,
+            );
             throw e;
         }
     }

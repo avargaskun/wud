@@ -12,19 +12,28 @@ describe('AgentWatcher', () => {
         jest.clearAllMocks();
         watcher = new AgentWatcher();
         watcher.agent = 'agent1';
+        watcher.type = 'docker';
+        watcher.name = 'remote';
     });
 
-    test('should return empty array in watch()', async () => {
+    test('should delegate to client.watch()', async () => {
+        // @ts-ignore
+        mockClient.watch = jest.fn().mockResolvedValue(['c1']);
         // @ts-ignore
         getAgent.mockReturnValue(mockClient);
+
         const result = await watcher.watch();
-        expect(result).toEqual([]);
+
         expect(getAgent).toHaveBeenCalledWith('agent1');
+        expect(mockClient.watch).toHaveBeenCalledWith('docker', 'remote');
+        expect(result).toEqual(['c1']);
     });
 
     test('should throw error in watch() if agent not assigned', async () => {
         watcher.agent = undefined;
-        await expect(watcher.watch()).rejects.toThrow('AgentWatcher must have an agent assigned');
+        await expect(watcher.watch()).rejects.toThrow(
+            'AgentWatcher must have an agent assigned',
+        );
     });
 
     test('should throw error in watch() if agent client not found', async () => {
@@ -33,10 +42,22 @@ describe('AgentWatcher', () => {
         await expect(watcher.watch()).rejects.toThrow('Agent agent1 not found');
     });
 
-    test('should return container in watchContainer()', async () => {
+    test('should delegate to client.watchContainer()', async () => {
         const container = { id: 'c1' };
+        // @ts-ignore
+        mockClient.watchContainer = jest.fn().mockResolvedValue('result');
+        // @ts-ignore
+        getAgent.mockReturnValue(mockClient);
+
         const result = await watcher.watchContainer(container);
-        expect(result).toBe(container);
+
+        expect(getAgent).toHaveBeenCalledWith('agent1');
+        expect(mockClient.watchContainer).toHaveBeenCalledWith(
+            'docker',
+            'remote',
+            container,
+        );
+        expect(result).toBe('result');
     });
 
     test('should return relaxed configuration schema', () => {

@@ -151,4 +151,49 @@ describe('AgentClient', () => {
             }),
         );
     });
+
+    test('watch() should post to /api/watchers/... and process containers', async () => {
+        const containers = [{ id: 'c1' }];
+        // @ts-ignore
+        axios.post.mockResolvedValue({ data: containers });
+        // @ts-ignore
+        utils.normalizeContainer.mockImplementation((c) => c);
+        // @ts-ignore
+        utils.findNewVersion.mockResolvedValue({});
+
+        const result = await client.watch('docker', 'remote');
+
+        expect(axios.post).toHaveBeenCalledWith(
+            expect.stringContaining('/api/watchers/docker/remote'),
+            {},
+            expect.anything(),
+        );
+        expect(utils.normalizeContainer).toHaveBeenCalledWith(containers[0]);
+        expect(result).toHaveLength(1);
+        expect(result[0].container).toEqual(containers[0]);
+    });
+
+    test('watchContainer() should post to /api/watchers/.../container/... and process result', async () => {
+        const container = { id: 'c1', name: 'c1' };
+        // @ts-ignore
+        axios.post.mockResolvedValue({ data: container });
+        // @ts-ignore
+        utils.normalizeContainer.mockImplementation((c) => c);
+        // @ts-ignore
+        utils.findNewVersion.mockResolvedValue({});
+
+        const result = await client.watchContainer(
+            'docker',
+            'remote',
+            container,
+        );
+
+        expect(axios.post).toHaveBeenCalledWith(
+            expect.stringContaining('/api/watchers/docker/remote/container/c1'),
+            {},
+            expect.anything(),
+        );
+        expect(utils.normalizeContainer).toHaveBeenCalledWith(container);
+        expect(result.container).toEqual(container);
+    });
 });
