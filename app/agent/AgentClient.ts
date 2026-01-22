@@ -4,11 +4,8 @@ import fs from 'fs';
 import { StringDecoder } from 'string_decoder';
 import logger from '../log';
 import * as storeContainer from '../store/container';
-import {
-    findNewVersion,
-    normalizeContainer,
-} from '../watchers/providers/docker/utils';
-import { Container, ContainerResult } from '../model/container';
+import { emitContainerReport } from '../event';
+import { Container } from '../model/container';
 import * as registry from '../registry';
 
 export interface AgentClientConfig {
@@ -69,6 +66,24 @@ export class AgentClient {
         this.startSse();
     }
 
+    private pruneOldContainers(newContainers: Container[], watcher?: string) {
+        const query: any = { agent: this.name };
+        if (watcher) {
+            query.watcher = watcher;
+        }
+        const containersInStore = storeContainer.getContainers(query);
+
+        const containersToRemove = containersInStore.filter(
+            (containerInStore) =>
+                !newContainers.find((c) => c.id === containerInStore.id),
+        );
+
+        containersToRemove.forEach((c) => {
+            this.log.info(`Pruning container ${c.name} (removed on Agent)`);
+            storeContainer.deleteContainer(c.id);
+        });
+    }
+
     private async registerAgentComponents(
         kind: 'watcher' | 'trigger',
         remoteComponents: any[],
@@ -98,6 +113,7 @@ export class AgentClient {
         for (const container of containers) {
             await this.processContainer(container);
         }
+        this.pruneOldContainers(containers);
 
         // Unregister any existing components for this agent
         await registry.deregisterAgentComponents(this.name);
@@ -135,46 +151,35 @@ export class AgentClient {
 
     async processContainer(container: Container) {
         container.agent = this.name;
-        const logContainer = this.log.child({ container: container.name });
+        // The container coming from Agent should already be normalized and have results
+        // We rely on the Agent to perform Registry checks if configured
 
-        try {
-            // If the Agent couldn't resolve the registry (likely Docker Hub), it sets it to 'unknown'.
-            // We reset it here so the Controller's registry providers can attempt to match it.
-            if (
-                container.image?.registry?.name === 'unknown' &&
-                container.image?.registry?.url === 'unknown'
-            ) {
-                container.image.registry.url = '';
-            }
-
-            // Normalize container to resolve Registry (Agent only does discovery)
-            container = normalizeContainer(container);
-        } catch (e: any) {
-            this.log.warn(
-                `Error normalizing container ${container.name}: ${e.message}`,
-            );
-        }
-
-        try {
-            // Check for updates using local Registry logic
-            // Pass null as dockerApi because we can't check legacy v1 digests remotely easily
-            const result = await findNewVersion(container, null, logContainer);
-            container.result = result as ContainerResult;
-        } catch (e: any) {
-            this.log.warn(
-                `Error checking update for ${container.name}: ${e.message}`,
-            );
-            container.error = { message: e.message };
-        }
-
-        // Save to store
+        // Save to store logic with Change Detection
         const existing = storeContainer.getContainer(container.id);
+        const containerReport = {
+            container: container,
+            changed: false,
+        };
 
         if (!existing) {
-            storeContainer.insertContainer(container);
+            containerReport.container =
+                storeContainer.insertContainer(container);
+            containerReport.changed = true;
         } else {
-            storeContainer.updateContainer(container);
+            containerReport.container =
+                storeContainer.updateContainer(container);
+            // existing is the old state (from store), container is new state (from Agent)
+            // But storeContainer.updateContainer returns the NEW state object with validation/methods
+            // We use existing.resultChanged() to compare with the new state
+            if (existing.resultChanged) {
+                containerReport.changed =
+                    existing.resultChanged(containerReport.container) &&
+                    containerReport.container.updateAvailable;
+            }
         }
+
+        // Emit report so Triggers can fire if changed
+        emitContainerReport(containerReport);
     }
 
     scheduleReconnect(delay: number) {
@@ -318,9 +323,10 @@ export class AgentClient {
                 await this.processContainer(container);
                 reports.push({
                     container,
-                    changed: false, // Calculated in processContainer implicitly via store update
+                    changed: false,
                 });
             }
+            this.pruneOldContainers(containers, watcherName);
             return reports;
         } catch (e: any) {
             this.log.error(`Error watching on agent: ${e.message}`);

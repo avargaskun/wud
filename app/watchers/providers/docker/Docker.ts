@@ -145,7 +145,7 @@ class Docker extends Watcher {
             watchdigest: this.joi.any(),
             watchevents: this.joi.boolean().default(true),
             watchatstart: this.joi.boolean().default(true),
-            discoveryonly: this.joi.boolean().default(false),
+            enablemetrics: this.joi.boolean().default(true),
         });
     }
 
@@ -401,15 +401,11 @@ class Docker extends Watcher {
         logContainer.debug('Start watching');
 
         try {
-            if (!this.configuration.discoveryonly) {
-                containerWithResult.result = await findNewVersion(
-                    container,
-                    this.dockerApi,
-                    logContainer,
-                );
-            } else {
-                logContainer.debug('Discovery only - skipping update check');
-            }
+            containerWithResult.result = await findNewVersion(
+                container,
+                this.dockerApi,
+                logContainer,
+            );
         } catch (e) {
             logContainer.warn(`Error when processing (${e.message})`);
             logContainer.debug(e);
@@ -472,10 +468,11 @@ class Docker extends Watcher {
             (imagePromise) => imagePromise !== undefined,
         );
 
-        // Prune old containers from the store
+        // Prune old containers from the store - only locally discovered containers will be pruned
         try {
             const containersFromTheStore = storeContainer.getContainers({
                 watcher: this.name,
+                agent: null,
             });
             pruneOldContainers(containersToReturn, containersFromTheStore);
         } catch (e: any) {
@@ -483,15 +480,16 @@ class Docker extends Watcher {
                 `Error when trying to prune the old containers (${e.message})`,
             );
         }
-        if (!this.configuration.discoveryonly) {
-            getWatchContainerGauge().set(
-                {
-                    type: this.type,
-                    name: this.name,
-                },
-                containersToReturn.length,
-            );
-        }
+
+        // The gauge may be undefined if running in Agent mode because Prometheus is disabled
+        const gauge = getWatchContainerGauge();
+        gauge?.set(
+            {
+                type: this.type,
+                name: this.name,
+            },
+            containersToReturn.length,
+        );
 
         return containersToReturn;
     }

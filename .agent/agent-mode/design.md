@@ -3,20 +3,20 @@
 ## Architecture
 
 The Agent Mode allows running WUD in a distributed manner.
-- **Agent Node**: Runs near the Docker socket (or other container sources). It is responsible for **discovery** only. It does NOT check for updates against registries. It does NOT persist state to disk.
-- **Controller Node**: The central instance. It manages its own local watchers AND connects to remote Agents. It receives container reports from Agents, performs **update checks** (Registry queries), and handles persistence, UI, and Notifications.
+- **Agent Node**: Runs near the Docker socket (or other container sources). It performs **discovery** AND **update checks** (Registry queries). It sends fully hydrated Container objects (including update results) to the Controller. It does NOT persist state to disk.
+- **Controller Node**: The central instance. It manages its own local watchers AND connects to remote Agents. It receives container reports from Agents, and handles persistence, UI, and Notifications.
 
 ```mermaid
 graph TD
     subgraph Agent Node
         A[Agent Watcher #40;Docker#41;] -->|Discovery| B(In-Memory Store)
+        B -->|Check Updates| J[Registry Service]
         B -->|SSE Push| C[Agent API]
     end
     subgraph Controller Node
         D[Agent Client Manager] -->|Connect & Listen| C
         D -->|Update Local Store| E(Main Store)
         F[Local Watcher] -->|Discovery| E
-        E -->|Check Updates| G[Registry Service]
         E --> H[Web UI]
         E --> I[Triggers]
     end
@@ -33,9 +33,10 @@ Run with `--agent` flag.
 - `WUD_SERVER_PORT`: Port to listen on (default 3000).
 - `WUD_SERVER_TLS_*`: TLS configuration (same as current).
 - `WUD_WATCHER_{name}_*`: Watcher configuration (must have at least one).
+- `WUD_REGISTRY_{name}_*`: Registry configuration (Required for update checks).
 - `WUD_LOG_LEVEL`: Log level.
 
-*Registries and Authentication (for UI) are ignored in Agent mode.*
+*Authentication (for UI) is ignored in Agent mode.*
 
 ### Controller Configuration
 Configured via `WUD_AGENT_{name}_*` variables.
@@ -116,12 +117,8 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 - **Controller Mode**: Continues to use persistent file storage.
 
 ### 2. Watchers (`app/watchers/providers/docker/Docker.ts`)
-- Refactor `watch()` method.
-- Introduce `discoveryOnly` mode.
-- If `discoveryOnly` is true:
-    - `getContainers()` is called.
-    - `findNewVersion()` (Registry check) is SKIPPED.
-    - `result` object in Container is left empty or minimal.
+- **Fix**: Ensure `getContainers` filters correctly by Agent. Local watchers must NOT prune remote containers.
+- **Agent Mode**: Watchers run in full mode (Discovery + Registry Check).
 - **API**:
     - `GET /api/watchers` returns both local and agent watchers.
     - New endpoint `GET /api/watchers/:agent/:type/:name` for agent watcher details.
@@ -139,13 +136,15 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 - Manages connection to one specific Agent.
 - Performs Handshake.
 - Maintains SSE connection (robust reconnect logic with error handling).
-- On event, normalizes container data (adds `agent` field) and updates the **Main Store**.
-- **Crucial**: When receiving a container from Agent, the Controller must trigger an "Update Check" (Registry lookup) because the Agent didn't do it.
-- The Controller must also call `normalizeContainer` on incoming containers to resolve the Registry provider (since the Agent doesn't know about registries).
+- On event:
+    - Normalizes container data (adds `agent` field).
+    - Updates the **Main Store**.
+    - **Crucial**: Emits `wud:container-report` event if the container has changed/updated, so that **Triggers** on the Controller are fired.
+- **Changed**: Does NOT perform Registry lookups. Relies on Agent data.
 
 ### 5. Registry Logic
-- The Controller needs a way to "hydrate" a container with registry info when it comes from an Agent.
-- Current logic is tied to `Watcher.watch()`. We might need a `Registry.checkUpdate(container)` function that can be called independently.
+- Agent now performs registry lookups.
+- Controller continues to perform registry lookups for LOCAL containers.
 
 ### 6. Agent Configuration & Management
 - **Agent Component (`app/agent/Agent.ts`)**: New Component class representing a remote agent configuration.

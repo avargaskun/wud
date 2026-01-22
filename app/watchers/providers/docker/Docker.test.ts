@@ -142,6 +142,19 @@ describe('Docker Watcher', () => {
             expect(docker.getContainers).toHaveBeenCalled();
             expect(docker.watchContainer).toHaveBeenCalled();
         });
+
+        test('should filter store containers by agent when pruning', async () => {
+            docker.name = 'docker-local';
+            docker.configuration = { watchall: false, watchbydefault: true };
+            mockDockerApi.listContainers.mockResolvedValue([]);
+
+            await docker.getContainers();
+
+            expect(storeContainer.getContainers).toHaveBeenCalledWith({
+                watcher: 'docker-local',
+                agent: null,
+            });
+        });
     });
 
     describe('Container Processing', () => {
@@ -167,21 +180,6 @@ describe('Docker Watcher', () => {
                 expect.anything(),
             );
             expect(event.emitContainerReport).toHaveBeenCalled();
-        });
-
-        test('should skip update check if discoveryonly', async () => {
-            const container = { id: 'test123', name: 'test' };
-            const mockLog = {
-                child: jest
-                    .fn()
-                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
-            };
-            docker.log = mockLog;
-            docker.configuration = { discoveryonly: true };
-
-            await docker.watchContainer(container);
-
-            expect(utils.findNewVersion).not.toHaveBeenCalled();
         });
     });
 

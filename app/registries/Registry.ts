@@ -336,19 +336,21 @@ class Registry extends Component {
             axiosOptions,
         );
 
+        // The metric may be undefined if running in Agent mode because Prometheus is disabled
+        const tagMetric = getSummaryTags();
         try {
             const response = (await axios(
                 axiosOptionsWithAuth,
             )) as AxiosResponse<T>;
             const end = new Date().getTime();
-            getSummaryTags().observe(
+            tagMetric?.observe(
                 { type: this.type, name: this.name },
                 (end - start) / 1000,
             );
             return resolveWithFullResponse ? response : response.data;
         } catch (error) {
             const end = new Date().getTime();
-            getSummaryTags().observe(
+            tagMetric?.observe(
                 { type: this.type, name: this.name },
                 (end - start) / 1000,
             );

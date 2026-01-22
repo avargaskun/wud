@@ -324,6 +324,22 @@ test('init should register all components', async () => {
     ]);
 });
 
+test('init should register registries even in Agent mode', async () => {
+    watchers = {
+        watcher1: {
+            host: 'host1',
+        },
+    };
+    await registry.init({ agent: true });
+    expect(Object.keys(registry.getState().registry).length).toBeGreaterThan(0);
+    expect(Object.keys(registry.getState().watcher)).toEqual([
+        'docker.watcher1',
+    ]);
+    // Authentications and Agents should NOT be registered in Agent mode
+    expect(Object.keys(registry.getState().authentication).length).toEqual(0);
+    expect(Object.keys(registry.getState().agent).length).toEqual(0);
+});
+
 test('deregisterAll should deregister all components', async () => {
     registries = {
         hub: {

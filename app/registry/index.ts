@@ -220,7 +220,6 @@ async function registerComponents(
  */
 async function registerWatchers(options: RegistrationOptions = {}) {
     const configurations = getWatcherConfigurations();
-    const discoveryOnly = options.agent;
     let watchersToRegister = [];
     try {
         if (Object.keys(configurations).length === 0) {
@@ -238,7 +237,7 @@ async function registerWatchers(options: RegistrationOptions = {}) {
                     'watcher',
                     'docker',
                     'local',
-                    { discoveryonly: discoveryOnly },
+                    { enablemetrics: !options.agent },
                     '../watchers/providers',
                 ),
             );
@@ -247,9 +246,6 @@ async function registerWatchers(options: RegistrationOptions = {}) {
                 Object.keys(configurations).map((watcherKey) => {
                     const watcherKeyNormalize = watcherKey.toLowerCase();
                     const config = configurations[watcherKeyNormalize];
-                    if (discoveryOnly) {
-                        config.discoveryonly = true;
-                    }
                     return registerComponent(
                         'watcher',
                         'docker',
@@ -511,10 +507,10 @@ export async function init(options: RegistrationOptions = {}) {
     // Register watchers
     await registerWatchers(options);
 
-    if (!options.agent) {
-        // Register registries
-        await registerRegistries();
+    // Register registries
+    await registerRegistries();
 
+    if (!options.agent) {
         // Register authentications
         await registerAuthentications();
 

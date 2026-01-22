@@ -44,6 +44,7 @@ jest.mock('./component', () => ({
 jest.mock('../log', () => ({
     child: jest.fn(() => ({
         info: jest.fn(),
+        debug: jest.fn(),
         warn: jest.fn(),
         error: jest.fn(),
     })),

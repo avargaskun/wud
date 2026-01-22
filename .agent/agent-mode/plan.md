@@ -77,8 +77,36 @@
     - [x] Create `AGENT.md`.
     - [x] Update `README.md` and `docs/`.
 
+## Re-enable Remote Registries
+
+- [x] **Step 14: Enable Registries in Agent**
+    - [x] Modify `app/index.ts` to allow `registry.init` even if `isAgent` is true.
+    - [x] Modify `app/registry/index.ts` to ensure `registerRegistries` runs in Agent mode.
+    - [x] Modify `app/registry/index.ts` `init` method to call `registerRegistries` even if `options.agent` is true.
+
+- [x] **Step 15: Revert Discovery-Only Mode in Watchers**
+    - [x] Modify `app/watchers/providers/docker/Docker.ts` to remove `discoveryonly` logic/flag (ensure `findNewVersion` is called).
+    - [x] **CRITICAL**: Modify `app/watchers/providers/docker/Docker.ts` `getContainers` and `pruneOldContainers` to filter by `agent` context. Use `storeContainer.getContainers({ watcher: this.name, agent: this.agent })` (where `agent` is likely undefined for local watchers) to prevent pruning remote containers.
+
+- [x] **Step 16: Update Agent Client (Controller)**
+    - [x] Modify `app/agent/AgentClient.ts` to REMOVE `findNewVersion` logic. **(Explicitly disable registry checks on Controller for remote containers)**.
+    - [x] Modify `app/agent/AgentClient.ts` to REMOVE `normalizeContainer` logic. Trust the `Container` data (including Registry info and Update result) received from the Agent.
+    - [x] Implement change detection logic (similar to Watcher) inside `AgentClient`.
+    - [x] Emit `wud:container-report` (`event.emitContainerReport`) when a remote container is updated/changed, ensuring Triggers fire on the Controller.
+    - [x] Implement pruning of old containers in `AgentClient` (handshake/watch).
+
+- [x] **Step 17: Verification**
+    - [x] Update tests to verify `AgentClient` emits reports.
+    - [x] Verify `Docker` watcher doesn't delete remote containers.
+
 ## TODO
 
+- [ ] **Fix error detection/handling in WebUI**
+    - [ ] Make sure that HTTP request errors are properly observed (it appears 4xx and 5xx errors from `fetch()` do not raise an exception?)
+    - [ ] Fix background of toast that shows on success/errors (currently background is transparent and makes it hard to read when there is content behind)
 - [ ] **Propagate 'container delete' operations to remote agents**
     - [ ] Modify `containerDelete()` in @app/api/container.ts to find the appropriate `AgentClient` and forward the request
     - [ ] Implement API in `AgentServer` to handle the request. Must revalidate that `serverConfiguration.feature.delete` is enabled.
+- [ ] **Investigate Jest open handles**
+    - [ ] Remove `forceExit` option from @app/jest.config.cjs
+    - [ ] Re-run the tests. Specifically on @app/registry/index.test.ts
