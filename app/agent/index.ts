@@ -1,16 +1,9 @@
 import { AgentClient, AgentClientConfig } from './AgentClient';
 import log from '../log';
 import { getState } from '../registry';
+import { addAgent } from './manager';
 
-const clients: AgentClient[] = [];
-
-export function getAgents(): AgentClient[] {
-    return clients;
-}
-
-export function getAgent(name: string): AgentClient | undefined {
-    return clients.find((client) => client.name === name);
-}
+export * from './manager';
 
 export async function init(): Promise<void> {
     const registryState = getState();
@@ -27,7 +20,7 @@ export async function init(): Promise<void> {
         }
 
         const client = new AgentClient(name, config);
-        clients.push(client);
+        addAgent(client);
         // Start without awaiting to not block main init
         client.init();
     });

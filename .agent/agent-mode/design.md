@@ -136,7 +136,7 @@ agent?: string; // Name of the agent. Undefined/Null if local.
 ### 6. Agent Configuration & Management
 - **Agent Component (`app/agent/Agent.ts`)**: New Component class representing a remote agent configuration.
 - **Registry Integration (`app/registry/index.ts`)**: Agents are registered as components (`registry.getState().agent`) based on environment variables.
-- **Agent Manager (`app/agent/index.ts`)**: Iterates over registered Agent components to instantiate and manage `AgentClient` runtime instances.
+- **Agent Manager (`app/agent/index.ts` & `app/agent/manager.ts`)**: Iterates over registered Agent components to instantiate and manage `AgentClient` runtime instances. `manager.ts` provides access to these instances to avoid circular dependencies.
 
 ## Frontend Changes
 - **Configuration**: Add "Agents" section.
