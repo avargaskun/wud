@@ -18,7 +18,7 @@ import Trigger from '../triggers/providers/Trigger';
 import Watcher from '../watchers/Watcher';
 import Registry from '../registries/Registry';
 import Authentication from '../authentications/providers/Authentication';
-import Agent from '../agent/Agent';
+import Agent from '../agent/components/Agent';
 
 export interface RegistryState {
     trigger: { [key: string]: Trigger };

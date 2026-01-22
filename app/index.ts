@@ -5,7 +5,7 @@ import * as store from './store';
 import * as registry from './registry';
 import * as api from './api';
 import * as prometheus from './prometheus';
-import * as agentServer from './agent/AgentServer';
+import * as agentServer from './agent/api';
 import * as agentManager from './agent';
 
 async function main() {

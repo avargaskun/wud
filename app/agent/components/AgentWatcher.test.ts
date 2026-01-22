@@ -1,8 +1,8 @@
 // @ts-nocheck
 import AgentWatcher from './AgentWatcher';
-import { getAgent } from './manager';
+import { getAgent } from '../manager';
 
-jest.mock('./manager');
+jest.mock('../manager');
 
 describe('AgentWatcher', () => {
     let watcher;

@@ -1,7 +1,7 @@
 // @ts-nocheck
-import Trigger from '../triggers/providers/Trigger';
-import { Container } from '../model/container';
-import { getAgent } from './manager';
+import Trigger from '../../triggers/providers/Trigger';
+import { Container } from '../../model/container';
+import { getAgent } from '../manager';
 
 /**
  * Agent Trigger.

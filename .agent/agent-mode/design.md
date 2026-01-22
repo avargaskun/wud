@@ -129,7 +129,7 @@ agent?: string; // Name of the agent. Undefined/Null if local.
     - New endpoint `GET /api/triggers/:agent/:type/:name` for agent trigger details.
     - New endpoint `POST /api/triggers/:agent/:type/:name` to execute agent trigger.
 
-### 3. Agent Server (`app/agent/AgentServer.ts`)
+### 3. Agent Server (`app/agent/api/index.ts`)
 - New component.
 - Starts Express app with specific Agent endpoints.
 - Uses `app/event` to subscribe to local watcher events and push them to SSE clients.

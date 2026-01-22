@@ -1,8 +1,8 @@
 // @ts-nocheck
 import AgentTrigger from './AgentTrigger';
-import { getAgent } from './manager';
+import { getAgent } from '../manager';
 
-jest.mock('./manager');
+jest.mock('../manager');
 
 describe('AgentTrigger', () => {
     let trigger;
