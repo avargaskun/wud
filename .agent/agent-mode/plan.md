@@ -101,12 +101,12 @@
 
 ## TODO
 
-- [ ] **Fix error detection/handling in WebUI**
-    - [ ] Make sure that HTTP request errors are properly observed (it appears 4xx and 5xx errors from `fetch()` do not raise an exception?)
-    - [ ] Fix background of toast that shows on success/errors (currently background is transparent and makes it hard to read when there is content behind)
-- [ ] **Propagate 'container delete' operations to remote agents**
+- [x] **1. Fix error detection/handling in WebUI**
+    - [x] Make sure that HTTP request errors are properly observed (i.e. checking `response.ok`). Only do this for fetch calls that are results of user actions (i.e. button clicks)
+    - [x] Fix the background of the toast that shows on success/errors (currently background is transparent and makes it hard to read when there is content behind)
+- [ ] **2. Propagate 'container delete' operations to remote agents**
     - [ ] Modify `containerDelete()` in @app/api/container.ts to find the appropriate `AgentClient` and forward the request
     - [ ] Implement API in `AgentServer` to handle the request. Must revalidate that `serverConfiguration.feature.delete` is enabled.
-- [ ] **Investigate Jest open handles**
+- [ ] **3. Investigate Jest open handles**
     - [ ] Remove `forceExit` option from @app/jest.config.cjs
     - [ ] Re-run the tests. Specifically on @app/registry/index.test.ts
