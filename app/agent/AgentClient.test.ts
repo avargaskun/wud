@@ -31,7 +31,7 @@ describe('AgentClient', () => {
         };
         // @ts-ignore
         logger.child.mockReturnValue(mockLog);
-        
+
         // Mock store insert/update
         storeContainer.insertContainer.mockImplementation((c) => c);
         storeContainer.updateContainer.mockImplementation((c) => c);
@@ -48,11 +48,11 @@ describe('AgentClient', () => {
     test('should prune old containers after handshake', async () => {
         const newContainers = [{ id: '1', name: 'new' }];
         const oldContainer = { id: '2', name: 'old', agent: 'test-agent' };
-        
+
         // Mock store having old container
         storeContainer.getContainers.mockReturnValue([oldContainer]);
         storeContainer.deleteContainer.mockImplementation(() => {});
-        
+
         // Handshake response
         // @ts-ignore
         axios.get.mockResolvedValue({ data: newContainers });
@@ -61,24 +61,36 @@ describe('AgentClient', () => {
 
         await client.handshake();
 
-        expect(storeContainer.getContainers).toHaveBeenCalledWith({ agent: 'test-agent' });
+        expect(storeContainer.getContainers).toHaveBeenCalledWith({
+            agent: 'test-agent',
+        });
         expect(storeContainer.deleteContainer).toHaveBeenCalledWith('2');
     });
 
     test('should prune old containers after watch', async () => {
         const newContainers = [{ id: '1', name: 'new' }];
-        const oldContainer = { id: '2', name: 'old', agent: 'test-agent', watcher: 'remote' };
+        const oldContainer = {
+            id: '2',
+            name: 'old',
+            agent: 'test-agent',
+            watcher: 'remote',
+        };
 
         // Mock store having old container
         storeContainer.getContainers.mockReturnValue([oldContainer]);
         storeContainer.deleteContainer.mockImplementation(() => {});
-        
+
         // @ts-ignore
-        axios.post.mockResolvedValue({ data: newContainers });
+        axios.post.mockResolvedValue({
+            data: [{ container: newContainers[0], changed: false }],
+        });
 
         await client.watch('docker', 'remote');
 
-        expect(storeContainer.getContainers).toHaveBeenCalledWith({ agent: 'test-agent', watcher: 'remote' });
+        expect(storeContainer.getContainers).toHaveBeenCalledWith({
+            agent: 'test-agent',
+            watcher: 'remote',
+        });
         expect(storeContainer.deleteContainer).toHaveBeenCalledWith('2');
     });
 
@@ -175,24 +187,27 @@ describe('AgentClient', () => {
         expect(storeContainer.insertContainer).toHaveBeenCalledWith(container);
         expect(event.emitContainerReport).toHaveBeenCalledWith(
             expect.objectContaining({
-                container: expect.objectContaining({ id: '1', agent: 'test-agent' }),
+                container: expect.objectContaining({
+                    id: '1',
+                    agent: 'test-agent',
+                }),
                 changed: true,
-            })
+            }),
         );
     });
-    
+
     test('processContainer should detect changes', async () => {
         const container = {
             id: '1',
             name: 'mongo',
             updateAvailable: true,
         };
-        
+
         const existingContainer = {
             ...container,
             resultChanged: jest.fn().mockReturnValue(true),
         };
-        
+
         storeContainer.getContainer.mockReturnValue(existingContainer);
         storeContainer.updateContainer.mockReturnValue(existingContainer);
 
@@ -203,15 +218,17 @@ describe('AgentClient', () => {
         expect(event.emitContainerReport).toHaveBeenCalledWith(
             expect.objectContaining({
                 changed: true,
-            })
+            }),
         );
     });
 
     test('watch() should post to /api/watchers/... and process containers', async () => {
         const containers = [{ id: 'c1' }];
         // @ts-ignore
-        axios.post.mockResolvedValue({ data: containers });
-        
+        axios.post.mockResolvedValue({
+            data: [{ container: containers[0], changed: false }],
+        });
+
         const spyProcess = jest.spyOn(client, 'processContainer');
 
         const result = await client.watch('docker', 'remote');
@@ -229,7 +246,9 @@ describe('AgentClient', () => {
     test('watchContainer() should post to /api/watchers/.../container/... and process result', async () => {
         const container = { id: 'c1', name: 'c1' };
         // @ts-ignore
-        axios.post.mockResolvedValue({ data: container });
+        axios.post.mockResolvedValue({
+            data: { container: container, changed: false },
+        });
 
         const result = await client.watchContainer(
             'docker',

@@ -11,6 +11,7 @@ import {
     fullName,
 } from '../../../model/container';
 import * as registry from '../../../registry';
+import { ContainerResult } from '../../../model/container';
 
 /**
  * Return all supported registries
@@ -256,9 +257,13 @@ export function isDigestToWatch(
  * @param dockerApi - Optional, used for v1 manifest legacy check
  * @param logContainer
  */
-export async function findNewVersion(container, dockerApi, logContainer) {
+export async function findNewVersion(
+    container,
+    dockerApi,
+    logContainer,
+): Promise<ContainerResult> {
     const registryProvider = getRegistry(container.image.registry.name);
-    const result = { tag: container.image.tag.value };
+    const result: ContainerResult = { tag: container.image.tag.value };
     if (!registryProvider) {
         logContainer.error(
             `Unsupported registry (${container.image.registry.name})`,

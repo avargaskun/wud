@@ -5,7 +5,7 @@ import { StringDecoder } from 'string_decoder';
 import logger from '../log';
 import * as storeContainer from '../store/container';
 import { emitContainerReport } from '../event';
-import { Container } from '../model/container';
+import { Container, ContainerReport } from '../model/container';
 import * as registry from '../registry';
 
 export interface AgentClientConfig {
@@ -312,20 +312,16 @@ export class AgentClient {
 
     async watch(watcherType: string, watcherName: string) {
         try {
-            const response = await axios.post<Container[]>(
+            const response = await axios.post<ContainerReport[]>(
                 `${this.baseUrl}/api/watchers/${watcherType}/${watcherName}`,
                 {},
                 this.axiosOptions,
             );
-            const containers = response.data;
-            const reports: any[] = [];
-            for (const container of containers) {
-                await this.processContainer(container);
-                reports.push({
-                    container,
-                    changed: false,
-                });
+            const reports = response.data;
+            for (const report of reports) {
+                await this.processContainer(report.container);
             }
+            const containers = reports.map((report) => report.container);
             this.pruneOldContainers(containers, watcherName);
             return reports;
         } catch (e: any) {
@@ -340,20 +336,16 @@ export class AgentClient {
         container: Container,
     ) {
         try {
-            const response = await axios.post<any>(
+            const response = await axios.post<ContainerReport>(
                 `${this.baseUrl}/api/watchers/${watcherType}/${watcherName}/container/${container.id}`,
                 {},
                 this.axiosOptions,
             );
-            const containerWithResult = response.data;
+            const report = response.data;
 
             // Process the result (registry check, store update)
-            await this.processContainer(containerWithResult);
-
-            return {
-                container: containerWithResult,
-                changed: false,
-            };
+            await this.processContainer(report.container);
+            return report;
         } catch (e: any) {
             this.log.error(
                 `Error watching container ${container.name} on agent: ${e.message}`,

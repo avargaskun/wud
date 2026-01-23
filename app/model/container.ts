@@ -66,6 +66,11 @@ export interface Container {
     resultChanged?: (otherContainer: Container | undefined) => boolean;
 }
 
+export interface ContainerReport {
+    container: Container;
+    changed: boolean;
+}
+
 // Container data schema
 const schema = joi.object({
     id: joi.string().min(1).required(),

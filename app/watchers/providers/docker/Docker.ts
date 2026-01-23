@@ -21,7 +21,7 @@ import {
 } from './label';
 import * as storeContainer from '../../../store/container';
 import log from '../../../log';
-import { fullName, Container } from '../../../model/container';
+import { fullName, Container, ContainerReport } from '../../../model/container';
 import { getWatchContainerGauge } from '../../../prometheus/watcher';
 import Watcher from '../../Watcher';
 import { ComponentConfiguration } from '../../../registry/Component';
@@ -352,7 +352,7 @@ class Docker extends Watcher {
      * Watch main method.
      * @returns {Promise<*[]>}
      */
-    async watch() {
+    async watch(): Promise<ContainerReport[]> {
         this.ensureLogger();
         let containers: Container[] = [];
 

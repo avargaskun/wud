@@ -44,9 +44,12 @@ describe('Agent API Event', () => {
 
         subscribeEvents(req, res);
 
-        expect(res.writeHead).toHaveBeenCalledWith(200, expect.objectContaining({
-            'Content-Type': 'text/event-stream',
-        }));
+        expect(res.writeHead).toHaveBeenCalledWith(
+            200,
+            expect.objectContaining({
+                'Content-Type': 'text/event-stream',
+            }),
+        );
         expect(res.write).toHaveBeenCalledWith(
             expect.stringContaining('wud:ack'),
         );
@@ -63,7 +66,8 @@ describe('Agent API Event', () => {
 
         // Trigger event
         initEvents();
-        const containerAddedHandler = event.registerContainerAdded.mock.calls[0][0];
+        const containerAddedHandler =
+            event.registerContainerAdded.mock.calls[0][0];
         containerAddedHandler({ id: 'c1', name: 'c1' });
 
         expect(res.write).toHaveBeenCalledWith(
