@@ -66,9 +66,10 @@
     - [x] Display Agent name in Watchers list.
     - [x] Test: UI Test.
 
-- [ ] **Step 11: Backend E2E Tests**
-    - [ ] Add E2E test scenario: Controller + Agent.
-    - [ ] Verify container discovery, update check, and triggering.
+- [x] **Step 11: Backend E2E Tests**
+    - [x] Add E2E test scenario: Controller + Agent.
+    - [x] Verify container discovery, update check, and triggering.
+    - Note: Inspect contents of `app/nodemon.agent.json` and `app/nodemon.controller.json` for an example of how to run Agent and Controller in parallel.
 
 - [ ] **Step 12: Frontend E2E Tests**
     - [ ] Add Playwright tests to validate new/updated views and components.

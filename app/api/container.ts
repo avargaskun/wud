@@ -8,7 +8,6 @@ import { mapComponentsToList } from './component';
 import Trigger from '../triggers/providers/Trigger';
 import logger from '../log';
 const log = logger.child({ component: 'container' });
-import { getAgents } from '../agent';
 
 const router = express.Router();
 
@@ -219,10 +218,14 @@ async function watchContainer(req, res) {
 
     const container = storeContainer.getContainer(id);
     if (container) {
-        const watcher = getWatchers()[`docker.${container.watcher}`];
+        let watcherId = `docker.${container.watcher}`;
+        if (container.agent) {
+            watcherId = `${container.agent}.${watcherId}`;
+        }
+        const watcher = getWatchers()[watcherId];
         if (!watcher) {
             res.status(500).json({
-                error: `No provider found for container ${id} and provider ${container.watcher}`,
+                error: `No provider found for container ${id} and provider ${watcherId}`,
             });
         } else {
             try {
