@@ -275,41 +275,51 @@ class Docker extends Watcher {
      * @return {Promise<void>}
      */
     async onDockerEvent(dockerEventChunk: any) {
-        this.ensureLogger();
-        const dockerEvent = JSON.parse(dockerEventChunk.toString());
-        const action = dockerEvent.Action;
-        const containerId = dockerEvent.id;
+        try {
+            this.ensureLogger();
+            const dockerEvent = JSON.parse(dockerEventChunk.toString());
+            const action = dockerEvent.Action;
+            const containerId = dockerEvent.id;
 
-        // If the container was created or destroyed => perform a watch
-        if (action === 'destroy' || action === 'create') {
-            await this.watchCronDebounced();
-        } else {
-            // Update container state in db if so
-            try {
-                const container =
-                    await this.dockerApi.getContainer(containerId);
-                const containerInspect = await container.inspect();
-                const newStatus = containerInspect.State.Status;
-                const containerFound = storeContainer.getContainer(containerId);
-                if (containerFound) {
-                    // Child logger for the container to process
-                    const logContainer = this.log.child({
-                        container: fullName(containerFound),
-                    });
-                    const oldStatus = containerFound.status;
-                    containerFound.status = newStatus;
-                    if (oldStatus !== newStatus) {
-                        storeContainer.updateContainer(containerFound);
-                        logContainer.info(
-                            `Status changed from ${oldStatus} to ${newStatus}`,
-                        );
-                    }
-                }
-            } catch (e: any) {
+            // If the container was created or destroyed => perform a watch
+            if (action === 'destroy' || action === 'create') {
                 this.log.debug(
-                    `Unable to get container details for container id=[${containerId}] (${e.message})`,
+                    `Container action [${action}] on container id=[${containerId}]`,
                 );
+                await this.watchCronDebounced();
+            } else {
+                // Update container state in db if so
+                try {
+                    const container =
+                        await this.dockerApi.getContainer(containerId);
+                    const containerInspect = await container.inspect();
+                    const newStatus = containerInspect.State.Status;
+                    const containerFound =
+                        storeContainer.getContainer(containerId);
+                    if (containerFound) {
+                        // Child logger for the container to process
+                        const logContainer = this.log.child({
+                            container: fullName(containerFound),
+                        });
+                        const oldStatus = containerFound.status;
+                        containerFound.status = newStatus;
+                        if (oldStatus !== newStatus) {
+                            storeContainer.updateContainer(containerFound);
+                            logContainer.info(
+                                `Status changed from ${oldStatus} to ${newStatus}`,
+                            );
+                        }
+                    }
+                } catch (e: any) {
+                    this.log.debug(
+                        `Unable to get container details for container id=[${containerId}] (${e.message})`,
+                    );
+                }
             }
+        } catch (e: any) {
+            this.log.warn(
+                `Unable to process Docker event [${dockerEventChunk}] (${e.message})`,
+            );
         }
     }
 
@@ -470,10 +480,12 @@ class Docker extends Watcher {
 
         // Prune old containers from the store - only locally discovered containers will be pruned
         try {
-            const containersFromTheStore = storeContainer.getContainers({
-                watcher: this.name,
-                agent: null,
-            });
+            // Filter on empty `agent` must be done in memory as the store query system does not support it
+            const containersFromTheStore = storeContainer
+                .getContainers({
+                    watcher: this.name,
+                })
+                .filter((container) => !container.agent);
             pruneOldContainers(containersToReturn, containersFromTheStore);
         } catch (e: any) {
             this.log.warn(

@@ -13,7 +13,7 @@ echo "🧪 Running UI integration tests..."
 "$SCRIPT_DIR/cleanup-test-containers.sh"
 
 # Start WUD (Mixed E2E Mode) - This handles setup of containers (Host + Dind)
-"$SCRIPT_DIR/start-wud-e2e-mixed.sh"
+"$SCRIPT_DIR/start-wud.sh"
 
 # Wait for WUD to be responsive
 echo "⏳ Waiting for WUD to be responsive..."

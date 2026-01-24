@@ -115,15 +115,15 @@ test.describe('Containers View', () => {
   });
 
   test('should display remote containers from agent', async ({ page }) => {
-    // remote_nginx_update should be present
-    const remoteUpdateContainer = page.locator('main .v-card', { hasText: 'remote_nginx_update' }).first();
+    // remote_podinfo_update should be present
+    const remoteUpdateContainer = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first();
     await expect(remoteUpdateContainer).toBeVisible();
 
     // It should have the 'remote' agent chip
     await expect(remoteUpdateContainer.getByTestId('container-agent')).toBeVisible();
 
-    // remote_nginx_latest should be present
-    const remoteLatestContainer = page.locator('main .v-card', { hasText: 'remote_nginx_latest' }).first();
+    // remote_podinfo_latest should be present
+    const remoteLatestContainer = page.locator('main .v-card', { hasText: 'remote_podinfo_latest' }).first();
     await expect(remoteLatestContainer).toBeVisible();
     await expect(remoteLatestContainer.getByTestId('container-agent')).toBeVisible();
   });

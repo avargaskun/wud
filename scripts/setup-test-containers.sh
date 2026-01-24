@@ -17,21 +17,21 @@ if [ "$MODE" == "minimal" ]; then
     # Minimal setup for Agent
     echo "   Running minimal setup..."
     
-    $DOCKER_CMD pull nginx:1.10-alpine
-    $DOCKER_CMD pull nginx:latest
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:latest
     
     # Run containers
-    # Update available (nginx 1.10)
-    $DOCKER_CMD run -d --name remote_nginx_update \
+    # Update available (podinfo 5.0.0 -> 6.0.0)
+    $DOCKER_CMD run -d --name remote_podinfo_update \
         --label 'wud.watch=true' \
-        --label 'wud.tag.include=^\d+\.\d+-alpine$' \
-        nginx:1.10-alpine
+        --label 'wud.tag.include=^6\.0\.0$' \
+        ghcr.io/stefanprodan/podinfo:5.0.0
         
     # Latest (Up to date)
-    $DOCKER_CMD run -d --name remote_nginx_latest \
+    $DOCKER_CMD run -d --name remote_podinfo_latest \
         --label 'wud.watch=true' \
         --label 'wud.tag.include=^latest$' \
-        nginx:latest
+        ghcr.io/stefanprodan/podinfo:latest
 
 else
     # Full setup (Host/Controller)
@@ -42,25 +42,22 @@ else
       $DOCKER_CMD login registry.gitlab.com -u "$GITLAB_USERNAME" -p "$GITLAB_TOKEN"
     fi
 
-    # Pull nginx as a test image
-    $DOCKER_CMD pull nginx:1.10-alpine
-    $DOCKER_CMD pull nginx:1.20-alpine
+    # Pull podinfo as a test image
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:6.0.0
 
-    # Tag nginx 1.10 as latest to simulate an update_available
-    $DOCKER_CMD tag nginx:1.10-alpine nginx:latest
+    # Tag podinfo 5.0.0 as latest to simulate an update_available (digest mismatch)
+    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 ghcr.io/stefanprodan/podinfo:latest
 
-    # Tag nginx as if it was coming from private registries
-    $DOCKER_CMD tag nginx:1.10-alpine fmartinou/test:1.0.0
-    $DOCKER_CMD tag nginx:1.10-alpine 229211676173.dkr.ecr.eu-west-1.amazonaws.com/test:1.0.0
-    $DOCKER_CMD tag nginx:1.10-alpine 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/test:1.0.0
-    $DOCKER_CMD tag nginx:1.10-alpine 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0
+    # Tag podinfo as if it was coming from private registries
+    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 fmartinou/test:1.0.0
+    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/test:1.0.0
+    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/test:1.0.0
+    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0    # Pull homeassistant
 
     # Pull homeassistant
     $DOCKER_CMD pull homeassistant/home-assistant
     $DOCKER_CMD pull homeassistant/home-assistant:2021.6.1
-
-    # Pull traefik
-    $DOCKER_CMD pull traefik:2.4.5
 
     echo "✅ Docker images pulled and tagged"
 
@@ -78,10 +75,10 @@ else
 
     # HUB
     $DOCKER_CMD run -d --name hub_homeassistant_202161 --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+.\d+$' --label 'wud.link.template=https://github.com/home-assistant/core/releases/tag/${major}.${minor}.${patch}' homeassistant/home-assistant:2021.6.1
-    $DOCKER_CMD run -d --name hub_homeassistant_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' homeassistant/home-assistant
-    $DOCKER_CMD run -d --name hub_nginx_120 --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+-alpine$' nginx:1.20-alpine
-    $DOCKER_CMD run -d --name hub_nginx_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' nginx
-    $DOCKER_CMD run -d --name hub_traefik_245 --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+.\d+$' traefik:2.4.5
+
+    # GHCR Podinfo
+    $DOCKER_CMD run -d --name ghcr_podinfo_500 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD run -d --name ghcr_podinfo_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' ghcr.io/stefanprodan/podinfo:latest
 
     # LSCR
     $DOCKER_CMD run -d --name lscr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' lscr.io/linuxserver/radarr:5.14.0.9383-ls245

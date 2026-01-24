@@ -25,9 +25,9 @@ Feature: WUD Registry API Exposure
     And response body path $[2].configuration.clientemail should be gcr@wud-test.iam.gserviceaccount.com
     And response body path $[2].configuration.privatekey should be .\*.*.
 
-    And response body path $[3].id should be ghcr.private
+    And response body path $[3].id should be ghcr.public
     And response body path $[3].type should be ghcr
-    And response body path $[3].name should be private
+    And response body path $[3].name should be public
 
     And response body path $[4].id should be gitlab.private
     And response body path $[4].type should be gitlab

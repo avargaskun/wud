@@ -1,7 +1,7 @@
 const { When, Then } = require('@cucumber/cucumber');
 const assert = require('assert');
 
-When(/^I find the container with image "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (imageName, idVar, versionVar, nameVar) {
+When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (remoteArg, imageName, idVar, versionVar, nameVar) {
     await new Promise((resolve, reject) => {
         this.apickli.get('/api/containers', (error, response) => {
             if (error) reject(error);
@@ -25,7 +25,19 @@ When(/^I find the container with image "([^"]*)" and save its ID as "([^"]*)", v
         throw new Error('Failed to retrieve containers or invalid response format');
     }
 
+    const isRemote = !!remoteArg;
+
     const found = containers.find(c => {
+        // Filter by Agent context
+        if (isRemote && !c.agent) return false;
+        // If we strictly want local when "remote" is NOT specified, we could uncomment:
+        // if (!isRemote && c.agent) return false; 
+        // But let's leave it flexible or prefer local? 
+        // Given the ambiguity we faced, let's prefer local if not specified, OR just rely on image name uniqueness if possible.
+        // But here we have duplicate images.
+        // Let's implement: if isRemote is false/undefined, we prefer local (no agent).
+        if (!isRemote && c.agent) return false;
+
         // Ignore stopped containers
         if (c.status !== 'running') {
             return false;
@@ -46,7 +58,7 @@ When(/^I find the container with image "([^"]*)" and save its ID as "([^"]*)", v
     });
 
     if (!found) {
-        throw new Error(`Container with image "${imageName}" not found. Available: ${containers.map(c => `${c.image.name}:${c.image.tag.value}`).join(', ')}`);
+        throw new Error(`Container with image "${imageName}" (remote=${isRemote}) not found. Available: ${containers.map(c => `${c.image.name}:${c.image.tag.value} [${c.agent || 'local'}]`).join(', ')}`);
     }
 
     this.apickli.setGlobalVariable(idVar, found.id);

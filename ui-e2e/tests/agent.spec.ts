@@ -51,8 +51,8 @@ test.describe('Agents View', () => {
     const containerCards = page.locator('main .v-card');
     await expect(containerCards.first()).toBeVisible({ timeout: 15000 });
 
-    // Find remote_nginx_update container
-    const containerCard = page.locator('main .v-card', { hasText: 'remote_nginx_update' }).first();
+    // Find remote_podinfo_update container
+    const containerCard = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first();
     await expect(containerCard).toBeVisible();
 
     // Verify it has an update available (usually indicated by an arrow icon or specific text/color)

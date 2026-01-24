@@ -5,10 +5,8 @@
   "main": "index.js",
   "scripts": {
     "lint": "eslint '**/*.js'",
-    "test": "npm run test:local",
-    "cucumber": "cucumber-js **/*.feature --tags \"not @agent\"",
-    "test:local": "dotenvx run -- ../scripts/run-e2e-tests.sh",
-    "test:agent": "dotenvx run -- ../scripts/run-e2e-agent-tests.sh",
+    "cucumber": "cucumber-js **/*.feature",
+    "test": "dotenvx run -- ../scripts/run-e2e-tests.sh",
     "test:setup": "dotenvx run -- ../scripts/setup-test-containers.sh",
     "test:start-wud": "dotenvx run -- ../scripts/start-wud.sh",
     "test:cleanup": "../scripts/cleanup-test-containers.sh"
