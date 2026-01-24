@@ -164,3 +164,7 @@ Playwright-based end-to-end tests for the frontend.
 ### Frontend E2E (`ui-e2e/`)
 1.  `cd ui-e2e`
 2.  **Run Tests:** `npm test`
+
+## Additional Design Documentation
+
+- [Agent Mode](dev/agent-mode.md)

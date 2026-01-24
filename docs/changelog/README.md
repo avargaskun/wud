@@ -1,6 +1,8 @@
 # Changelog
 
 ## dev
+- :star: [Agent] - Add Agent Mode for distributed monitoring
+- :star: [UI] - Add Agent management and filtering
 - :lock: [UI] - Migrate to Vue 3
 - :lock: [UI] - Migrate to Vuetify 3
 - :lock: Upgrade to node.js 24

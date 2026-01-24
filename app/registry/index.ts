@@ -85,7 +85,7 @@ function getDocumentationLink(kind: ComponentKind) {
             'https://github.com/getwud/wud/tree/main/docs/configuration/registries',
         authentication:
             'https://github.com/getwud/wud/tree/main/docs/configuration/authentications',
-        agent: 'https://github.com/getwud/wud/blob/main/AGENT.md',
+        agent: 'https://github.com/getwud/wud/tree/main/docs/configuration/agents',
     };
     return (
         docLinks[kind] ||
