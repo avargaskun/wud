@@ -5,7 +5,9 @@ test.describe('Home Dashboard', () => {
     await page.goto('/');
     await page.getByLabel('Username').fill('john');
     await page.getByLabel('Password').fill('doe');
-    await page.getByRole('button', { name: 'Login' }).click();
+    const loginButton = page.getByRole('button', { name: 'Login' });
+    await expect(loginButton).toBeEnabled();
+    await loginButton.click();
   });
 
   test('should display dashboard tiles with counts', async ({ page }) => {

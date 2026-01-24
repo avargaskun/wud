@@ -2,7 +2,7 @@
   <v-container fluid>
     <v-row v-for="agent in agents" :key="agent.name">
       <v-col :cols="12" class="pt-2 pb-2">
-        <configuration-item :item="agent" />
+        <configuration-item :item="agent" :agents="rawAgents" />
       </v-col>
     </v-row>
     <v-row v-if="agents.length === 0">

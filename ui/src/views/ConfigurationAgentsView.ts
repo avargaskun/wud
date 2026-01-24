@@ -6,6 +6,7 @@ export default defineComponent({
   data() {
     return {
       agents: [] as any[],
+      rawAgents: [] as any[],
     };
   },
   components: {
@@ -18,6 +19,8 @@ export default defineComponent({
       const formattedAgents = agents.map((agent: any) => ({
           type: 'agent',
           name: agent.name,
+          agent: agent.name,
+          connected: agent.connected,
           icon: agent.connected ? 'mdi-lan-connect' : 'mdi-lan-disconnect',
           configuration: {
               host: agent.host,
@@ -25,7 +28,10 @@ export default defineComponent({
               status: agent.connected ? 'Connected' : 'Disconnected'
           }
       }));
-      next((vm: any) => (vm.agents = formattedAgents));
+      next((vm: any) => {
+          vm.agents = formattedAgents;
+          vm.rawAgents = agents;
+      });
     } catch (e: any) {
       next((vm: any) => {
         vm.$eventBus.emit(

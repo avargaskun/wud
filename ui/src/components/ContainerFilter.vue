@@ -11,6 +11,7 @@
           label="Agent"
           variant="outlined"
           density="compact"
+          data-testid="filter-agent"
         ></v-select>
       </v-col>
       <v-col>
@@ -23,6 +24,7 @@
           label="Watcher"
           variant="outlined"
           density="compact"
+          data-testid="filter-watcher"
         ></v-select>
       </v-col>
       <v-col>
@@ -35,6 +37,7 @@
           label="Registry"
           variant="outlined"
           density="compact"
+          data-testid="filter-registry"
         ></v-select>
       </v-col>
       <v-col>
@@ -47,6 +50,7 @@
           label="Update kind"
           variant="outlined"
           density="compact"
+          data-testid="filter-update-kind"
         ></v-select>
       </v-col>
 
@@ -59,6 +63,7 @@
           clearable
           variant="outlined"
           density="compact"
+          data-testid="filter-group-by"
         >
         </v-autocomplete>
       </v-col>
@@ -70,6 +75,7 @@
           @update:modelValue="emitUpdateAvailableChanged"
           :hide-details="true"
           density="compact"
+          data-testid="filter-update-available"
         />
       </v-col>
       <v-col>
@@ -80,6 +86,7 @@
           @update:modelValue="emitOldestFirstChanged"
           :hide-details="true"
           density="compact"
+          data-testid="filter-oldest-first"
         />
       </v-col>
       <v-col class="text-right">
@@ -87,6 +94,7 @@
           color="secondary"
           @click.stop="refreshAllContainers"
           :loading="isRefreshing"
+          data-testid="filter-refresh"
         >
           Watch now
           <v-icon> mdi-refresh</v-icon>
