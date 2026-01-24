@@ -8,10 +8,6 @@ SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 echo "🚀 Starting WUD container for local e2e tests..."
 
-# Build ui
-echo "🏗️ Building UI..."
-(cd "$SCRIPT_DIR/../ui" && npm install && npm run build)
-
 # Build wud docker image
 docker build -t wud --build-arg WUD_VERSION=local "$SCRIPT_DIR/.."
 
