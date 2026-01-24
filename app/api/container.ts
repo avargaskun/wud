@@ -7,11 +7,10 @@ import { getServerConfiguration } from '../configuration';
 import { mapComponentsToList } from './component';
 import Trigger from '../triggers/providers/Trigger';
 import logger from '../log';
+import { getAgent } from '../agent/manager';
 const log = logger.child({ component: 'container' });
 
 const router = express.Router();
-
-const serverConfiguration = getServerConfiguration();
 
 /**
  * Return registered watchers.
@@ -68,15 +67,40 @@ function getContainer(req, res) {
  * @param req
  * @param res
  */
-function deleteContainer(req, res) {
+export async function deleteContainer(req, res) {
+    const serverConfiguration = getServerConfiguration();
     if (!serverConfiguration.feature.delete) {
         res.sendStatus(403);
     } else {
         const { id } = req.params;
         const container = storeContainer.getContainer(id);
         if (container) {
-            storeContainer.deleteContainer(id);
-            res.sendStatus(204);
+            if (container.agent) {
+                const agent = getAgent(container.agent);
+                if (agent) {
+                    try {
+                        await agent.deleteContainer(id);
+                        storeContainer.deleteContainer(id);
+                        res.sendStatus(204);
+                    } catch (e) {
+                        if (e.response && e.response.status === 404) {
+                            storeContainer.deleteContainer(id);
+                            res.sendStatus(204);
+                        } else {
+                            res.status(500).json({
+                                error: `Error deleting container on agent (${e.message})`,
+                            });
+                        }
+                    }
+                } else {
+                    res.status(500).json({
+                        error: `Agent ${container.agent} not found`,
+                    });
+                }
+            } else {
+                storeContainer.deleteContainer(id);
+                res.sendStatus(204);
+            }
         } else {
             res.sendStatus(404);
         }

@@ -310,6 +310,19 @@ export class AgentClient {
         }
     }
 
+    async deleteContainer(containerId: string) {
+        try {
+            this.log.debug(`Deleting container ${containerId} on agent`);
+            await axios.delete(
+                `${this.baseUrl}/api/containers/${containerId}`,
+                this.axiosOptions,
+            );
+        } catch (e: any) {
+            this.log.error(`Error deleting container on agent: ${e.message}`);
+            throw e;
+        }
+    }
+
     async watch(watcherType: string, watcherName: string) {
         try {
             const response = await axios.post<ContainerReport[]>(

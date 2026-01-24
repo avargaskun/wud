@@ -75,6 +75,7 @@ export async function init() {
 
     // Routes
     app.get('/api/containers', containerApi.getContainers);
+    app.delete('/api/containers/:id', containerApi.deleteContainer);
     app.get('/api/watchers', watcherApi.getWatchers);
     app.get('/api/triggers', triggerApi.getTriggers);
     app.get('/api/events', eventApi.subscribeEvents);

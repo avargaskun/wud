@@ -152,7 +152,6 @@ describe('Docker Watcher', () => {
 
             expect(storeContainer.getContainers).toHaveBeenCalledWith({
                 watcher: 'docker-local',
-                agent: null,
             });
         });
     });

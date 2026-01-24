@@ -42,6 +42,7 @@ describe('Agent Server', () => {
             use: jest.fn(),
             get: jest.fn(),
             post: jest.fn(),
+            delete: jest.fn(),
             listen: jest.fn(),
         };
         express.mockReturnValue(mockApp);

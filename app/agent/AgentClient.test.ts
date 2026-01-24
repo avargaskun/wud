@@ -27,6 +27,7 @@ describe('AgentClient', () => {
             info: jest.fn(),
             error: jest.fn(),
             warn: jest.fn(),
+            debug: jest.fn(),
             child: jest.fn().mockReturnThis(),
         };
         // @ts-ignore
@@ -275,6 +276,18 @@ describe('AgentClient', () => {
         expect(axios.post).toHaveBeenCalledWith(
             expect.stringContaining('/api/triggers/docker/restart/batch'),
             containers,
+            expect.anything(),
+        );
+    });
+
+    test('deleteContainer should delete to /api/containers/...', async () => {
+        // @ts-ignore
+        axios.delete.mockResolvedValue({});
+
+        await client.deleteContainer('123');
+
+        expect(axios.delete).toHaveBeenCalledWith(
+            expect.stringContaining('/api/containers/123'),
             expect.anything(),
         );
     });
