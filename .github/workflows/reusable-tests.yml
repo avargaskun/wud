@@ -1,0 +1,118 @@
+name: Reusable Tests
+
+on:
+  workflow_call:
+
+jobs:
+  test_validation:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Test App
+        working-directory: ./app
+        run: |
+          npm ci
+          npm test
+
+      - name: Test UI
+        working-directory: ./ui
+        run: |
+          npm ci
+          npm test
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESSKEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESSKEY }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Test E2E
+        id: test-e2e
+        working-directory: ./e2e
+        env:
+          ACR_CLIENT_ID: ${{ secrets.ACR_CLIENT_ID }}
+          ACR_CLIENT_SECRET: ${{ secrets.ACR_CLIENT_SECRET }}
+          AWS_ACCESSKEY_ID: ${{ secrets.AWS_ACCESSKEY_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_SECRET_ACCESSKEY: ${{ secrets.AWS_SECRET_ACCESSKEY }}
+          ECR_IMAGE_NAME: ${{ secrets.ECR_IMAGE_NAME }}
+          ECR_REGISTRY_URL: ${{ secrets.ECR_REGISTRY_URL }}
+          GCR_CLIENT_EMAIL: ${{ secrets.GCR_CLIENT_EMAIL }}
+          GCR_PRIVATE_KEY: ${{ secrets.GCR_PRIVATE_KEY }}
+          GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLAB_USERNAME: ${{ secrets.GITLAB_USERNAME }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          TRUEFORGE_USERNAME: ${{ secrets.TRUEFORGE_USERNAME }}
+          TRUEFORGE_TOKEN: ${{ secrets.TRUEFORGE_TOKEN }}
+        run: |
+          npm ci
+          npm test
+
+      - name: Debug E2E Failure
+        if: failure() && steps.test-e2e.outcome == 'failure'
+        working-directory: ./e2e
+        run: |
+          docker logs wud-controller > wud-controller.log 2>&1 || true
+          docker logs wud-agent > wud-agent.log 2>&1 || true
+          curl -s -u john:doe http://localhost:3000/api/registries > api-registries.json || true
+          curl -s -u john:doe http://localhost:3000/api/containers > api-containers.json || true
+
+      - name: Upload E2E Debug Artifacts
+        if: failure() && steps.test-e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-debug-artifacts
+          path: |
+            e2e/wud-controller.log
+            e2e/wud-agent.log
+            e2e/api-registries.json
+            e2e/api-containers.json
+
+      - name: Install Playwright Browsers
+        working-directory: ./ui-e2e
+        run: |
+          npm ci
+          npx playwright install --with-deps
+
+      - name: Test UI E2E
+        id: test-ui-e2e
+        working-directory: ./ui-e2e
+        env:
+          ACR_CLIENT_ID: ${{ secrets.ACR_CLIENT_ID }}
+          ACR_CLIENT_SECRET: ${{ secrets.ACR_CLIENT_SECRET }}
+          AWS_ACCESSKEY_ID: ${{ secrets.AWS_ACCESSKEY_ID }}
+          AWS_REGION: ${{ secrets.AWS_REGION }}
+          AWS_SECRET_ACCESSKEY: ${{ secrets.AWS_SECRET_ACCESSKEY }}
+          ECR_IMAGE_NAME: ${{ secrets.ECR_IMAGE_NAME }}
+          ECR_REGISTRY_URL: ${{ secrets.ECR_REGISTRY_URL }}
+          GCR_CLIENT_EMAIL: ${{ secrets.GCR_CLIENT_EMAIL }}
+          GCR_PRIVATE_KEY: ${{ secrets.GCR_PRIVATE_KEY }}
+          GITHUB_USERNAME: ${{ secrets.GITHUB_USERNAME }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLAB_USERNAME: ${{ secrets.GITLAB_USERNAME }}
+          GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
+          TRUEFORGE_USERNAME: ${{ secrets.TRUEFORGE_USERNAME }}
+          TRUEFORGE_TOKEN: ${{ secrets.TRUEFORGE_TOKEN }}
+        run: |
+          npm test
+
+      - name: Upload UI E2E Artifacts
+        if: failure() && steps.test-ui-e2e.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ui-e2e-artifacts
+          path: |
+            ui-e2e/playwright-report
+            ui-e2e/test-results
