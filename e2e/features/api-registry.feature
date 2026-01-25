@@ -9,7 +9,7 @@ Feature: WUD Registry API Exposure
     And response body path $[0].id should be acr.private
     And response body path $[0].type should be acr
     And response body path $[0].name should be private
-    And response body path $[0].configuration.clientid should be 89dcf54b-ef99-4dc1-bebb-8e0eacafdac8
+    And response body path $[0].configuration.clientid should be .\*.*.
     And response body path $[0].configuration.clientsecret should be .\*.*.
 
 
@@ -62,5 +62,5 @@ Feature: WUD Registry API Exposure
     And response body path $.id should be acr.private
     And response body path $.type should be acr
     And response body path $.name should be private
-    And response body path $.configuration.clientid should be 89dcf54b-ef99-4dc1-bebb-8e0eacafdac8
+    And response body path $.configuration.clientid should be .\*.*.
     And response body path $.configuration.clientsecret should be .\*.*.
