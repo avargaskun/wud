@@ -1,13 +1,17 @@
-import axios from 'axios';
-
 const BASE_URL = '/api/agents';
 
 export function getAgentIcon() {
-    return 'mdi-lan';
+  return 'mdi-lan';
+}
+
+export async function getAgents() {
+  const response = await fetch(BASE_URL, { credentials: "include" });
+  if (!response.ok) {
+    throw new Error(`Failed to get agents: ${response.statusText}`);
+  }
+  return response.json();
 }
 
 export default {
-    getAgents() {
-        return axios.get(BASE_URL).then((response) => response.data);
-    },
+  getAgents,
 };
