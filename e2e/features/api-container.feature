@@ -22,7 +22,7 @@ Feature: WUD Container API Exposure
     Examples:
       | index | registry       | containerName            | registryUrl                                             | imageName                           | tag                | resultTag          | updateAvailable | testCase                      |
       # Containers in alphabetical order by name (local watchers first, then remote)
-      # | 0     | ecr.private    | ecr_sub_sub_test         | https://229211676173.dkr.ecr.eu-west-1.amazonaws.com/v2 | sub/sub/test                        | 1.0.0              | 2.0.0              | true            | ECR semver major update       |
+      | 0     | ecr.private    | ecr_sub_sub_test         | `ECR_REGISTRY_URL`                                      | `ECR_IMAGE_NAME`                    | 1.0.0              | 2.0.0              | true            | ECR semver major update       |
       | 1     | ghcr.public    | ghcr_podinfo_500         | https://ghcr.io/v2                                      | stefanprodan/podinfo                | 5.0.0              | 6.0.0              | true            | GHCR semver major update      |
       | 2     | ghcr.public    | ghcr_podinfo_latest      | https://ghcr.io/v2                                      | stefanprodan/podinfo                | latest             | latest             | true            | GHCR latest tag digest update |
       | 3     | ghcr.public    | ghcr_radarr              | https://ghcr.io/v2                                      | linuxserver/radarr                  | 5.14.0.9383-ls245  | 6.0.4.10291-ls290  | true            | GHCR complex semver update    |

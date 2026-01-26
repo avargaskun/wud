@@ -50,10 +50,15 @@ else
     $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 ghcr.io/stefanprodan/podinfo:latest
 
     # Tag podinfo as if it was coming from private registries
-    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 fmartinou/test:1.0.0
-    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/test:1.0.0
-    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/test:1.0.0
-    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0    # Pull homeassistant
+    ECR_TARGET=${ECR_REGISTRY_URL:-"229211676173.dkr.ecr.eu-west-1.amazonaws.com"}/${ECR_IMAGE_NAME:-"sub/sub/test"}:1.0.0
+    if [ -z "$ECR_REGISTRY_URL" ]; then
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 fmartinou/test:1.0.0
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/test:1.0.0
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/test:1.0.0
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0
+    else
+        $DOCKER_CMD pull $ECR_TARGET
+    fi
 
     # Pull homeassistant
     $DOCKER_CMD pull homeassistant/home-assistant
@@ -65,7 +70,7 @@ else
     echo "🚀 Starting test containers..."
 
     # ECR
-    $DOCKER_CMD run -d --name ecr_sub_sub_test --label 'wud.watch=true' 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0
+    $DOCKER_CMD run -d --name ecr_sub_sub_test --label 'wud.watch=true' $ECR_TARGET
 
     # GHCR
     $DOCKER_CMD run -d --name ghcr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' ghcr.io/linuxserver/radarr:5.14.0.9383-ls245
@@ -89,7 +94,7 @@ else
     # QUAY
     $DOCKER_CMD run -d --name quay_prometheus --label 'wud.watch=true' --label 'wud.tag.include=^v\d+\.\d+\.\d+$' --user root --tmpfs /prometheus:rw,mode=777 quay.io/prometheus/prometheus:v2.52.0
 
-    echo "✅ Test containers started (10 containers)"
+    echo "✅ Test containers started (9 containers)"
     $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_)"
 fi
 

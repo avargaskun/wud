@@ -2,7 +2,7 @@
 import Hub from './Hub';
 
 // Mock axios
-jest.mock('axios', () => jest.fn());
+jest.mock('axios');
 
 describe('Docker Hub Registry', () => {
     let hub;

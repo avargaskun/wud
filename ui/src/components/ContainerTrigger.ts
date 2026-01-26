@@ -19,6 +19,7 @@ export default defineComponent({
   data() {
     return {
       isTriggering: false,
+      triggerId: this.trigger.id
     };
   },
   computed: {},

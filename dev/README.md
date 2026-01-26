@@ -53,6 +53,42 @@ npm run serve
 
 ### Testing
 
+#### Environment Variables
+
+Make sure to have a `.env` file in the root folder of the repository with the following values defined in them. Some end to end tests will not pass unless these variables are properly set:
+
+```bash
+# ECR Credentials
+AWS_ACCESSKEY_ID=
+AWS_SECRET_ACCESSKEY=
+AWS_REGION=
+ECR_REGISTRY_URL=
+ECR_IMAGE_NAME=
+# GitHub Credentials
+GITHUB_USERNAME=
+GITHUB_TOKEN=
+# GitLab Credentials
+GITLAB_USERNAME=
+GITLAB_TOKEN=
+# ACR
+ACR_CLIENT_ID=
+ACR_CLIENT_SECRET=
+# TrueForge
+TRUEFORGE_USERNAME=
+TRUEFORGE_TOKEN=
+# GCR
+GCR_CLIENT_EMAIL=
+GCR_PRIVATE_KEY=
+```
+
+#### ECR Test Images
+
+The ECR end to end tests require a valid ECR image path and credentials to access the registry. 
+
+The script `/scripts/setup-ecr-container.sh` will set this up for you. You will need to make sure the AWS SDK is installed and configured before running the script. After running the script, the values you need to include in the `.env` file will be output to the screen.
+
+#### Test Suites
+
 **Backend Unit Tests:**
 ```bash
 cd app

@@ -57,9 +57,6 @@ test.describe('Agents View', () => {
 
     // Verify it has an update available (usually indicated by an arrow icon or specific text/color)
     // In WUD, updateAvailable containers have a 'mdi-arrow-up-bold-circle' icon or similar.
-    // Let's check for the update available chip/text if possible.
-    // Actually, just checking that the 'Run' button is enabled later is enough, 
-    // but let's be sure we are looking at the right one.
     await expect(containerCard.getByTestId('container-agent')).toHaveText('remote');
 
     // Expand container details
@@ -70,8 +67,8 @@ test.describe('Agents View', () => {
     await expect(triggersTab).toBeVisible();
     await triggersTab.click();
 
-    // Find the 'Run' button for a trigger
-    const runButton = page.getByRole('button', { name: 'Run' });
+    // Find the 'Run' button for the trigger
+    const runButton = containerCard.getByTestId('remote.docker.update').getByRole('button', { name: 'Run' });
     
     // Wait for triggers to load and button to be enabled
     await expect(runButton).toBeEnabled({ timeout: 10000 });
@@ -80,6 +77,6 @@ test.describe('Agents View', () => {
     await runButton.click();
 
     // Check for success toast
-    await expect(page.getByText('Trigger executed with success')).toBeVisible();
+    await expect(page.getByText('Trigger executed with success')).toBeVisible({ timeout: 60000 });
   });
 });

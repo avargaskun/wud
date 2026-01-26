@@ -36,7 +36,7 @@ echo "🌐 Installing Playwright browsers..."
 
 # Run Playwright tests
 echo "🏃 Running Playwright tests..."
-(cd "$SCRIPT_DIR/../ui-e2e" && npm test)
+(cd "$SCRIPT_DIR/../ui-e2e" && npm run test:local)
 
 echo "✅ UI integration tests completed!"
 

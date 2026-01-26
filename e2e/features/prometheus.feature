@@ -22,7 +22,7 @@ Feature: Prometheus exposure
     And response body should contain update_available="<updateAvailable>"
     Examples:
       | containerName            | registry       | registryUrl                                             | imageName                           | tag                | resultTag          | updateAvailable |
-      # | ecr_sub_sub_test         | ecr.private    | https://229211676173.dkr.ecr.eu-west-1.amazonaws.com/v2 | sub/sub/test                        | 1.0.0              | 2.0.0              | true            |
+      | ecr_sub_sub_test         | ecr.private    | `ECR_REGISTRY_URL`                                      | `ECR_IMAGE_NAME`                    | 1.0.0              | 2.0.0              | true            |
       | ghcr_radarr              | ghcr.public    | https://ghcr.io/v2                                      | linuxserver/radarr                  | 5.14.0.9383-ls245  | 6.0.4.10291-ls290  | true            |
       | hub_homeassistant_202161 | hub.public     | https://registry-1.docker.io/v2                         | homeassistant/home-assistant        | 2021.6.1           | 2026.1.3           | true            |
       | ghcr_podinfo_500         | ghcr.public    | https://ghcr.io/v2                                      | stefanprodan/podinfo                | 5.0.0              | 6.0.0              | true            |
