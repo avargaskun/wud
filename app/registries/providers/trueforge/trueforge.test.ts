@@ -1,11 +1,8 @@
 // @ts-nocheck
 import Trueforge from './trueforge';
 
-jest.mock('axios', () =>
-    jest.fn().mockImplementation(() => ({
-        data: { token: 'xxxxx' },
-    })),
-);
+// Mock axios
+jest.mock('axios');
 
 const trueforge = new Trueforge();
 trueforge.configuration = {

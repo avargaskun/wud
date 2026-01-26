@@ -1,7 +1,7 @@
 import Component, { ComponentConfiguration } from '../../registry/Component';
 import * as event from '../../event';
 import { getTriggerCounter } from '../../prometheus/trigger';
-import { fullName, Container } from '../../model/container';
+import { fullName, Container, ContainerReport } from '../../model/container';
 
 export interface TriggerConfiguration extends ComponentConfiguration {
     auto?: boolean;
@@ -11,11 +11,6 @@ export interface TriggerConfiguration extends ComponentConfiguration {
     simpletitle?: string;
     simplebody?: string;
     batchtitle?: string;
-}
-
-export interface ContainerReport {
-    container: Container;
-    changed: boolean;
 }
 
 /**
@@ -186,7 +181,8 @@ class Trigger extends Component {
                 logContainer.warn(`Error (${e.message})`);
                 logContainer.debug(e);
             } finally {
-                getTriggerCounter().inc({
+                const counter = getTriggerCounter();
+                counter?.inc({
                     type: this.type,
                     name: this.name,
                     status,

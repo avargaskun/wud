@@ -4,15 +4,15 @@ set -e
 
 SCRIPT_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
+# Set CI=true to enable retries and parallel worker limits in Playwright
+# export CI=true
+
 echo "🧪 Running UI integration tests..."
 
 # Cleanup any existing containers
 "$SCRIPT_DIR/cleanup-test-containers.sh"
 
-# Setup test containers
-"$SCRIPT_DIR/setup-test-containers.sh"
-
-# Start WUD (this will build the UI and the Docker image)
+# Start WUD (Mixed E2E Mode) - This handles setup of containers (Host + Dind)
 "$SCRIPT_DIR/start-wud.sh"
 
 # Wait for WUD to be responsive
@@ -36,7 +36,7 @@ echo "🌐 Installing Playwright browsers..."
 
 # Run Playwright tests
 echo "🏃 Running Playwright tests..."
-(cd "$SCRIPT_DIR/../ui-e2e" && npm test)
+(cd "$SCRIPT_DIR/../ui-e2e" && npm run test:local)
 
 echo "✅ UI integration tests completed!"
 

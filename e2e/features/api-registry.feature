@@ -9,25 +9,25 @@ Feature: WUD Registry API Exposure
     And response body path $[0].id should be acr.private
     And response body path $[0].type should be acr
     And response body path $[0].name should be private
-    And response body path $[0].configuration.clientid should be .\*.*.
-    And response body path $[0].configuration.clientsecret should be .\*.*.
+    And response body path $[0].configuration.clientid should be `ACR_CLIENT_ID`
+    And response body path $[0].configuration.clientsecret should be .\*+.
 
     And response body path $[1].id should be ecr.private
     And response body path $[1].type should be ecr
     And response body path $[1].name should be private
-    And response body path $[1].configuration.region should be eu-west-1
-    And response body path $[1].configuration.accesskeyid should be .\*.*.
-    And response body path $[1].configuration.secretaccesskey should be .\*.*.
+    And response body path $[1].configuration.region should be `AWS_REGION`
+    And response body path $[1].configuration.accesskeyid should be .\*+.
+    And response body path $[1].configuration.secretaccesskey should be .\*+.
 
     And response body path $[2].id should be gcr.private
     And response body path $[2].type should be gcr
     And response body path $[2].name should be private
     And response body path $[2].configuration.clientemail should be gcr@wud-test.iam.gserviceaccount.com
-    And response body path $[2].configuration.privatekey should be .\*.*.
+    And response body path $[2].configuration.privatekey should be .\*+.
 
-    And response body path $[3].id should be ghcr.private
+    And response body path $[3].id should be ghcr.public
     And response body path $[3].type should be ghcr
-    And response body path $[3].name should be private
+    And response body path $[3].name should be public
 
     And response body path $[4].id should be gitlab.private
     And response body path $[4].type should be gitlab
@@ -52,5 +52,5 @@ Feature: WUD Registry API Exposure
     And response body path $.id should be acr.private
     And response body path $.type should be acr
     And response body path $.name should be private
-    And response body path $.configuration.clientid should be .\*.*.
-    And response body path $.configuration.clientsecret should be .\*.*.
+    And response body path $.configuration.clientid should be `ACR_CLIENT_ID`
+    And response body path $.configuration.clientsecret should be .\*+.

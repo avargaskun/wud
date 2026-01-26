@@ -9,10 +9,7 @@ echo "🧪 Running complete e2e test suite..."
 # Cleanup any existing containers
 "$SCRIPT_DIR/cleanup-test-containers.sh"
 
-# Setup test containers
-"$SCRIPT_DIR/setup-test-containers.sh"
-
-# Start WUD
+# Start WUD in Mixed Mode (Controller + Agent + Dind)
 "$SCRIPT_DIR/start-wud.sh"
 
 # Run e2e tests

@@ -27,6 +27,11 @@ export default defineComponent({
       type: Object,
       required: true,
     },
+    agents: {
+      type: Array,
+      required: false,
+      default: () => [],
+    },
     previousContainer: {
       type: Object,
       required: false,
@@ -49,6 +54,16 @@ export default defineComponent({
     };
   },
   computed: {
+    agentStatusColor() {
+      const agent = (this.agents as any[]).find(
+        (a) => a.name === this.container.agent,
+      );
+      if (agent) {
+        return agent.connected ? "success" : "error";
+      }
+      return "info";
+    },
+
     registryIcon() {
       return getRegistryProviderIcon(this.container.image.registry.name);
     },

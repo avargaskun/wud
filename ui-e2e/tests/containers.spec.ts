@@ -5,7 +5,9 @@ test.describe('Containers View', () => {
     await page.goto('/');
     await page.getByLabel('Username').fill('john');
     await page.getByLabel('Password').fill('doe');
-    await page.getByRole('button', { name: 'Login' }).click();
+    const loginButton = page.getByRole('button', { name: 'Login' });
+    await expect(loginButton).toBeEnabled();
+    await loginButton.click();
     await page.locator('nav').getByRole('link', { name: 'Containers' }).click();
   });
 
@@ -25,7 +27,7 @@ test.describe('Containers View', () => {
     const initialCount = await containerCards.count();
 
     // Toggle Update Available
-    await page.getByLabel('Update available').click();
+    await page.getByTestId('filter-update-available').click();
 
     // Wait for list to update (Vue transitions might take a moment)
     await page.waitForTimeout(1000);
@@ -57,7 +59,7 @@ test.describe('Containers View', () => {
     // In Vuetify, clicking the input might work, or we need to click the .v-switch__thumb.
 
     // Let's try force click.
-    await page.getByLabel('Update available').click({ force: true });
+    await page.getByTestId('filter-update-available').click({ force: true });
     await page.waitForTimeout(2000);
     const newFilteredCount = await containerCards.count();
 
@@ -72,7 +74,7 @@ test.describe('Containers View', () => {
 
     // Click the select to open options
     // Force click because Vuetify's overlay might interfere
-    await page.getByRole('combobox', { name: 'Registry' }).click({ force: true });
+    await page.getByTestId('filter-registry').click({ force: true });
 
     // Select 'Hub' (docker hub)
     // Vuetify renders options in a v-overlay.
@@ -89,5 +91,40 @@ test.describe('Containers View', () => {
     // Let's check the text content of the first item
     const firstItemText = await containerCards.first().textContent();
     expect(firstItemText?.toLowerCase()).toContain('hub');
+  });
+
+  test('should filter by Agent', async ({ page }) => {
+    const containerCards = page.locator('main .v-card');
+    await expect(containerCards.first()).toBeVisible();
+
+    // Click the Agent select to open options
+    await page.getByTestId('filter-agent').click({ force: true });
+
+    // Select 'remote' agent
+    await page.locator('.v-overlay').locator('.v-list-item-title').getByText('remote', { exact: true }).click();
+
+    await page.waitForTimeout(500);
+
+    const count = await containerCards.count();
+    // In minimal setup we have 2 remote containers
+    expect(count).toBeGreaterThanOrEqual(2);
+
+    // Verify items are actually from 'remote' agent
+    const firstItemText = await containerCards.first().textContent();
+    expect(firstItemText).toContain('remote');
+  });
+
+  test('should display remote containers from agent', async ({ page }) => {
+    // remote_podinfo_update should be present
+    const remoteUpdateContainer = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first();
+    await expect(remoteUpdateContainer).toBeVisible();
+
+    // It should have the 'remote' agent chip
+    await expect(remoteUpdateContainer.getByTestId('container-agent')).toBeVisible();
+
+    // remote_podinfo_latest should be present
+    const remoteLatestContainer = page.locator('main .v-card', { hasText: 'remote_podinfo_latest' }).first();
+    await expect(remoteLatestContainer).toBeVisible();
+    await expect(remoteLatestContainer.getByTestId('container-agent')).toBeVisible();
   });
 });

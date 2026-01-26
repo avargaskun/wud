@@ -6,6 +6,13 @@
       class="pa-3 d-flex align-center bg-surface"
     >
       <div class="text-body-3">
+        <span v-if="smAndUp && trigger.agent">
+          <v-chip label :color="agentStatusColor" variant="outlined">
+            <v-icon left>mdi-lan</v-icon>
+            {{ trigger.agent }}
+          </v-chip>
+          /
+        </span>
         <v-chip label color="info" variant="outlined">{{ trigger.type }}</v-chip>
         /
         <v-chip label color="info" variant="outlined">{{ trigger.name }}</v-chip>
@@ -18,7 +25,15 @@
       <v-card-text v-show="showDetail">
         <v-row>
           <v-col cols="8">
-            <v-list density="compact" v-if="configurationItems.length > 0">
+            <v-list density="compact" v-if="configurationItems.length > 0 || trigger.agent">
+              <v-list-item v-if="trigger.agent">
+                <v-list-item-title>Agent</v-list-item-title>
+                <v-list-item-subtitle>
+                  <router-link to="/configuration/agents">{{
+                    trigger.agent
+                  }}</router-link>
+                </v-list-item-subtitle>
+              </v-list-item>
               <v-list-item
                 v-for="configurationItem in configurationItems"
                 :key="configurationItem.key"

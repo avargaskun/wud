@@ -130,6 +130,31 @@ describe('ContainerItem', () => {
     expect(wrapper.vm.osIcon).toBe('mdi-microsoft-windows');
   });
 
+  it('computes correct agent status color', async () => {
+    const agents = [
+      { name: 'agent1', connected: true },
+      { name: 'agent2', connected: false }
+    ];
+    
+    await wrapper.setProps({
+      container: { ...mockContainer, agent: 'agent1' },
+      agents
+    });
+    expect(wrapper.vm.agentStatusColor).toBe('success');
+
+    await wrapper.setProps({
+      container: { ...mockContainer, agent: 'agent2' },
+      agents
+    });
+    expect(wrapper.vm.agentStatusColor).toBe('error');
+
+    await wrapper.setProps({
+      container: { ...mockContainer, agent: 'unknown' },
+      agents
+    });
+    expect(wrapper.vm.agentStatusColor).toBe('info');
+  });
+
   it('formats digest version correctly', async () => {
     await wrapper.setProps({
       container: {

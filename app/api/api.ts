@@ -10,6 +10,7 @@ import * as logRouter from './log';
 import * as storeRouter from './store';
 import * as serverRouter from './server';
 import { requireAuthentication } from './auth';
+import * as agentRouter from './agent';
 
 /**
  * Init the API router.
@@ -47,6 +48,8 @@ export function init() {
 
     // Mount auth
     router.use('/authentications', authenticationRouter.init());
+
+    router.use('/agents', agentRouter.init());
 
     // All other API routes => 404
     router.get('/*', (req, res) => res.sendStatus(404));

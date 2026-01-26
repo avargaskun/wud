@@ -6,6 +6,7 @@ jest.mock('./configuration', () => ({
 
 jest.mock('./log', () => ({
     info: jest.fn(),
+    child: jest.fn().mockReturnThis(),
 }));
 
 jest.mock('./store', () => ({
@@ -17,6 +18,10 @@ jest.mock('./registry', () => ({
 }));
 
 jest.mock('./api', () => ({
+    init: jest.fn().mockResolvedValue(),
+}));
+
+jest.mock('./agent', () => ({
     init: jest.fn().mockResolvedValue(),
 }));
 
@@ -36,6 +41,7 @@ describe('Main Application', () => {
         const store = await import('./store');
         const registry = await import('./registry');
         const api = await import('./api');
+        const agent = await import('./agent');
         const prometheus = await import('./prometheus');
         const { getVersion } = await import('./configuration');
 
@@ -48,11 +54,12 @@ describe('Main Application', () => {
         // Verify initialization order and calls
         expect(getVersion).toHaveBeenCalled();
         expect(log.info).toHaveBeenCalledWith(
-            'WUD is starting (version = 1.0.0)',
+            'WUD is starting in Controller mode (version = 1.0.0)',
         );
         expect(store.init).toHaveBeenCalled();
         expect(prometheus.init).toHaveBeenCalled();
         expect(registry.init).toHaveBeenCalled();
+        expect(agent.init).toHaveBeenCalled();
         expect(api.init).toHaveBeenCalled();
     });
 });

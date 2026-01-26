@@ -2,8 +2,7 @@
   <v-snackbar
     v-model="showLocal"
     :timeout="timeout"
-    color="primary"
-    variant="outlined"
+    :color="level"
   >
     {{ message }}
     <template v-slot:actions>
