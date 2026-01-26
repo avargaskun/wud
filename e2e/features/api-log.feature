@@ -3,4 +3,4 @@ Feature: WUD Log API Exposure
     When I GET /api/log
     Then response code should be 200
     And response body should be valid json
-    And response body path $.level should be info
+    And response body path $.level should be debug

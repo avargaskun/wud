@@ -11,18 +11,25 @@ import {
     getTriggerConfigurations,
     getRegistryConfigurations,
     getAuthenticationConfigurations,
+    getAgentConfigurations,
 } from '../configuration';
 import Component, { ComponentConfiguration } from './Component';
 import Trigger from '../triggers/providers/Trigger';
 import Watcher from '../watchers/Watcher';
 import Registry from '../registries/Registry';
 import Authentication from '../authentications/providers/Authentication';
+import Agent from '../agent/components/Agent';
 
 export interface RegistryState {
     trigger: { [key: string]: Trigger };
     watcher: { [key: string]: Watcher };
     registry: { [key: string]: Registry };
     authentication: { [key: string]: Authentication };
+    agent: { [key: string]: Agent };
+}
+
+export interface RegistrationOptions {
+    agent?: boolean;
 }
 
 type ComponentKind = keyof RegistryState;
@@ -35,6 +42,7 @@ const state: RegistryState = {
     watcher: {},
     registry: {},
     authentication: {},
+    agent: {},
 };
 
 export function getState() {
@@ -77,6 +85,7 @@ function getDocumentationLink(kind: ComponentKind) {
             'https://github.com/getwud/wud/tree/main/docs/configuration/registries',
         authentication:
             'https://github.com/getwud/wud/tree/main/docs/configuration/authentications',
+        agent: 'https://github.com/getwud/wud/tree/main/docs/configuration/agents',
     };
     return (
         docLinks[kind] ||
@@ -126,18 +135,21 @@ function getHelpfulErrorMessage(
  * @param {*} configuration
  * @param {*} componentPath
  */
-async function registerComponent(
+export async function registerComponent(
     kind: ComponentKind,
     provider: string,
     name: string,
     configuration: ComponentConfiguration,
     componentPath: string,
+    agent?: string,
 ): Promise<Component> {
     const providerLowercase = provider.toLowerCase();
     const nameLowercase = name.toLowerCase();
-    const componentFile = `${componentPath}/${providerLowercase.toLowerCase()}/${capitalize(provider)}`;
+    let componentFile = `${componentPath}/${providerLowercase.toLowerCase()}/${capitalize(provider)}`;
+    if (agent) {
+        componentFile = `${componentPath}/Agent${capitalize(kind)}`;
+    }
     try {
-        // eslint-disable-next-line @typescript-eslint/no-var-requires
         const ComponentClass = (await import(componentFile)).default;
         const component: Component = new ComponentClass();
         const componentRegistered = await component.register(
@@ -145,6 +157,7 @@ async function registerComponent(
             providerLowercase,
             nameLowercase,
             configuration,
+            agent,
         );
 
         // Type assertion is safe here because we know the kind matches the expected type
@@ -202,13 +215,20 @@ async function registerComponents(
 
 /**
  * Register watchers.
+ * @param options
  * @returns {Promise}
  */
-async function registerWatchers() {
+async function registerWatchers(options: RegistrationOptions = {}) {
     const configurations = getWatcherConfigurations();
-    let watchersToRegister: Promise<any>[] = [];
+    let watchersToRegister = [];
     try {
         if (Object.keys(configurations).length === 0) {
+            if (options.agent) {
+                log.error(
+                    'Agent mode requires at least one watcher configured.',
+                );
+                process.exit(1);
+            }
             log.info(
                 'No Watcher configured => Init a default one (Docker with default options)',
             );
@@ -217,7 +237,7 @@ async function registerWatchers() {
                     'watcher',
                     'docker',
                     'local',
-                    {},
+                    { enablemetrics: !options.agent },
                     '../watchers/providers',
                 ),
             );
@@ -225,11 +245,12 @@ async function registerWatchers() {
             watchersToRegister = watchersToRegister.concat(
                 Object.keys(configurations).map((watcherKey) => {
                     const watcherKeyNormalize = watcherKey.toLowerCase();
+                    const config = configurations[watcherKeyNormalize];
                     return registerComponent(
                         'watcher',
                         'docker',
                         watcherKeyNormalize,
-                        configurations[watcherKeyNormalize],
+                        config,
                         '../watchers/providers',
                     );
                 }),
@@ -244,9 +265,38 @@ async function registerWatchers() {
 
 /**
  * Register triggers.
+ * @param options
  */
-async function registerTriggers() {
+async function registerTriggers(options: RegistrationOptions = {}) {
     const configurations = getTriggerConfigurations();
+    const allowedTriggers = ['docker', 'dockercompose'];
+
+    if (options.agent && configurations) {
+        // Filter configurations for Agent
+        const filteredConfigurations = {};
+        Object.keys(configurations).forEach((provider) => {
+            if (allowedTriggers.includes(provider.toLowerCase())) {
+                filteredConfigurations[provider] = configurations[provider];
+            } else {
+                log.warn(
+                    `Trigger type '${provider}' is not supported in Agent mode and will be ignored.`,
+                );
+            }
+        });
+
+        try {
+            await registerComponents(
+                'trigger',
+                filteredConfigurations,
+                '../triggers/providers',
+            );
+        } catch (e) {
+            log.warn(`Some triggers failed to register (${e.message})`);
+            log.debug(e);
+        }
+        return;
+    }
+
     try {
         await registerComponents(
             'trigger',
@@ -314,6 +364,30 @@ async function registerAuthentications() {
         log.warn(`Some authentications failed to register (${e.message})`);
         log.debug(e);
     }
+}
+
+/**
+ * Register agents.
+ */
+async function registerAgents() {
+    const configurations = getAgentConfigurations();
+    const promises = Object.keys(configurations).map(async (name) => {
+        try {
+            const config = configurations[name];
+            const agent = new Agent();
+            const registered = await agent.register(
+                'agent',
+                'wud',
+                name,
+                config,
+            );
+            state.agent[registered.getId()] = registered as Agent;
+        } catch (e: any) {
+            log.warn(`Agent ${name} failed to register (${e.message})`);
+            log.debug(e);
+        }
+    });
+    await Promise.all(promises);
 }
 
 /**
@@ -389,6 +463,29 @@ async function deregisterAuthentications() {
 }
 
 /**
+ * Deregister all components registered against the specified agent.
+ * @returns {Promise}
+ */
+export async function deregisterAgentComponents(agent: string) {
+    const watchers = Object.values(getState().watcher).filter(
+        (watcher) => watcher.agent === agent,
+    );
+    const triggers = Object.values(getState().trigger).filter(
+        (trigger) => trigger.agent === agent,
+    );
+    await deregisterComponents(watchers, 'watcher');
+    await deregisterComponents(triggers, 'trigger');
+}
+
+/**
+ * Deregister all agents.
+ * @returns {Promise<unknown>}
+ */
+async function deregisterAgents() {
+    return deregisterComponents(Object.values(getState().agent), 'agent');
+}
+
+/**
  * Deregister all components.
  * @returns {Promise}
  */
@@ -398,23 +495,29 @@ async function deregisterAll() {
         await deregisterTriggers();
         await deregisterRegistries();
         await deregisterAuthentications();
+        await deregisterAgents();
     } catch (e: any) {
         throw new Error(`Error when trying to deregister ${e.message}`);
     }
 }
 
-export async function init() {
+export async function init(options: RegistrationOptions = {}) {
     // Register triggers
-    await registerTriggers();
+    await registerTriggers(options);
+
+    // Register watchers
+    await registerWatchers(options);
 
     // Register registries
     await registerRegistries();
 
-    // Register watchers
-    await registerWatchers();
+    if (!options.agent) {
+        // Register authentications
+        await registerAuthentications();
 
-    // Register authentications
-    await registerAuthentications();
+        // Register agents
+        await registerAgents();
+    }
 
     // Gracefully exit when possible
     process.on('SIGINT', deregisterAll);

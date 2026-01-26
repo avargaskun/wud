@@ -4,7 +4,7 @@ Feature: WUD Watcher API Exposure
     When I GET /api/watchers
     Then response code should be 200
     And response body should be valid json
-    And response body path $ should be of type array with length 1
+    And response body path $ should be of type array with length 2
     And response body path $[0].id should be docker.local
     And response body path $[0].type should be docker
     And response body path $[0].name should be local

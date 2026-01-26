@@ -2,62 +2,104 @@
 
 set -e
 
-echo "🐳 Setting up test containers for local e2e tests..."
+MODE=${1:-full}
+TARGET_HOST=${TARGET_DOCKER_HOST:-""}
 
-# Login to private registries (if credentials available)
-if [ ! -z "$GITLAB_TOKEN" ]; then
-  docker login registry.gitlab.com -u "$GITLAB_USERNAME" -p "$GITLAB_TOKEN"
+DOCKER_CMD="docker"
+if [ ! -z "$TARGET_HOST" ]; then
+    echo "🔧 Using remote docker host: $TARGET_HOST"
+    DOCKER_CMD="docker -H $TARGET_HOST"
 fi
 
-# Pull nginx as a test image
-docker pull nginx:1.10-alpine
-docker pull nginx:1.20-alpine
+echo "🐳 Setting up test containers (Mode: $MODE)..."
 
-# Tag nginx 1.10 as latest to simulate an update_available
-docker tag nginx:1.10-alpine nginx:latest
+if [ "$MODE" == "minimal" ]; then
+    # Minimal setup for Agent
+    echo "   Running minimal setup..."
+    
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:latest
+    
+    # Run containers
+    # Update available (podinfo 5.0.0 -> 6.0.0)
+    $DOCKER_CMD run -d --name remote_podinfo_update \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.0\.0$' \
+        ghcr.io/stefanprodan/podinfo:5.0.0
+        
+    # Latest (Up to date)
+    $DOCKER_CMD run -d --name remote_podinfo_latest \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^latest$' \
+        ghcr.io/stefanprodan/podinfo:latest
 
-# Tag nginx as if it was coming from private registries
-docker tag nginx:1.10-alpine fmartinou/test:1.0.0
-docker tag nginx:1.10-alpine 229211676173.dkr.ecr.eu-west-1.amazonaws.com/test:1.0.0
-docker tag nginx:1.10-alpine 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/test:1.0.0
-docker tag nginx:1.10-alpine 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0
+else
+    # Full setup (Host/Controller)
+    echo "   Running full setup..."
+    
+    # Login to private registries (if credentials available)
+    if [ ! -z "$GITLAB_TOKEN" ]; then
+      $DOCKER_CMD login registry.gitlab.com -u "$GITLAB_USERNAME" -p "$GITLAB_TOKEN"
+    fi
 
-# Pull homeassistant
-docker pull homeassistant/home-assistant
-docker pull homeassistant/home-assistant:2021.6.1
+    # Pull podinfo as a test image
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:6.0.0
 
-# Pull traefik
-docker pull traefik:2.4.5
+    # Tag podinfo 5.0.0 as latest to simulate an update_available (digest mismatch)
+    $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 ghcr.io/stefanprodan/podinfo:latest
 
-echo "✅ Docker images pulled and tagged"
+    # Tag podinfo as if it was coming from private registries
+    ECR_TARGET=${ECR_REGISTRY_URL:-"229211676173.dkr.ecr.eu-west-1.amazonaws.com"}/${ECR_IMAGE_NAME:-"sub/sub/test"}:1.0.0
+    if [ -z "$ECR_REGISTRY_URL" ]; then
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 fmartinou/test:1.0.0
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/test:1.0.0
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/test:1.0.0
+        $DOCKER_CMD tag ghcr.io/stefanprodan/podinfo:5.0.0 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0
+    else
+        $DOCKER_CMD pull $ECR_TARGET
+    fi
 
-# Run containers for tests
-echo "🚀 Starting test containers..."
+    # Pull homeassistant
+    $DOCKER_CMD pull homeassistant/home-assistant
+    $DOCKER_CMD pull homeassistant/home-assistant:2021.6.1
 
-# ECR
-docker run -d --name ecr_sub_sub_test --label 'wud.watch=true' 229211676173.dkr.ecr.eu-west-1.amazonaws.com/sub/sub/test:1.0.0
+    echo "✅ Docker images pulled and tagged"
 
-# GHCR
-docker run -d --name ghcr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' ghcr.io/linuxserver/radarr:5.14.0.9383-ls245
+    # Run containers for tests
+    echo "🚀 Starting test containers..."
 
-# GITLAB
-docker run -d --name gitlab_test --label 'wud.watch=true' --label 'wud.tag.include=^v16\.[01]\.0$' registry.gitlab.com/gitlab-org/gitlab-runner:v16.0.0
+    # ECR
+    echo "Pulling ECR test image $ECR_TARGET ..."
+    $DOCKER_CMD run -d --name ecr_sub_sub_test --label 'wud.watch=true' $ECR_TARGET
 
-# HUB
-docker run -d --name hub_homeassistant_202161 --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+.\d+$' --label 'wud.link.template=https://github.com/home-assistant/core/releases/tag/${major}.${minor}.${patch}' homeassistant/home-assistant:2021.6.1
-docker run -d --name hub_homeassistant_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' homeassistant/home-assistant
-docker run -d --name hub_nginx_120 --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+-alpine$' nginx:1.20-alpine
-docker run -d --name hub_nginx_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' nginx
-docker run -d --name hub_traefik_245 --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+.\d+$' traefik:2.4.5
+    # GHCR
+    echo "Pulling GHCR test images ..."
+    $DOCKER_CMD run -d --name ghcr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' ghcr.io/linuxserver/radarr:5.14.0.9383-ls245
+    $DOCKER_CMD run -d --name ghcr_podinfo_500 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD run -d --name ghcr_podinfo_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' ghcr.io/stefanprodan/podinfo:latest
 
-# LSCR
-docker run -d --name lscr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' lscr.io/linuxserver/radarr:5.14.0.9383-ls245
+    # GITLAB
+    echo "Pulling Gitlab test images ..."
+    $DOCKER_CMD run -d --name gitlab_test --label 'wud.watch=true' --label 'wud.tag.include=^v16\.[01]\.0$' registry.gitlab.com/gitlab-org/gitlab-runner:v16.0.0
 
-# TrueForge
-docker run -d --name trueforge_radarr --label 'wud.watch=true' --label 'wud.tag.include=^v\d+\.\d+\.\d+$' --memory 512m --tmpfs /config oci.trueforge.org/containerforge/radarr:6.0.4
+    # HUB
+    echo "Pulling DockerHub test images ..."
+    $DOCKER_CMD run -d --name hub_homeassistant_202161 --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+.\d+$' --label 'wud.link.template=https://github.com/home-assistant/core/releases/tag/${major}.${minor}.${patch}' homeassistant/home-assistant:2021.6.1
 
-# QUAY
-docker run -d --name quay_prometheus --label 'wud.watch=true' --label 'wud.tag.include=^v\d+\.\d+\.\d+$' --user root --tmpfs /prometheus:rw,mode=777 quay.io/prometheus/prometheus:v2.52.0
+    # LSCR
+    echo "Pulling LSCR test images ..."
+    $DOCKER_CMD run -d --name lscr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' lscr.io/linuxserver/radarr:5.14.0.9383-ls245
 
-echo "✅ Test containers started (10 containers)"
-docker ps --format "table {{.Names}}\t{{.Image}}\t{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_)"
+    # TrueForge
+    echo "Pulling TrueForge test images ..."
+    $DOCKER_CMD run -d --name trueforge_radarr --label 'wud.watch=true' --label 'wud.tag.include=^v\d+\.\d+\.\d+$' --memory 512m --tmpfs /config oci.trueforge.org/containerforge/radarr:6.0.4
+
+    # QUAY
+    echo "Pulling Quay test images ..."
+    $DOCKER_CMD run -d --name quay_prometheus --label 'wud.watch=true' --label 'wud.tag.include=^v\d+\.\d+\.\d+$' --user root --tmpfs /prometheus:rw,mode=777 quay.io/prometheus/prometheus:v2.52.0
+
+    echo "✅ Test containers started (9 containers)"
+    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_)"
+fi
+

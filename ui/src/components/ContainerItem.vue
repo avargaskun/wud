@@ -23,15 +23,22 @@
           class="text-body-3 d-flex align-center"
           style="gap: 5px"
         >
+          <span v-if="smAndUp && container.agent">
+            <v-chip label :color="agentStatusColor" variant="outlined" disabled data-testid="container-agent">
+              <v-icon left>mdi-lan</v-icon>
+              {{ container.agent }}
+            </v-chip>
+            /
+          </span>
           <span v-if="smAndUp">
-            <v-chip label color="info" variant="outlined" disabled>
+            <v-chip label color="info" variant="outlined" disabled data-testid="container-watcher">
               <v-icon left>mdi-update</v-icon>
               {{ container.watcher }}
             </v-chip>
             /
           </span>
           <span v-if="mdAndUp">
-            <v-chip label color="info" variant="outlined" disabled>
+            <v-chip label color="info" variant="outlined" disabled data-testid="container-registry">
               <IconRenderer 
                 v-if="smAndUp" 
                 :icon="registryIcon"
@@ -42,7 +49,7 @@
             </v-chip>
             /
           </span>
-          <v-chip label color="info" variant="outlined" disabled>
+          <v-chip label color="info" variant="outlined" disabled data-testid="container-name">
             <IconRenderer 
               v-if="smAndUp" 
               :icon="container.displayIcon"
@@ -55,7 +62,7 @@
           </v-chip>
           <span>
             :
-            <v-chip label variant="outlined" color="info" disabled>
+            <v-chip label variant="outlined" color="info" disabled data-testid="container-tag">
               {{ container.image.tag.value }}
             </v-chip>
           </span>
@@ -73,6 +80,7 @@
                   variant="outlined"
                   :color="newVersionClass"
                   v-bind="props"
+                  data-testid="container-update-available"
                   @click="
                     copyToClipboard('container new version', newVersion);
                     $event.stopImmediatePropagation();
