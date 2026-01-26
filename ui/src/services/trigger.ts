@@ -14,11 +14,11 @@ async function runTrigger({ triggerType, triggerName, container }) {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(container),
   });
-  const json = await response.json();
-  if (response.status !== 200) {
-    throw new Error(json.error ? json.error : "Unknown error");
+  if (!response.ok) {
+    const json = await response.json().catch(() => ({}));
+    throw new Error(json.error ? json.error : `Trigger failed: ${response.statusText}`);
   }
-  return json;
+  return response.json();
 }
 
 export { getTriggerIcon, getAllTriggers, runTrigger };

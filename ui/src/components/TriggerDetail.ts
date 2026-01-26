@@ -1,12 +1,22 @@
 import { runTrigger } from "@/services/trigger";
 import { defineComponent } from "vue";
+import { useDisplay } from "vuetify";
 
 export default defineComponent({
+  setup() {
+    const { smAndUp } = useDisplay();
+    return { smAndUp };
+  },
   components: {},
   props: {
     trigger: {
       type: Object,
       required: true,
+    },
+    agents: {
+      type: Array,
+      required: false,
+      default: () => [],
     },
   },
   data() {
@@ -31,6 +41,16 @@ export default defineComponent({
     };
   },
   computed: {
+    agentStatusColor() {
+      const agent = (this.agents as any[]).find(
+        (a) => a.name === this.trigger.agent,
+      );
+      if (agent) {
+        return agent.connected ? "success" : "error";
+      }
+      return "info";
+    },
+
     configurationItems() {
       return Object.keys(this.trigger.configuration || [])
         .map((key) => ({

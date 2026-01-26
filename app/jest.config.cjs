@@ -25,4 +25,5 @@ module.exports = {
         '!jest.config.cjs',
     ],
     testPathIgnorePatterns: ['<rootDir>/dist/', '<rootDir>/node_modules/'],
+    forceExit: true,
 };

@@ -9,9 +9,15 @@ Feature: WUD Registry API Exposure
     And response body path $[0].id should be acr.private
     And response body path $[0].type should be acr
     And response body path $[0].name should be private
-    And response body path $[0].configuration.clientid should be .\*.*.
-    And response body path $[0].configuration.clientsecret should be .\*.*.
+    And response body path $[0].configuration.clientid should be `ACR_CLIENT_ID`
+    And response body path $[0].configuration.clientsecret should be .\*+.
 
+    And response body path $[1].id should be ecr.private
+    And response body path $[1].type should be ecr
+    And response body path $[1].name should be private
+    And response body path $[1].configuration.region should be `AWS_REGION`
+    And response body path $[1].configuration.accesskeyid should be .\*+.
+    And response body path $[1].configuration.secretaccesskey should be .\*+.
 
     And response body path $[1].id should be codeberg.public
     And response body path $[1].type should be codeberg
@@ -62,5 +68,5 @@ Feature: WUD Registry API Exposure
     And response body path $.id should be acr.private
     And response body path $.type should be acr
     And response body path $.name should be private
-    And response body path $.configuration.clientid should be .\*.*.
-    And response body path $.configuration.clientsecret should be .\*.*.
+    And response body path $.configuration.clientid should be `ACR_CLIENT_ID`
+    And response body path $.configuration.clientsecret should be .\*+.

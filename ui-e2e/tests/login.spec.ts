@@ -10,7 +10,9 @@ test.describe('Login Flow', () => {
     // Use getByLabel for better reliability with Vuetify inputs
     await page.getByLabel('Username').fill('john');
     await page.getByLabel('Password').fill('doe');
-    await page.getByRole('button', { name: 'Login' }).click();
+    const loginButton = page.getByRole('button', { name: 'Login' });
+    await expect(loginButton).toBeEnabled();
+    await loginButton.click();
 
     // Verify redirect to home
     await expect(page).toHaveURL('/');
@@ -22,7 +24,9 @@ test.describe('Login Flow', () => {
 
     await page.getByLabel('Username').fill('wrong');
     await page.getByLabel('Password').fill('pass');
-    await page.getByRole('button', { name: 'Login' }).click();
+    const loginButton = page.getByRole('button', { name: 'Login' });
+    await expect(loginButton).toBeEnabled();
+    await loginButton.click();
 
     // Verify still on login or error message (Basic auth might trigger browser prompt or just 401,
     // but the app handles 401 by showing login page again or error.

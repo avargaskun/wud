@@ -1,5 +1,5 @@
 <template>
-  <v-card variant="outlined">
+  <v-card variant="outlined" :data-testid="triggerId">
     <v-list-item>
       <template v-slot:prepend>
         <v-icon>mdi-bell-ring</v-icon>

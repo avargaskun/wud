@@ -1,11 +1,8 @@
 // @ts-nocheck
 import Lscr from './Lscr';
 
-jest.mock('axios', () =>
-    jest.fn().mockImplementation(() => ({
-        data: { token: 'xxxxx' },
-    })),
-);
+// Mock axios
+jest.mock('axios');
 
 const lscr = new Lscr();
 lscr.configuration = {

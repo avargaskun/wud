@@ -5,7 +5,9 @@ test.describe('Navigation', () => {
     await page.goto('/');
     await page.getByLabel('Username').fill('john');
     await page.getByLabel('Password').fill('doe');
-    await page.getByRole('button', { name: 'Login' }).click();
+    const loginButton = page.getByRole('button', { name: 'Login' });
+    await expect(loginButton).toBeEnabled();
+    await loginButton.click();
     await expect(page).toHaveURL('/');
   });
 
@@ -17,7 +19,7 @@ test.describe('Navigation', () => {
   // Skipping flaky navigation test for now
   test('should navigate to Configuration sections', async ({ page }) => {
     // Open Configuration group if needed
-    const configGroup = page.getByText('Configuration');
+    const configGroup = page.locator('nav').getByText('Configuration', { exact: true });
     // Scope to nav to avoid matching dashboard tiles
     const triggersLink = page.locator('nav').getByRole('link', { name: 'Triggers' });
 

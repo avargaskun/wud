@@ -13,7 +13,10 @@ test('_challenge should return appropriate Auth header', async () => {
 });
 
 test('authenticate should return user from session if so', async () => {
-    basicStrategy.authenticate({ isAuthenticated: () => true, user: { username: 'test-user' } });
+    basicStrategy.authenticate({
+        isAuthenticated: () => true,
+        user: { username: 'test-user' },
+    });
     expect(basicStrategy.success).toHaveBeenCalled();
 });
 
