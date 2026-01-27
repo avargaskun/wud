@@ -34,6 +34,7 @@ The frontend is a Vue 3 application built with Vuetify. It communicates with the
 ### Prerequisites
 -   Node.js (v20+)
 -   Docker
+-   [Amazon ECR Docker Credential Helper](https://github.com/awslabs/amazon-ecr-credential-helper) (for seamless ECR authentication)
 
 ### Running Local Development
 
@@ -86,6 +87,33 @@ GCR_PRIVATE_KEY=
 The ECR end to end tests require a valid ECR image path and credentials to access the registry. 
 
 The script `/scripts/setup-ecr-container.sh` will set this up for you. You will need to make sure the AWS SDK is installed and configured before running the script. After running the script, the values you need to include in the `.env` file will be output to the screen.
+
+#### ECR Authentication
+
+To run ECR tests without relying on the AWS CLI for `docker login`, configure the **Amazon ECR Docker Credential Helper**. This allows Docker to automatically authenticate using your AWS credentials.
+
+1.  **Install the Helper**:
+    * **Linux**: `sudo apt install amazon-ecr-credential-helper`
+    * **macOS**: `brew install docker-credential-helper-ecr`
+
+2.  **Configure Docker**:
+    Add the `credsStore` or `credHelpers` configuration to your `~/.docker/config.json` file:
+    ```json
+    {
+      "credHelpers": {
+        "public.ecr.aws": "ecr-login",
+        "<aws_account_id>.dkr.ecr.<region>.amazonaws.com": "ecr-login"
+      }
+    }
+    ```
+
+3.  **Configure Credentials**:
+    Ensure your AWS keys (from the `.env` file or the output of `setup-ecr-container.sh`) are available in `~/.aws/credentials`:
+    ```ini
+    [default]
+    aws_access_key_id = <AWS_ACCESSKEY_ID>
+    aws_secret_access_key = <AWS_SECRET_ACCESSKEY>
+    ```
 
 #### Test Suites
 
