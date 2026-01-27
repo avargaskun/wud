@@ -1,6 +1,7 @@
 // @ts-nocheck
 import express from 'express';
 import nocache from 'nocache';
+import { byValues, byString } from 'sort-es';
 import * as storeContainer from '../store/container';
 import * as registry from '../registry';
 import { getServerConfiguration } from '../configuration';
@@ -131,59 +132,28 @@ export async function getContainerTriggers(req, res) {
 
     const container = storeContainer.getContainer(id);
     if (container) {
-        const allTriggers = mapComponentsToList(getTriggers());
-        const includedTriggers = container.triggerInclude
-            ? container.triggerInclude
-                  .split(/\s*,\s*/)
-                  .map((includedTrigger) =>
-                      Trigger.parseIncludeOrIncludeTriggerString(
-                          includedTrigger,
-                      ),
-                  )
-            : undefined;
-        const excludedTriggers = container.triggerExclude
-            ? container.triggerExclude
-                  .split(/\s*,\s*/)
-                  .map((excludedTrigger) =>
-                      Trigger.parseIncludeOrIncludeTriggerString(
-                          excludedTrigger,
-                      ),
-                  )
-            : undefined;
+        const triggers = getTriggers();
         const associatedTriggers = [];
-        allTriggers.forEach((trigger) => {
-            if (trigger.agent && trigger.agent !== container.agent) {
-                // Remote triggers can only act on remote containers defined in the same Agent
-                return;
-            }
-            const triggerToAssociate = { ...trigger };
-            // Use 'local' trigger id syntax - which is the syntax that will be used in remote Agents
-            // This causes overlap between remote and local agents - a known issue that users must be aware of
-            const triggerId = `${trigger.type}.${trigger.name}`;
-            let associated = true;
-            if (includedTriggers) {
-                const includedTrigger = includedTriggers.find(
-                    (tr) => tr.id === triggerId,
-                );
-                if (includedTrigger) {
-                    triggerToAssociate.configuration.threshold =
-                        includedTrigger.threshold;
-                } else {
-                    associated = false;
-                }
-            }
-            if (
-                excludedTriggers &&
-                excludedTriggers
-                    .map((excludedTrigger) => excludedTrigger.id)
-                    .includes(triggerId)
-            ) {
-                associated = false;
-            }
-            if (associated) {
-                associatedTriggers.push(triggerToAssociate);
+        Object.values(triggers).forEach((trigger) => {
+            const effectiveConfiguration = trigger.apply(container);
+            if (effectiveConfiguration) {
+                associatedTriggers.push({
+                    id: trigger.getId(),
+                    type: trigger.type,
+                    name: trigger.name,
+                    agent: trigger.agent,
+                    configuration: trigger.maskConfiguration(
+                        effectiveConfiguration,
+                    ),
+                });
             }
         });
+        associatedTriggers.sort(
+            byValues([
+                [(x) => x.type, byString()],
+                [(x) => x.name, byString()],
+            ]),
+        );
         res.status(200).json(associatedTriggers);
     } else {
         res.sendStatus(404);
