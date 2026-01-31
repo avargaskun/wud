@@ -9,10 +9,10 @@ Feature: Agent Mode
         Then the container with image "stefanprodan/podinfo:5.0.0" should have update available
 
     Scenario: Full Update Cycle (Agent Mode)
-        When I find the remote container with image "stefanprodan/podinfo:5.0.0" and save its ID as "NGINX_ID", version as "NGINX_VERSION", and name as "NGINX_NAME"
-        And I send POST to /api/containers/{{NGINX_ID}}/triggers/remote/docker/update
+        When I find the remote container with image "stefanprodan/podinfo:5.0.0" and save its ID as "CONTAINER_ID", version as "CONTAINER_VERSION", and name as "CONTAINER_NAME"
+        And I send POST to /api/containers/`CONTAINER_ID`/triggers/remote/docker/update
         Then response code should be 200
         And I wait for 30 seconds
-        And I send POST to /api/containers/{{NGINX_ID}}/watch
+        And I send POST to /api/containers/`CONTAINER_ID`/watch
         And I GET /api/containers
-        Then the container with saved name "NGINX_NAME" should have a version different than "NGINX_VERSION"
+        Then the container with saved name "CONTAINER_NAME" should have a version different than "CONTAINER_VERSION"
