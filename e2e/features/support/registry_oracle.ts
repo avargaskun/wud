@@ -1,10 +1,11 @@
-const https = require('https');
-const semver = require('semver');
+import * as https from 'https';
+import * as semver from 'semver';
+import { IncomingHttpHeaders } from 'http';
 
 /**
  * Perform an HTTPS GET request and return the body as a string.
  */
-function fetch(url, options = {}) {
+function fetch(url: string, options: https.RequestOptions = {}): Promise<string> {
     return new Promise((resolve, reject) => {
         https.get(url, options, (res) => {
             let data = '';
@@ -12,7 +13,7 @@ function fetch(url, options = {}) {
                 data += chunk;
             });
             res.on('end', () => {
-                if (res.statusCode >= 200 && res.statusCode < 300) {
+                if (res.statusCode && res.statusCode >= 200 && res.statusCode < 300) {
                     resolve(data);
                 } else {
                     reject(new Error(`Status: ${res.statusCode}, Body: ${data}`));
@@ -24,6 +25,12 @@ function fetch(url, options = {}) {
     });
 }
 
+interface FetchResponse {
+    data: string;
+    headers: IncomingHttpHeaders;
+    statusCode?: number;
+}
+
 /**
  * Registry Oracle for fetching latest tags and digests.
  */
@@ -31,22 +38,22 @@ const registryOracle = {
     /**
      * Get the latest version for an image.
      */
-    async getLatestVersion(registry, image, pattern = '.*') {
+    async getLatestVersion(registry: string, image: string, pattern: string = '.*'): Promise<string> {
         if (registry === 'ecr.private') {
             return '2.0.0';
         }
 
         const regex = new RegExp(pattern);
-        let tags = [];
+        let tags: string[] = [];
 
         try {
             if (registry === 'hub.public') {
                 const url = `https://hub.docker.com/v2/repositories/${image.includes('/') ? image : `library/${image}`}/tags?page_size=100`;
                 const data = JSON.parse(await fetch(url));
-                tags = data.results.map(r => r.name);
+                tags = data.results.map((r: any) => r.name);
             } else if (registry === 'ghcr.public' || registry === 'gitlab.private' || registry === 'lscr.private') {
-                let url;
-                let headers = {};
+                let url: string | null | undefined;
+                let headers: any = {};
 
                 if (registry === 'ghcr.public' || registry === 'lscr.private') {
                     const tokenUrl = `https://ghcr.io/token?scope=repository:${image}:pull`;
@@ -63,8 +70,8 @@ const registryOracle = {
                 // Simple loop for up to 50 pages if tags not found
                 let page = 0;
                 while (url && page < 50) {
-                    const res = await new Promise((resolve, reject) => {
-                        https.get(url, { headers }, (res) => {
+                    const res: FetchResponse = await new Promise((resolve, reject) => {
+                        https.get(url!, { headers }, (res) => {
                             let data = '';
                             res.on('data', (chunk) => data += chunk);
                             res.on('end', () => resolve({ data, headers: res.headers, statusCode: res.statusCode }));
@@ -77,7 +84,7 @@ const registryOracle = {
 
                     // Check for next page in Link header
                     const link = res.headers.link;
-                    if (link && link.includes('rel="next"')) {
+                    if (link && typeof link === 'string' && link.includes('rel="next"')) {
                         const match = link.match(/<(.*)>; rel="next"/);
                         if (match) {
                             const nextUrl = match[1];
@@ -97,11 +104,11 @@ const registryOracle = {
                     page++;
                 }
             } else if (registry === 'quay.public') {
-                let url = `https://quay.io/api/v1/repository/${image}/tag/?limit=100`;
+                let url: string | null = `https://quay.io/api/v1/repository/${image}/tag/?limit=100`;
                 let page = 0;
                 while (url && page < 50) {
                     const data = JSON.parse(await fetch(url));
-                    tags = tags.concat(data.tags.map(t => t.name));
+                    tags = tags.concat(data.tags.map((t: any) => t.name));
                     if (data.has_additional) {
                         url = `https://quay.io/api/v1/repository/${image}/tag/?limit=100&page=${page + 2}`;
                     } else {
@@ -135,7 +142,7 @@ const registryOracle = {
             }
 
             return sortedTags[0];
-        } catch (e) {
+        } catch (e: any) {
             console.error(`Error fetching latest version for ${image} on ${registry}: ${e.message}`);
             throw e;
         }
@@ -144,7 +151,7 @@ const registryOracle = {
     /**
      * Get the latest digest for an image.
      */
-    async getLatestDigest(registry, image, tag = 'latest') {
+    async getLatestDigest(registry: string, image: string, tag: string = 'latest'): Promise<string> {
         try {
             if (registry === 'ghcr.public') {
                 const tokenUrl = `https://ghcr.io/token?scope=repository:${image}:pull`;
@@ -162,7 +169,7 @@ const registryOracle = {
                 
                 // If it's a manifest list / index, find the linux/amd64 manifest
                 if (response.manifests) {
-                    const manifest = response.manifests.find(m => 
+                    const manifest = response.manifests.find((m: any) => 
                         m.platform && m.platform.architecture === 'amd64' && m.platform.os === 'linux'
                     );
                     if (manifest) {
@@ -177,7 +184,7 @@ const registryOracle = {
                     const headOptions = { ...options, method: 'HEAD' };
                     const req = https.request(url, headOptions, (res) => {
                         if (res.headers['docker-content-digest']) {
-                            resolve(res.headers['docker-content-digest']);
+                            resolve(res.headers['docker-content-digest'] as string);
                         } else {
                             reject(new Error(`Digest header not found for ${image}:${tag}`));
                         }
@@ -187,11 +194,11 @@ const registryOracle = {
                 });
             }
             throw new Error(`getLatestDigest not implemented for registry: ${registry}`);
-        } catch (e) {
+        } catch (e: any) {
             console.error(`Error fetching latest digest for ${image}:${tag} on ${registry}: ${e.message}`);
             throw e;
         }
     }
 };
 
-module.exports = registryOracle;
+export default registryOracle;
