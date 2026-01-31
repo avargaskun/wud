@@ -40,6 +40,13 @@ export default defineComponent({
       return this.normalizedIcon && this.normalizedIcon.startsWith("si-");
     },
     
+    isUrl() {
+      return (
+        this.icon &&
+        (this.icon.startsWith("http://") || this.icon.startsWith("https://"))
+      );
+    },
+    
     homarrIconUrl() {
       const iconName = this.icon.replace("hl-", "").replace("hl:", "");
       return `https://cdn.jsdelivr.net/gh/homarr-labs/dashboard-icons/png/${iconName}.png`;
