@@ -127,4 +127,16 @@ test.describe('Containers View', () => {
     await expect(remoteLatestContainer).toBeVisible();
     await expect(remoteLatestContainer.getByTestId('container-agent')).toBeVisible();
   });
+
+  test('should display arbitrary URL icons', async ({ page }) => {
+    // Find the container card for 'url_icon_test'
+    const urlIconContainer = page.locator('main .v-card', { hasText: 'ghcr_podinfo_latest' }).first();
+    await expect(urlIconContainer).toBeVisible();
+
+    // Within that card, find the IconRenderer (which should contain an img tag for URL icons)
+    const expectedUrl = 'https://img.icons8.com/?size=100&id=118497&format=png&color=000000';
+    const iconImg = urlIconContainer.getByTestId('container-name').getByTestId('icon-renderer-img');
+    await expect(iconImg).toBeVisible();
+    await expect(iconImg).toHaveAttribute('src', expectedUrl);
+  });
 });

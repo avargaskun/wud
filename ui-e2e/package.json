@@ -5,7 +5,9 @@
     "test": "dotenvx run -f ../.env -- ../scripts/run-ui-tests.sh",
     "test:local": "playwright test",
     "test:headed": "playwright test --headed",
-    "test:ui": "playwright test --ui"
+    "test:ui": "playwright test --ui",
+    "test:start-wud": "dotenvx run -f ../.env -- ../scripts/start-wud.sh",
+    "test:cleanup": "../scripts/cleanup-test-containers.sh"
   },
   "devDependencies": {
     "@dotenvx/dotenvx": "^1.51.4",

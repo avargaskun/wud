@@ -4,12 +4,14 @@
     :src="homarrIconUrl"
     :style="iconStyle"
     :alt="icon"
+    data-testid="icon-renderer-img"
   />
   <img
     v-else-if="isSelfhstIcon"
     :src="selfhstIconUrl"
     :style="iconStyle"
     :alt="icon"
+    data-testid="icon-renderer-img"
   />
   <img
     v-else-if="isSimpleIcon"
@@ -17,6 +19,14 @@
     :style="iconStyle"
     :alt="icon"
     class="simple-icon"
+    data-testid="icon-renderer-img"
+  />
+  <img
+    v-else-if="isUrl"
+    :src="icon"
+    :style="iconStyle"
+    :alt="icon"
+    data-testid="icon-renderer-img"
   />
   <v-icon v-else :style="iconStyle">
     {{ normalizedIcon }}
