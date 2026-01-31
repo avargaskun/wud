@@ -1,5 +1,49 @@
-const { When, Then } = require('@cucumber/cucumber');
+const { Given, When, Then } = require('@cucumber/cucumber');
 const assert = require('assert');
+const registryOracle = require('../support/registry_oracle');
+
+Given(/^I resolve the latest version for image "([^"]*)" on registry "([^"]*)" with strategy "([^"]*)" and pattern "([^"]*)" and value "([^"]*)" as "([^"]*)"$/, async function (imageName, registry, strategy, pattern, value, varName) {
+    let version;
+    if (strategy === 'static') {
+        version = value;
+    } else {
+        version = await registryOracle.getLatestVersion(registry, imageName, pattern);
+    }
+    this.apickli.setGlobalVariable(varName, version);
+});
+
+Given(/^I get the latest version for image "([^"]*)" on registry "([^"]*)" with pattern "([^"]*)" and store it in "([^"]*)"$/, async function (imageName, registry, pattern, varName) {
+    const version = await registryOracle.getLatestVersion(registry, imageName, pattern);
+    this.apickli.setGlobalVariable(varName, version);
+});
+
+Given(/^I get the latest digest for image "([^"]*)" on registry "([^"]*)" with tag "([^"]*)" and store it in "([^"]*)"$/, async function (imageName, registry, tag, varName) {
+    const digest = await registryOracle.getLatestDigest(registry, imageName, tag);
+    this.apickli.setGlobalVariable(varName, digest);
+});
+
+Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (path, varName) {
+    const expectedValue = this.apickli.getGlobalVariable(varName);
+    const actualValue = this.apickli.evaluatePathInResponseBody(path);
+    assert.strictEqual(String(actualValue), String(expectedValue), `Expected ${expectedValue} at ${path}, but got ${actualValue}`);
+});
+
+Given(/^I set variable "([^"]*)" to "([^"]*)"$/, function (varName, value) {
+    const substitutedValue = substituteVariables(value, this.apickli);
+    this.apickli.setGlobalVariable(varName, substitutedValue);
+});
+
+Then('response body should have substituted {string}', function (expectedContent) {
+    const safeExpectedContent = substituteVariables(expectedContent, this.apickli);
+    const responseBody = this.apickli.getResponseObject().body;
+    assert.ok(responseBody.includes(safeExpectedContent), `Response body should contain ${safeExpectedContent}`);
+});
+
+Then(/^response body should have substituted string:$/, function (expectedString) {
+    const safeExpectedString = substituteVariables(expectedString, this.apickli);
+    const responseBody = this.apickli.getResponseObject().body;
+    assert.ok(responseBody.includes(safeExpectedString), `Response body should contain ${safeExpectedString}`);
+});
 
 When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (remoteArg, imageName, idVar, versionVar, nameVar) {
     await new Promise((resolve, reject) => {
@@ -165,7 +209,7 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
 });
 
 function substituteVariables(str, apickli) {
-    return str.replace(/{{([^}]*)}}/g, (match, p1) => {
+    return str.replace(/`([^`]*)`/g, (match, p1) => {
         return apickli.getGlobalVariable(p1) || match;
     });
 }
