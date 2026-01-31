@@ -13,7 +13,7 @@ docker network create wud-e2e-net 2>/dev/null || true
 # 2. Dind
 echo "🐳 Starting Dind..."
 # We map internal 2375 to host 2376 so we can provision it from the host
-docker run -d --privileged --name wud-dind --network wud-e2e-net -e DOCKER_TLS_CERTDIR="" -p 2376:2375 docker:23-dind
+docker run -d --privileged --name wud-dind --network wud-e2e-net -e DOCKER_TLS_CERTDIR="" -p 2376:2375 docker:dind
 
 # 3. Wait for Dind
 echo "⏳ Waiting for Dind..."
