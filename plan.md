@@ -1,0 +1,24 @@
+Step 1: Modify `app/watchers/providers/docker/Docker.ts`
+- In the `onDockerEvent` method:
+    - Remove the generic `await this.watchCronDebounced();` from the `destroy` and `create` action handler.
+    - **Logic for `destroy`**:
+        - Log at `info` level: `Container destroyed [id=${containerId}]`.
+        - Call `storeContainer.deleteContainer(containerId)` to immediately remove it from the store and trigger removal events.
+    - **Logic for `create`**:
+        - Log at `debug` level: `Container created [id=${containerId}]`.
+        - Attempt to fetch the container details using `this.dockerApi.listContainers({ filters: { id: [containerId] }, all: this.configuration.watchall })`.
+        - **If the container is found**:
+            - Check if it should be watched using `isContainerToWatch`.
+            - If it should be watched:
+                - Log at `info` level: `Watching newly created container [id=${containerId}]`.
+                - Retrieve image details using `this.addImageDetailsToContainer` with the appropriate labels from the container object.
+                - Call `this.watchContainer(container)` to perform an initial check and store it.
+            - Else:
+                - Log at `debug` level: `Container created [id=${containerId}] but ignored (not to watch)`.
+        - **If the container is NOT found (Fallback)**:
+            - Log at `warn` level: `Container created [id=${containerId}] but not found in list. Falling back to debounced full scan`.
+            - Call `await this.watchCronDebounced()` to ensure the state is reconciled eventually.
+    - **Concurrency & Observability**:
+        - Ensure all new logic paths are wrapped in appropriate `try...catch` blocks with error logging.
+        - The store operations in this project are synchronous/atomic at the LokiJS level, so immediate updates from events are safe as long as they represent the most recent state.
+        - Added logs will include container IDs and status to help track event processing in production.

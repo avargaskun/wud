@@ -1,0 +1,24 @@
+{
+    "Type": "container",
+    "Action": "destroy",
+    "Actor": {
+        "ID": "bc7ce17b93842a021a23792692764523a9fd65e82e1b86e5e343035307d3d436",
+        "Attributes": {
+            "image": "ghcr.io/stefanprodan/podinfo:5.0.0",
+            "maintainer": "stefanprodan",
+            "name": "remote_podinfo_update",
+            "org.opencontainers.image.created": "2020-09-20T12:11:10Z",
+            "org.opencontainers.image.description": "Go microservice template for Kubernetes",
+            "org.opencontainers.image.revision": "9299a2d1f300267354609bee398caa2cb5548594",
+            "org.opencontainers.image.source": "https://github.com/stefanprodan/podinfo",
+            "org.opencontainers.image.title": "podinfo",
+            "org.opencontainers.image.url": "https://github.com/stefanprodan/podinfo",
+            "org.opencontainers.image.version": "5.0.0",
+            "wud.tag.include": "^6\\.0\\.0$",
+            "wud.watch": "true"
+        }
+    },
+    "scope": "local",
+    "time": 1771084646,
+    "timeNano": 1771084646664235349
+}

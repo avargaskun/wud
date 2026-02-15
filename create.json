@@ -1,0 +1,24 @@
+{
+    "Type": "container",
+    "Action": "create",
+    "Actor": {
+        "ID": "af65717dcb4d2b053eb2505bc615fbe17cc9ef36d2829f5ddab7d6726b715527",
+        "Attributes": {
+            "image": "ghcr.io/stefanprodan/podinfo:6.0.0",
+            "maintainer": "stefanprodan",
+            "name": "remote_podinfo_update",
+            "org.opencontainers.image.created": "2020-09-20T12:11:10Z",
+            "org.opencontainers.image.description": "Go microservice template for Kubernetes",
+            "org.opencontainers.image.revision": "9299a2d1f300267354609bee398caa2cb5548594",
+            "org.opencontainers.image.source": "https://github.com/stefanprodan/podinfo",
+            "org.opencontainers.image.title": "podinfo",
+            "org.opencontainers.image.url": "https://github.com/stefanprodan/podinfo",
+            "org.opencontainers.image.version": "5.0.0",
+            "wud.tag.include": "^6\\.0\\.0$",
+            "wud.watch": "true"
+        }
+    },
+    "scope": "local",
+    "time": 1771084646,
+    "timeNano": 1771084646851096333
+}

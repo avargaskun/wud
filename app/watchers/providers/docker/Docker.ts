@@ -282,11 +282,69 @@ class Docker extends Watcher {
             const containerId = dockerEvent.id;
 
             // If the container was created or destroyed => perform a watch
-            if (action === 'destroy' || action === 'create') {
-                this.log.debug(
-                    `Container action [${action}] on container id=[${containerId}]`,
-                );
-                await this.watchCronDebounced();
+            if (action === 'destroy') {
+                this.log.info(`Container destroyed [id=${containerId}]`);
+                storeContainer.deleteContainer(containerId);
+            } else if (action === 'create') {
+                this.log.debug(`Container created [id=${containerId}]`);
+                try {
+                    const listContainersOptions: Dockerode.ContainerListOptions = {
+                        filters: { id: [containerId] },
+                    };
+                    if (this.configuration.watchall) {
+                        listContainersOptions.all = true;
+                    }
+                    const containers = await this.dockerApi.listContainers(
+                        listContainersOptions,
+                    );
+                    const container =
+                        containers.length > 0 ? containers[0] : undefined;
+
+                    if (container) {
+                        if (
+                            isContainerToWatch(
+                                container.Labels[wudWatch],
+                                this.configuration.watchbydefault,
+                            )
+                        ) {
+                            this.log.info(
+                                `Watching newly created container [id=${containerId}]`,
+                            );
+                            const containerWithImageDetails =
+                                await this.addImageDetailsToContainer(
+                                    container,
+                                    container.Labels[wudTagInclude],
+                                    container.Labels[wudTagExclude],
+                                    container.Labels[wudTagTransform],
+                                    container.Labels[wudLinkTemplate],
+                                    container.Labels[wudDisplayName],
+                                    container.Labels[wudDisplayIcon],
+                                    container.Labels[wudTriggerInclude],
+                                    container.Labels[wudTriggerExclude],
+                                );
+                            if (containerWithImageDetails) {
+                                await this.watchContainer(
+                                    containerWithImageDetails,
+                                );
+                            }
+                        } else {
+                            this.log.debug(
+                                `Container created [id=${containerId}] but ignored (not to watch)`,
+                            );
+                        }
+                    } else {
+                        this.log.warn(
+                            `Container created [id=${containerId}] but not found in list. Falling back to debounced full scan`,
+                        );
+                        await this.watchCronDebounced();
+                    }
+                } catch (e: any) {
+                    this.log.warn(
+                        `Error when processing container create event [id=${containerId}] (${e.message}). Falling back to debounced full scan`,
+                    );
+                    this.log.debug(e);
+                    await this.watchCronDebounced();
+                }
             } else {
                 // Update container state in db if so
                 try {
