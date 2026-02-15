@@ -364,7 +364,7 @@ class Docker extends Watcher {
                     }
                 } catch (e: any) {
                     this.log.debug(
-                        `Unable to get container details for container id=[${containerId}] (${e.message})`,
+                        `Unable to get container details for container action=[${action}] id=[${containerId}] (${e.message})`,
                     );
                 }
             }
