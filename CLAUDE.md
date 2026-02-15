@@ -1,0 +1,1 @@
+Read the file AGENTS.md to understand structure of the project and expectations for AI agents
