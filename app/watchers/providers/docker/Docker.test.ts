@@ -581,5 +581,64 @@ describe('Docker Watcher', () => {
                 expect(docker.watchCronDebounced).toHaveBeenCalled();
             });
         });
+
+        describe('Reconnection', () => {
+            let eventStream;
+            const EventEmitter = require('events');
+
+            beforeEach(() => {
+                jest.useFakeTimers();
+                eventStream = new EventEmitter();
+                eventStream.removeAllListeners = jest.fn();
+                mockDockerApi.getEvents.mockImplementation((options, cb) => {
+                    cb(null, eventStream);
+                });
+            });
+
+            afterEach(() => {
+                jest.useRealTimers();
+            });
+
+            test('should reconnect on stream error', async () => {
+                await docker.listenDockerEvents();
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(1);
+
+                eventStream.emit('error', new Error('Stream error'));
+
+                expect(eventStream.removeAllListeners).toHaveBeenCalled();
+                jest.runOnlyPendingTimers();
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(2);
+            });
+
+            test('should reconnect on stream end', async () => {
+                await docker.listenDockerEvents();
+                eventStream.emit('end');
+
+                expect(eventStream.removeAllListeners).toHaveBeenCalled();
+                jest.runOnlyPendingTimers();
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(2);
+            });
+
+            test('should reconnect on stream close', async () => {
+                await docker.listenDockerEvents();
+                eventStream.emit('close');
+
+                expect(eventStream.removeAllListeners).toHaveBeenCalled();
+                jest.runOnlyPendingTimers();
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(2);
+            });
+
+            test('should retry on initial connection error', async () => {
+                mockDockerApi.getEvents.mockImplementationOnce((options, cb) => {
+                    cb(new Error('Connection failed'), null);
+                });
+
+                await docker.listenDockerEvents();
+
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(1);
+                jest.runOnlyPendingTimers();
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(2);
+            });
+        });
     });
 });
