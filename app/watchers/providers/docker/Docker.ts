@@ -185,10 +185,7 @@ class Docker extends Watcher {
                 this.watchFromCron.bind(this),
                 DEBOUNCED_WATCH_CRON_MS,
             );
-            this.listenDockerEventsTimeout = setTimeout(
-                this.listenDockerEvents.bind(this),
-                START_WATCHER_DELAY_MS,
-            );
+            this.scheduleDockerEvents();
         }
     }
 
@@ -230,6 +227,17 @@ class Docker extends Watcher {
         }
     }
 
+    scheduleDockerEvents() {
+        if (this.listenDockerEventsTimeout) {
+            clearTimeout(this.listenDockerEventsTimeout);
+            delete this.listenDockerEventsTimeout;
+        }
+        this.listenDockerEventsTimeout = setTimeout(
+            this.listenDockerEvents.bind(this),
+            START_WATCHER_DELAY_MS,
+        );
+    }
+
     /**
      * Listen and react to docker events.
      * @return {Promise<void>}
@@ -256,15 +264,33 @@ class Docker extends Watcher {
             },
         };
         this.dockerApi.getEvents(options, (err, stream) => {
+            this.ensureLogger();
             if (err) {
-                if (this.log && typeof this.log.warn === 'function') {
-                    this.log.warn(
-                        `Unable to listen to Docker events [${err.message}]`,
-                    );
-                    this.log.debug(err);
-                }
+                this.log.warn(
+                    `Unable to listen to Docker events [${err.message}]`,
+                );
+                this.log.debug(err);
+                this.scheduleDockerEvents();
             } else {
                 stream.on('data', (chunk: any) => this.onDockerEvent(chunk));
+                stream.on('error', (error: any) => {
+                    this.log.warn(
+                        `Error when listening to Docker events [${error.message}]`,
+                    );
+                    this.log.debug(error);
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
+                stream.on('end', () => {
+                    this.log.info('Docker events stream ended');
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
+                stream.on('close', () => {
+                    this.log.info('Docker events stream closed');
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
             }
         });
     }
