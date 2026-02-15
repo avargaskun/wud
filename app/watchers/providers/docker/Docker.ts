@@ -291,11 +291,54 @@ class Docker extends Watcher {
             const containerId = dockerEvent.id;
 
             // If the container was created or destroyed => perform a watch
-            if (action === 'destroy' || action === 'create') {
-                this.log.debug(
-                    `Container action [${action}] on container id=[${containerId}]`,
-                );
-                await this.watchCronDebounced();
+            if (action === 'destroy') {
+                this.log.info(`Container destroyed [id=${containerId}]`);
+                storeContainer.deleteContainer(containerId);
+            } else if (action === 'create') {
+                this.log.debug(`Container created [id=${containerId}]`);
+                try {
+                    const listContainersOptions: Dockerode.ContainerListOptions =
+                        {
+                            filters: { id: [containerId] },
+                        };
+                    if (this.configuration.watchall) {
+                        listContainersOptions.all = true;
+                    }
+                    const containers = await this.dockerApi.listContainers(
+                        listContainersOptions,
+                    );
+                    const container =
+                        containers.length > 0 ? containers[0] : undefined;
+
+                    if (container) {
+                        const containerWithImageDetails =
+                            await this.getContainerToWatch(container);
+
+                        if (containerWithImageDetails) {
+                            this.log.info(
+                                `Watching newly created container [id=${containerId}]`,
+                            );
+                            await this.watchContainer(
+                                containerWithImageDetails,
+                            );
+                        } else {
+                            this.log.debug(
+                                `Container created [id=${containerId}] but ignored (not to watch)`,
+                            );
+                        }
+                    } else {
+                        this.log.warn(
+                            `Container created [id=${containerId}] but not found in list. Falling back to debounced full scan`,
+                        );
+                        await this.watchCronDebounced();
+                    }
+                } catch (e: any) {
+                    this.log.warn(
+                        `Error when processing container create event [id=${containerId}] (${e.message}). Falling back to debounced full scan`,
+                    );
+                    this.log.debug(e);
+                    await this.watchCronDebounced();
+                }
             } else {
                 // Update container state in db if so
                 try {
@@ -440,6 +483,23 @@ class Docker extends Watcher {
     }
 
     /**
+     * Get a container to watch with all details populated.
+     * Returns undefined if the container should not be watched.
+     * @param container
+     */
+    async getContainerToWatch(container: any): Promise<Container | undefined> {
+        if (
+            !isContainerToWatch(
+                container.Labels[wudWatch],
+                this.configuration.watchbydefault,
+            )
+        ) {
+            return undefined;
+        }
+        return this.addImageDetailsToContainer(container);
+    }
+
+    /**
      * Get all containers to watch.
      * @returns {Promise<unknown[]>}
      */
@@ -453,25 +513,8 @@ class Docker extends Watcher {
             listContainersOptions,
         );
 
-        // Filter on containers to watch
-        const filteredContainers = containers.filter((container: any) =>
-            isContainerToWatch(
-                container.Labels[wudWatch],
-                this.configuration.watchbydefault,
-            ),
-        );
-        const containerPromises = filteredContainers.map((container: any) =>
-            this.addImageDetailsToContainer(
-                container,
-                container.Labels[wudTagInclude],
-                container.Labels[wudTagExclude],
-                container.Labels[wudTagTransform],
-                container.Labels[wudLinkTemplate],
-                container.Labels[wudDisplayName],
-                container.Labels[wudDisplayIcon],
-                container.Labels[wudTriggerInclude],
-                container.Labels[wudTriggerExclude],
-            ).catch((e) => {
+        const containerPromises = containers.map((container: any) =>
+            this.getContainerToWatch(container).catch((e) => {
                 this.log.warn(
                     `Failed to fetch image detail for container ${container.Id}: ${e.message}`,
                 );
@@ -526,17 +569,16 @@ class Docker extends Watcher {
      * @param displayIcon
      * @returns {Promise<Image>}
      */
-    async addImageDetailsToContainer(
-        container: any,
-        includeTags: string,
-        excludeTags: string,
-        transformTags: string,
-        linkTemplate: string,
-        displayName: string,
-        displayIcon: string,
-        triggerInclude: string,
-        triggerExclude: string,
-    ) {
+    async addImageDetailsToContainer(container: any) {
+        const includeTags = container.Labels[wudTagInclude];
+        const excludeTags = container.Labels[wudTagExclude];
+        const transformTags = container.Labels[wudTagTransform];
+        const linkTemplate = container.Labels[wudLinkTemplate];
+        const displayName = container.Labels[wudDisplayName];
+        const displayIcon = container.Labels[wudDisplayIcon];
+        const triggerInclude = container.Labels[wudTriggerInclude];
+        const triggerExclude = container.Labels[wudTriggerExclude];
+
         const containerId = container.Id;
 
         // Is container already in store? just return it :)
@@ -571,7 +613,7 @@ class Docker extends Watcher {
                 this.log.warn(
                     `Cannot get a reliable tag for this image [${imageNameToParse}]`,
                 );
-                return Promise.resolve();
+                return Promise.resolve(undefined);
             }
             // Get the first repo tag (better than nothing ;)
             [imageNameToParse] = image.RepoTags;

@@ -416,4 +416,170 @@ describe('Docker Watcher', () => {
             expect(utils.normalizeContainer).toHaveBeenCalled();
         });
     });
+
+    describe('Docker Events', () => {
+        beforeEach(() => {
+            // Mock logger for event tests
+            docker.log = {
+                info: jest.fn(),
+                warn: jest.fn(),
+                debug: jest.fn(),
+                error: jest.fn(),
+                child: jest.fn().mockReturnThis(),
+            };
+            docker.ensureLogger = jest.fn();
+
+            // Mock watchCronDebounced
+            docker.watchCronDebounced = jest.fn();
+
+            // Initialize configuration
+            docker.configuration = {
+                watchall: false,
+                watchbydefault: true,
+            };
+
+            // Mock helper methods
+            docker.addImageDetailsToContainer = jest.fn();
+            docker.watchContainer = jest.fn();
+        });
+
+        describe('onDockerEvent - Destroy', () => {
+            test('should remove container from store on destroy event', async () => {
+                const eventChunk = JSON.stringify({
+                    Action: 'destroy',
+                    id: 'container123',
+                });
+
+                await docker.onDockerEvent(eventChunk);
+
+                expect(docker.log.info).toHaveBeenCalledWith(
+                    expect.stringContaining(
+                        'Container destroyed [id=container123]',
+                    ),
+                );
+                expect(storeContainer.deleteContainer).toHaveBeenCalledWith(
+                    'container123',
+                );
+                expect(docker.watchCronDebounced).not.toHaveBeenCalled();
+            });
+        });
+
+        describe('onDockerEvent - Create', () => {
+            test('should watch newly created container if it should be watched', async () => {
+                const eventChunk = JSON.stringify({
+                    Action: 'create',
+                    id: 'container123',
+                });
+
+                const mockContainerEvent = {
+                    Id: 'container123',
+                    Labels: {
+                        'wud.watch': 'true',
+                    },
+                };
+
+                mockDockerApi.listContainers.mockResolvedValue([
+                    mockContainerEvent,
+                ]);
+                utils.isContainerToWatch.mockReturnValue(true);
+                const mockContainerWithDetails = {
+                    ...mockContainerEvent,
+                    image: {},
+                };
+                docker.addImageDetailsToContainer.mockResolvedValue(
+                    mockContainerWithDetails,
+                );
+
+                await docker.onDockerEvent(eventChunk);
+
+                expect(docker.log.debug).toHaveBeenCalledWith(
+                    expect.stringContaining(
+                        'Container created [id=container123]',
+                    ),
+                );
+                expect(mockDockerApi.listContainers).toHaveBeenCalledWith({
+                    filters: { id: ['container123'] },
+                });
+                expect(docker.log.info).toHaveBeenCalledWith(
+                    expect.stringContaining('Watching newly created container'),
+                );
+                expect(docker.addImageDetailsToContainer).toHaveBeenCalled();
+                expect(docker.watchContainer).toHaveBeenCalledWith(
+                    mockContainerWithDetails,
+                );
+                expect(docker.watchCronDebounced).not.toHaveBeenCalled();
+            });
+
+            test('should ignore newly created container if it should NOT be watched', async () => {
+                const eventChunk = JSON.stringify({
+                    Action: 'create',
+                    id: 'container123',
+                });
+
+                const mockContainerEvent = {
+                    Id: 'container123',
+                    Labels: {
+                        'wud.watch': 'false',
+                    },
+                };
+
+                mockDockerApi.listContainers.mockResolvedValue([
+                    mockContainerEvent,
+                ]);
+                utils.isContainerToWatch.mockReturnValue(false);
+
+                await docker.onDockerEvent(eventChunk);
+
+                expect(docker.log.debug).toHaveBeenCalledWith(
+                    expect.stringContaining(
+                        'Container created [id=container123]',
+                    ),
+                );
+                expect(docker.log.debug).toHaveBeenCalledWith(
+                    expect.stringContaining('ignored (not to watch)'),
+                );
+                expect(
+                    docker.addImageDetailsToContainer,
+                ).not.toHaveBeenCalled();
+                expect(docker.watchContainer).not.toHaveBeenCalled();
+                expect(docker.watchCronDebounced).not.toHaveBeenCalled();
+            });
+
+            test('should fallback to debounced scan if container not found', async () => {
+                const eventChunk = JSON.stringify({
+                    Action: 'create',
+                    id: 'container123',
+                });
+
+                mockDockerApi.listContainers.mockResolvedValue([]); // Empty list
+
+                await docker.onDockerEvent(eventChunk);
+
+                expect(docker.log.warn).toHaveBeenCalledWith(
+                    expect.stringContaining('not found in list'),
+                );
+                expect(docker.watchCronDebounced).toHaveBeenCalled();
+            });
+
+            test('should fallback to debounced scan on error', async () => {
+                const eventChunk = JSON.stringify({
+                    Action: 'create',
+                    id: 'container123',
+                });
+
+                mockDockerApi.listContainers.mockRejectedValue(
+                    new Error('Docker API Error'),
+                );
+
+                await docker.onDockerEvent(eventChunk);
+
+                expect(docker.log.warn).toHaveBeenCalledWith(
+                    expect.stringContaining(
+                        'Error when processing container create event',
+                    ),
+                );
+                expect(docker.watchCronDebounced).toHaveBeenCalled();
+            });
+        });
+    });
 });
