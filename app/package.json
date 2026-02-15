@@ -12,7 +12,8 @@
         "format": "prettier --write .",
         "lint:fix": "prettier --write . && eslint '**/*.ts'",
         "lint": "eslint '**/*.ts'",
-        "test": "jest --coverage"
+        "test": "jest --runInBand --no-coverage",
+        "test:coverage": "jest --coverage"
     },
     "author": "fmartinou",
     "repository": "getwud/wud",
