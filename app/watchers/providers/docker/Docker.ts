@@ -288,9 +288,10 @@ class Docker extends Watcher {
             } else if (action === 'create') {
                 this.log.debug(`Container created [id=${containerId}]`);
                 try {
-                    const listContainersOptions: Dockerode.ContainerListOptions = {
-                        filters: { id: [containerId] },
-                    };
+                    const listContainersOptions: Dockerode.ContainerListOptions =
+                        {
+                            filters: { id: [containerId] },
+                        };
                     if (this.configuration.watchall) {
                         listContainersOptions.all = true;
                     }
