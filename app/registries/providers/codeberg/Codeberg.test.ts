@@ -1,10 +1,10 @@
-const Codeberg = require('./Codeberg');
+import Codeberg from './Codeberg';
 
 const codeberg = new Codeberg();
 codeberg.configuration = {
     login: 'john',
     password: 'doe',
-};
+} as any;
 codeberg.init();
 
 test('normalizeImage should return the proper registry v2 endpoint', () => {
@@ -14,7 +14,7 @@ test('normalizeImage should return the proper registry v2 endpoint', () => {
             registry: {
                 url: 'codeberg.org/test/image',
             },
-        }),
+        } as any),
     ).toStrictEqual({
         name: 'test/image',
         registry: {

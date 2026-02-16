@@ -508,7 +508,16 @@ class Docker extends Watcher {
                     this.log.debug(err);
                 }
             } else {
-                stream.on('data', (chunk: any) => this.onDockerEvent(chunk));
+                let chunks: Buffer[] = [];
+                const collectChunks = (chunk: Buffer) => {
+                    chunks.push(chunk);
+                    if (chunk.toString().endsWith('\n')) {
+                        const dockerEventChunk = Buffer.concat(chunks);
+                        this.onDockerEvent(dockerEventChunk);
+                        chunks = [];
+                    }
+                };
+                stream.on('data', collectChunks);
             }
         });
     }
