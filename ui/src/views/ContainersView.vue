@@ -39,6 +39,7 @@
             :oldest-first="oldestFirst"
             @delete-container="deleteContainer(container)"
             @container-deleted="removeContainerFromList(container)"
+            @trigger-executed="onTriggerExecuted"
           />
         </v-col>
       </v-row>

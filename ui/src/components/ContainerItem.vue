@@ -150,7 +150,10 @@
               />
             </v-window-item>
             <v-window-item>
-              <container-triggers :container="container" />
+              <container-triggers
+                :container="container"
+                @trigger-executed="$emit('trigger-executed')"
+              />
             </v-window-item>
             <v-window-item>
               <container-image :image="container.image" />

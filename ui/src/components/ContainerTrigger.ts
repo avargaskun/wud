@@ -35,6 +35,9 @@ export default defineComponent({
           triggerAgent: this.trigger.agent,
         });
         (this as any).$eventBus.emit("notify", "Trigger executed with success");
+
+        // Emit event to parent to trigger refresh after delay
+        this.$emit('trigger-executed');
       } catch (err: any) {
         (this as any).$eventBus.emit(
           "notify",
