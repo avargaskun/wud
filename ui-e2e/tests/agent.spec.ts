@@ -55,12 +55,17 @@ test.describe('Agents View', () => {
     const containerCard = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first();
     await expect(containerCard).toBeVisible();
 
-    // Verify it has an update available (usually indicated by an arrow icon or specific text/color)
-    // In WUD, updateAvailable containers have a 'mdi-arrow-up-bold-circle' icon or similar.
+    // Verify it has the remote agent
     await expect(containerCard.getByTestId('container-agent')).toHaveText('remote');
 
     // Expand container details
     await containerCard.click();
+
+    // Capture initial version before update
+    const initialVersionTag = containerCard.getByTestId('container-tag');
+    await expect(initialVersionTag).toBeVisible();
+    const initialVersion = await initialVersionTag.textContent();
+    console.log(`Initial version: ${initialVersion}`);
 
     // Go to Triggers tab
     const triggersTab = page.getByRole('tab', { name: 'Triggers' });
@@ -69,14 +74,32 @@ test.describe('Agents View', () => {
 
     // Find the 'Run' button for the trigger
     const runButton = containerCard.getByTestId('remote.docker.update').getByRole('button', { name: 'Run' });
-    
+
     // Wait for triggers to load and button to be enabled
     await expect(runButton).toBeEnabled({ timeout: 10000 });
-    
+
     // Trigger update
     await runButton.click();
 
     // Check for success toast
     await expect(page.getByText('Trigger executed with success')).toBeVisible({ timeout: 60000 });
+
+    // Wait for auto-refresh to complete (2.5s delay + Docker update propagation + network request time)
+    // Docker update involves: stop old container -> pull image -> start new container -> backend detects events
+    await page.waitForTimeout(8000);
+
+    // Re-query the container card after refresh (container was recreated with new ID)
+    const refreshedContainerCard = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first();
+    await expect(refreshedContainerCard).toBeVisible();
+
+    // Verify container version has been updated
+    const updatedVersionTag = refreshedContainerCard.getByTestId('container-tag');
+    await expect(updatedVersionTag).toBeVisible();
+    const updatedVersion = await updatedVersionTag.textContent();
+    console.log(`Updated version: ${updatedVersion}`);
+
+    // Assert version has changed
+    expect(updatedVersion).not.toBe(initialVersion);
+    console.log(`✓ Version updated from ${initialVersion} to ${updatedVersion}`);
   });
 });

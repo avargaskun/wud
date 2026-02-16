@@ -189,6 +189,25 @@ export default defineComponent({
         );
       }
     },
+    async refreshContainersAfterTrigger() {
+      try {
+        const updatedContainers = await getAllContainers();
+        this.containers = updatedContainers;
+      } catch (e: any) {
+        (this as any).$eventBus.emit(
+          "notify",
+          `Error refreshing containers: ${e.message}`,
+          "error",
+        );
+      }
+    },
+    async onTriggerExecuted() {
+      // Wait 2.5 seconds to give backend time to process Docker events
+      await new Promise(resolve => setTimeout(resolve, 2500));
+
+      // Refresh all containers
+      await this.refreshContainersAfterTrigger();
+    },
   },
 
   async beforeRouteEnter(to, from, next) {
