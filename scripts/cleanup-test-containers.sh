@@ -9,6 +9,10 @@ docker rm -f \
     ghcr_podinfo_500 \
     ghcr_podinfo_latest \
     hub_homeassistant_202161 \
+    hub_homeassistant_latest \
+    hub_nginx_120 \
+    hub_nginx_latest \
+    hub_traefik_245 \
     lscr_radarr \
     trueforge_radarr \
     quay_prometheus \

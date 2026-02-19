@@ -1,5 +1,5 @@
 // @ts-nocheck
-import Trueforge from './trueforge';
+import Trueforge from './Trueforge';
 
 // Mock axios
 jest.mock('axios');

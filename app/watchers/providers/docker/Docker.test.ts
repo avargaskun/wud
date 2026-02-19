@@ -275,7 +275,7 @@ describe('Docker Watcher', () => {
             docker.log = mockLog;
             await docker.onDockerEvent(Buffer.from('{"Action":"create"'));
             expect(mockLog.warn).toHaveBeenCalledWith(
-                expect.stringContaining('Unable to parse Docker event'),
+                expect.stringContaining('Unable to process Docker event'),
             );
         });
 
