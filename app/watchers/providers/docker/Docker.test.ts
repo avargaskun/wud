@@ -324,8 +324,9 @@ describe('Docker Watcher', () => {
             docker.log = mockLog;
             mockContainer.inspect.mockResolvedValue({
                 State: { Status: 'running' },
+                Name: '/test-container',
             });
-            const existingContainer = { id: 'container123', status: 'stopped' };
+            const existingContainer = { id: 'container123', status: 'stopped', name: 'test-container' };
             storeContainer.getContainer.mockReturnValue(existingContainer);
 
             const event = JSON.stringify({
