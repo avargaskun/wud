@@ -366,12 +366,13 @@ class Docker extends Watcher {
                     await this.watchCronDebounced();
                 }
             } else {
-                // Update container state in db if so
+                // Update container state and name in db if so
                 try {
                     const container =
                         await this.dockerApi.getContainer(containerId);
                     const containerInspect = await container.inspect();
                     const newStatus = containerInspect.State.Status;
+                    const newName = containerInspect.Name.replace(/^\//, '');
                     const containerFound =
                         storeContainer.getContainer(containerId);
                     if (containerFound) {
@@ -380,12 +381,28 @@ class Docker extends Watcher {
                             container: fullName(containerFound),
                         });
                         const oldStatus = containerFound.status;
+                        const oldName = containerFound.name;
+                        let changed = false;
+
                         containerFound.status = newStatus;
                         if (oldStatus !== newStatus) {
-                            storeContainer.updateContainer(containerFound);
+                            changed = true;
                             logContainer.info(
                                 `Status changed from ${oldStatus} to ${newStatus}`,
                             );
+                        }
+
+                        // Update name if changed (e.g., Docker Compose rename)
+                        if (oldName !== newName) {
+                            containerFound.name = newName;
+                            changed = true;
+                            logContainer.info(
+                                `Name changed from ${oldName} to ${newName}`,
+                            );
+                        }
+
+                        if (changed) {
+                            storeContainer.updateContainer(containerFound);
                         }
                     }
                 } catch (e: any) {
@@ -614,6 +631,17 @@ class Docker extends Watcher {
             containerInStore.error === undefined
         ) {
             this.ensureLogger();
+            // Refresh name from Docker in case it was renamed
+            // (e.g., Docker Compose replace strategy assigns a hash-prefixed
+            // temp name then renames to the final name)
+            const currentName = getContainerName(container);
+            if (containerInStore.name !== currentName) {
+                this.log.info(
+                    `Container ${containerId} name changed from ${containerInStore.name} to ${currentName}`,
+                );
+                containerInStore.name = currentName;
+                storeContainer.updateContainer(containerInStore);
+            }
             this.log.debug(`Container ${containerInStore.id} already in store`);
             return containerInStore;
         }
