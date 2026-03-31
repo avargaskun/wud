@@ -4,6 +4,9 @@ import { deleteContainer, getAllContainers } from "@/services/container";
 import agentService from "@/services/agent";
 import { defineComponent } from "vue";
 
+const TRIGGER_REFRESH_INTERVAL_MS = 1000;
+const TRIGGER_REFRESH_DURATION_MS = 60000;
+
 export default defineComponent({
   components: {
     ContainerItem,
@@ -21,6 +24,8 @@ export default defineComponent({
       updateAvailableSelected: false,
       groupByLabel: "",
       oldestFirst: false,
+      triggerRefreshInterval: null as ReturnType<typeof setInterval> | null,
+      triggerRefreshTimeout: null as ReturnType<typeof setTimeout> | null,
     };
   },
   watch: {},
@@ -201,13 +206,29 @@ export default defineComponent({
         );
       }
     },
-    async onTriggerExecuted() {
-      // Wait 2.5 seconds to give backend time to process Docker events
-      await new Promise(resolve => setTimeout(resolve, 2500));
-
-      // Refresh all containers
-      await this.refreshContainersAfterTrigger();
+    stopTriggerRefresh() {
+      if (this.triggerRefreshInterval) {
+        clearInterval(this.triggerRefreshInterval);
+        this.triggerRefreshInterval = null;
+      }
+      if (this.triggerRefreshTimeout) {
+        clearTimeout(this.triggerRefreshTimeout);
+        this.triggerRefreshTimeout = null;
+      }
     },
+    onTriggerExecuted() {
+      this.stopTriggerRefresh();
+      this.triggerRefreshInterval = setInterval(() => {
+        this.refreshContainersAfterTrigger();
+      }, TRIGGER_REFRESH_INTERVAL_MS);
+      this.triggerRefreshTimeout = setTimeout(() => {
+        this.stopTriggerRefresh();
+      }, TRIGGER_REFRESH_DURATION_MS);
+    },
+  },
+
+  beforeUnmount() {
+    this.stopTriggerRefresh();
   },
 
   async beforeRouteEnter(to, from, next) {

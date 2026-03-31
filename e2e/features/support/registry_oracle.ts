@@ -1,6 +1,21 @@
 import * as https from 'https';
+import * as os from 'os';
 import * as semver from 'semver';
 import { IncomingHttpHeaders } from 'http';
+
+/**
+ * Map Node.js os.arch() values to Docker manifest platform architectures.
+ */
+function getDockerArchitecture(): string {
+    const arch = os.arch();
+    switch (arch) {
+        case 'arm64': return 'arm64';
+        case 'x64': return 'amd64';
+        case 'arm': return 'arm';
+        case 'ia32': return '386';
+        default: return 'amd64';
+    }
+}
 
 /**
  * Perform an HTTPS GET request and return the body as a string.
@@ -167,10 +182,11 @@ const registryOracle = {
                 };
                 const response = JSON.parse(await fetch(url, options));
                 
-                // If it's a manifest list / index, find the linux/amd64 manifest
+                // If it's a manifest list / index, find the manifest matching the host architecture
                 if (response.manifests) {
-                    const manifest = response.manifests.find((m: any) => 
-                        m.platform && m.platform.architecture === 'amd64' && m.platform.os === 'linux'
+                    const arch = getDockerArchitecture();
+                    const manifest = response.manifests.find((m: any) =>
+                        m.platform && m.platform.architecture === arch && m.platform.os === 'linux'
                     );
                     if (manifest) {
                         return manifest.digest;

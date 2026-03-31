@@ -84,22 +84,13 @@ test.describe('Agents View', () => {
     // Check for success toast
     await expect(page.getByText('Trigger executed with success')).toBeVisible({ timeout: 60000 });
 
-    // Wait for auto-refresh to complete (2.5s delay + Docker update propagation + network request time)
-    // Docker update involves: stop old container -> pull image -> start new container -> backend detects events
-    await page.waitForTimeout(8000);
+    // Wait for the UI's periodic refresh to pick up the new container version
+    const refreshedTag = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first().getByTestId('container-tag');
+    await expect(async () => {
+      await expect(refreshedTag).not.toHaveText(initialVersion!);
+    }).toPass({ timeout: 60000, intervals: [1000] });
 
-    // Re-query the container card after refresh (container was recreated with new ID)
-    const refreshedContainerCard = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first();
-    await expect(refreshedContainerCard).toBeVisible();
-
-    // Verify container version has been updated
-    const updatedVersionTag = refreshedContainerCard.getByTestId('container-tag');
-    await expect(updatedVersionTag).toBeVisible();
-    const updatedVersion = await updatedVersionTag.textContent();
-    console.log(`Updated version: ${updatedVersion}`);
-
-    // Assert version has changed
-    expect(updatedVersion).not.toBe(initialVersion);
+    const updatedVersion = await refreshedTag.textContent();
     console.log(`✓ Version updated from ${initialVersion} to ${updatedVersion}`);
   });
 });
