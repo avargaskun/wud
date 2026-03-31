@@ -88,7 +88,6 @@ jobs:
 
       - name: Test UI E2E
         id: test-ui-e2e
-        continue-on-error: true
         working-directory: ./ui-e2e
         env:
           ACR_CLIENT_ID: ${{ secrets.ACR_CLIENT_ID }}
