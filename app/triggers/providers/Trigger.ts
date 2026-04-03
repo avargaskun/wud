@@ -216,6 +216,21 @@ class Trigger extends Component {
     }
 
     /**
+     * Determine the effective AUTO value for a given container.
+     * Checks for a per-container label override, falling back to
+     * the trigger's global AUTO configuration.
+     * @param container
+     * @returns {boolean}
+     */
+    isAutoForContainer(container: Container): boolean {
+        const labelKey = `wud.trigger.${this.type}.${this.name}.auto`;
+        if (container.labels && labelKey in container.labels) {
+            return container.labels[labelKey] === 'true';
+        }
+        return this.configuration.auto ?? true;
+    }
+
+    /**
      * Handle container report (simple mode).
      * @param containerReport
      * @returns {Promise<void>}

@@ -567,3 +567,70 @@ describe('apply', () => {
         expect(trigger.apply(container)).toEqual(trigger.configuration);
     });
 });
+
+describe('isAutoForContainer', () => {
+    beforeEach(() => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+    });
+
+    test('should return true when no label present and trigger AUTO=true', () => {
+        trigger.configuration.auto = true;
+        const container = { id: 'c1', labels: { 'some.other.label': 'value' } };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return false when no label present and trigger AUTO=false', () => {
+        trigger.configuration.auto = false;
+        const container = { id: 'c1', labels: { 'some.other.label': 'value' } };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+
+    test('should return true when label=true overrides trigger AUTO=false (opt-in)', () => {
+        trigger.configuration.auto = false;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.docker.t1.auto': 'true' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return false when label=false overrides trigger AUTO=true (opt-out)', () => {
+        trigger.configuration.auto = true;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.docker.t1.auto': 'false' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+
+    test('should treat invalid label value as false', () => {
+        trigger.configuration.auto = true;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.docker.t1.auto': 'banana' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+
+    test('should ignore label for a different trigger', () => {
+        trigger.configuration.auto = true;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.slack.other.auto': 'false' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return true when container labels field is undefined and trigger AUTO=true', () => {
+        trigger.configuration.auto = true;
+        const container = { id: 'c1' };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return false when container has empty labels object and trigger AUTO=false', () => {
+        trigger.configuration.auto = false;
+        const container = { id: 'c1', labels: {} };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+});
