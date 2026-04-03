@@ -245,6 +245,12 @@ class Trigger extends Component {
                 this.log.child({
                     container: fullName(containerReport.container),
                 }) || this.log;
+            if (!this.isAutoForContainer(containerReport.container)) {
+                logContainer.debug(
+                    'Auto execution disabled for this container => skip',
+                );
+                return;
+            }
             let status = 'error';
             try {
                 const effectiveConfiguration = this.apply(
@@ -292,6 +298,13 @@ class Trigger extends Component {
             containerReports.forEach((containerReport) => {
                 if (containerReport.changed || !this.configuration.once) {
                     if (containerReport.container.updateAvailable) {
+                        if (
+                            !this.isAutoForContainer(
+                                containerReport.container,
+                            )
+                        ) {
+                            return; // skip, continue to next
+                        }
                         const effectiveConfiguration = this.apply(
                             containerReport.container,
                         );
@@ -325,26 +338,24 @@ class Trigger extends Component {
      */
     async init() {
         await this.initTrigger();
-        if (this.configuration.auto) {
-            this.log.info(`Registering for auto execution`);
-            if (
-                this.configuration.mode &&
-                this.configuration.mode.toLowerCase() === 'simple'
-            ) {
-                event.registerContainerReport(async (containerReport) =>
-                    this.handleContainerReport(containerReport),
-                );
-            }
-            if (
-                this.configuration.mode &&
-                this.configuration.mode.toLowerCase() === 'batch'
-            ) {
-                event.registerContainerReports(async (containersReports) =>
-                    this.handleContainerReports(containersReports),
-                );
-            }
-        } else {
-            this.log.info(`Registering for manual execution`);
+        this.log.info(
+            `Registering (auto default: ${this.configuration.auto ?? true})`,
+        );
+        if (
+            this.configuration.mode &&
+            this.configuration.mode.toLowerCase() === 'simple'
+        ) {
+            event.registerContainerReport(async (containerReport) =>
+                this.handleContainerReport(containerReport),
+            );
+        }
+        if (
+            this.configuration.mode &&
+            this.configuration.mode.toLowerCase() === 'batch'
+        ) {
+            event.registerContainerReports(async (containersReports) =>
+                this.handleContainerReports(containersReports),
+            );
         }
     }
 
