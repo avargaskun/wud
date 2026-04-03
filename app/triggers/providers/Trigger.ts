@@ -303,6 +303,9 @@ class Trigger extends Component {
                                 containerReport.container,
                             )
                         ) {
+                            this.log.debug(
+                                `Auto execution disabled for container ${fullName(containerReport.container)} => skip`,
+                            );
                             return; // skip, continue to next
                         }
                         const effectiveConfiguration = this.apply(
