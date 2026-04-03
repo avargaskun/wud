@@ -395,6 +395,11 @@ class Docker extends Watcher {
                         // Update name if changed (e.g., Docker Compose rename)
                         if (oldName !== newName) {
                             containerFound.name = newName;
+                            // Also refresh displayName if no explicit wud.display.name label is set
+                            const hasDisplayNameLabel = containerInspect.Config?.Labels?.[wudDisplayName];
+                            if (!hasDisplayNameLabel) {
+                                containerFound.displayName = newName;
+                            }
                             changed = true;
                             logContainer.info(
                                 `Name changed from ${oldName} to ${newName}`,
@@ -640,6 +645,11 @@ class Docker extends Watcher {
                     `Container ${containerId} name changed from ${containerInStore.name} to ${currentName}`,
                 );
                 containerInStore.name = currentName;
+                // Also refresh displayName if no explicit wud.display.name label is set
+                // (displayName defaults to name, so it should track name changes)
+                if (!displayName) {
+                    containerInStore.displayName = currentName;
+                }
                 storeContainer.updateContainer(containerInStore);
             }
             this.log.debug(`Container ${containerInStore.id} already in store`);
