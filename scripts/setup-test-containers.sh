@@ -78,6 +78,11 @@ else
     echo "Pulling GHCR test images ..."
     $DOCKER_CMD run -d --name ghcr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' ghcr.io/linuxserver/radarr:5.14.0.9383-ls245
     $DOCKER_CMD run -d --name ghcr_podinfo_500 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD run -d --name ghcr_podinfo_autotest \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.0\.0$' \
+        --label 'wud.trigger.mock.example.auto=false' \
+        ghcr.io/stefanprodan/podinfo:5.0.0
     $DOCKER_CMD run -d --name ghcr_podinfo_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' --label 'wud.display.icon=https://img.icons8.com/?size=100&id=118497&format=png&color=000000' ghcr.io/stefanprodan/podinfo:latest
 
     # GITLAB
@@ -100,7 +105,7 @@ else
     echo "Pulling Quay test images ..."
     $DOCKER_CMD run -d --name quay_prometheus --label 'wud.watch=true' --label 'wud.tag.include=^v\d+\.\d+\.\d+$' --user root --tmpfs /prometheus:rw,mode=777 quay.io/prometheus/prometheus:v2.52.0
 
-    echo "✅ Test containers started (9 containers)"
+    echo "✅ Test containers started (10 containers)"
     $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_)"
 fi
 

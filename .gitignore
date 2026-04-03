@@ -106,3 +106,6 @@ dist/
 
 # Generated AWS ECR test credentials
 ecr_test_credentials.json
+
+# Ralph project files
+ralph/

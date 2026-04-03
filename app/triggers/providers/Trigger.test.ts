@@ -567,3 +567,233 @@ describe('apply', () => {
         expect(trigger.apply(container)).toEqual(trigger.configuration);
     });
 });
+
+describe('isAutoForContainer', () => {
+    beforeEach(() => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+    });
+
+    test('should return true when no label present and trigger AUTO=true', () => {
+        trigger.configuration.auto = true;
+        const container = { id: 'c1', labels: { 'some.other.label': 'value' } };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return false when no label present and trigger AUTO=false', () => {
+        trigger.configuration.auto = false;
+        const container = { id: 'c1', labels: { 'some.other.label': 'value' } };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+
+    test('should return true when label=true overrides trigger AUTO=false (opt-in)', () => {
+        trigger.configuration.auto = false;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.docker.t1.auto': 'true' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return false when label=false overrides trigger AUTO=true (opt-out)', () => {
+        trigger.configuration.auto = true;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.docker.t1.auto': 'false' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+
+    test('should treat invalid label value as false', () => {
+        trigger.configuration.auto = true;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.docker.t1.auto': 'banana' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+
+    test('should ignore label for a different trigger', () => {
+        trigger.configuration.auto = true;
+        const container = {
+            id: 'c1',
+            labels: { 'wud.trigger.slack.other.auto': 'false' },
+        };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return true when container labels field is undefined and trigger AUTO=true', () => {
+        trigger.configuration.auto = true;
+        const container = { id: 'c1' };
+        expect(trigger.isAutoForContainer(container)).toBe(true);
+    });
+
+    test('should return false when container has empty labels object and trigger AUTO=false', () => {
+        trigger.configuration.auto = false;
+        const container = { id: 'c1', labels: {} };
+        expect(trigger.isAutoForContainer(container)).toBe(false);
+    });
+});
+
+describe('init auto registration', () => {
+    test('should register for container report when AUTO=false and mode=simple', async () => {
+        const spy = jest.spyOn(event, 'registerContainerReport');
+        trigger.configuration.auto = false;
+        trigger.configuration.mode = 'simple';
+        await trigger.init();
+        expect(spy).toHaveBeenCalled();
+    });
+
+    test('should register for container reports (batch) when AUTO=false and mode=batch', async () => {
+        const spy = jest.spyOn(event, 'registerContainerReports');
+        trigger.configuration.auto = false;
+        trigger.configuration.mode = 'batch';
+        await trigger.init();
+        expect(spy).toHaveBeenCalled();
+    });
+
+    test('should register for container report when AUTO=true and mode=simple (existing behavior)', async () => {
+        const spy = jest.spyOn(event, 'registerContainerReport');
+        trigger.configuration.auto = true;
+        trigger.configuration.mode = 'simple';
+        await trigger.init();
+        expect(spy).toHaveBeenCalled();
+    });
+});
+
+describe('handleContainerReport auto filtering', () => {
+    beforeEach(() => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.configuration.mode = 'simple';
+        trigger.configuration.threshold = 'all';
+    });
+
+    const makeContainerReport = (labels, extra) => ({
+        changed: true,
+        container: {
+            name: 'container1',
+            updateAvailable: true,
+            updateKind: { kind: 'tag', semverDiff: 'major' },
+            labels,
+            ...extra,
+        },
+    });
+
+    test('should not call trigger when AUTO=false and no label', async () => {
+        trigger.configuration.auto = false;
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport(makeContainerReport(undefined));
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('should call trigger when AUTO=false and label=true (opt-in)', async () => {
+        trigger.configuration.auto = false;
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport(
+            makeContainerReport({ 'wud.trigger.docker.t1.auto': 'true' }),
+        );
+        expect(spy).toHaveBeenCalled();
+    });
+
+    test('should not call trigger when AUTO=true and label=false (opt-out)', async () => {
+        trigger.configuration.auto = true;
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport(
+            makeContainerReport({ 'wud.trigger.docker.t1.auto': 'false' }),
+        );
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('should call trigger when AUTO=true and no label (default behavior)', async () => {
+        trigger.configuration.auto = true;
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport(makeContainerReport(undefined));
+        expect(spy).toHaveBeenCalled();
+    });
+
+    test('should not call trigger when label=true but container is excluded', async () => {
+        trigger.configuration.auto = false;
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport(
+            makeContainerReport(
+                { 'wud.trigger.docker.t1.auto': 'true' },
+                { triggerExclude: 'docker.t1' },
+            ),
+        );
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('should emit debug log when auto=false skips container', async () => {
+        trigger.configuration.auto = false;
+        const mockDebug = jest.fn();
+        trigger.log = {
+            ...log,
+            child: () => ({ debug: mockDebug }),
+        };
+        await trigger.handleContainerReport(makeContainerReport(undefined));
+        expect(mockDebug).toHaveBeenCalledWith(
+            'Auto execution disabled for this container => skip',
+        );
+    });
+});
+
+describe('handleContainerReports auto filtering', () => {
+    beforeEach(() => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.configuration.mode = 'batch';
+        trigger.configuration.threshold = 'all';
+    });
+
+    const makeReport = (name, labels) => ({
+        changed: true,
+        container: {
+            name,
+            updateAvailable: true,
+            updateKind: { kind: 'tag', semverDiff: 'major' },
+            labels,
+        },
+    });
+
+    test('should only include containers with auto=true in batch (mixed overrides)', async () => {
+        trigger.configuration.auto = false;
+        const spy = jest.spyOn(trigger, 'triggerBatch');
+        await trigger.handleContainerReports([
+            makeReport('containerA', {
+                'wud.trigger.docker.t1.auto': 'true',
+            }),
+            makeReport('containerB', undefined),
+        ]);
+        expect(spy).toHaveBeenCalledWith([
+            expect.objectContaining({ name: 'containerA' }),
+        ]);
+    });
+
+    test('should not call triggerBatch when all containers have auto=false', async () => {
+        trigger.configuration.auto = true;
+        const spy = jest.spyOn(trigger, 'triggerBatch');
+        await trigger.handleContainerReports([
+            makeReport('containerA', {
+                'wud.trigger.docker.t1.auto': 'false',
+            }),
+            makeReport('containerB', {
+                'wud.trigger.docker.t1.auto': 'false',
+            }),
+        ]);
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('should call triggerBatch with all containers when AUTO=true and no labels', async () => {
+        trigger.configuration.auto = true;
+        const spy = jest.spyOn(trigger, 'triggerBatch');
+        await trigger.handleContainerReports([
+            makeReport('containerA', undefined),
+            makeReport('containerB', undefined),
+        ]);
+        expect(spy).toHaveBeenCalledWith([
+            expect.objectContaining({ name: 'containerA' }),
+            expect.objectContaining({ name: 'containerB' }),
+        ]);
+    });
+});
