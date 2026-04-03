@@ -7,6 +7,7 @@ docker rm -f \
     ecr_sub_sub_test \
     ghcr_radarr gitlab_test \
     ghcr_podinfo_500 \
+    ghcr_podinfo_autotest \
     ghcr_podinfo_latest \
     hub_homeassistant_202161 \
     hub_homeassistant_latest \
