@@ -283,10 +283,20 @@ class Docker extends Watcher {
                 };
                 stream.on('data', collectChunks);
                 stream.on('error', (error: any) => {
-                    this.log.warn(
-                        `Error when listening to Docker events [${error.message}]`,
-                    );
-                    this.log.debug(error);
+                    // Idle events stream is periodically reset by the socket proxy (ECONNRESET/"aborted") — expected and self-healing, so reconnect quietly.
+                    if (
+                        error?.code === 'ECONNRESET' ||
+                        error?.message === 'aborted'
+                    ) {
+                        this.log.debug(
+                            `Docker events stream interrupted, reconnecting [${error.message}]`,
+                        );
+                    } else {
+                        this.log.warn(
+                            `Error when listening to Docker events [${error.message}]`,
+                        );
+                        this.log.debug(error);
+                    }
                     stream.removeAllListeners();
                     this.scheduleDockerEvents();
                 });
