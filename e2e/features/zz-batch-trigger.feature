@@ -22,3 +22,14 @@ Feature: WUD Batch Trigger API
     And I GET /api/containers
     Then the container with saved name "RN1" should have a version different than "RV1"
     And the container with saved name "RN2" should have a version different than "RV2"
+
+  Scenario: Batch update a compose stack with the dockercompose trigger
+    When I find the container with name "zz_batch_compose_1" and save its ID as "CID1", version as "CV1", and name as "CN1"
+    And I find the container with name "zz_batch_compose_2" and save its ID as "CID2", version as "CV2", and name as "CN2"
+    And I send POST to /api/containers/batch/triggers/dockercompose/update with container IDs "CID1,CID2"
+    Then response code should be 200
+    And I wait for 30 seconds
+    And I send POST to /api/containers/watch
+    And I GET /api/containers
+    Then the container with saved name "CN1" should have a version different than "CV1"
+    And the container with saved name "CN2" should have a version different than "CV2"

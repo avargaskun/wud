@@ -107,5 +107,8 @@ dist/
 # Generated AWS ECR test credentials
 ecr_test_credentials.json
 
+# Disposable runtime copy of the e2e compose fixture (rewritten in place by the dockercompose trigger)
+test/compose-stack/docker-compose.active.yml
+
 # Ralph project files
 ralph/

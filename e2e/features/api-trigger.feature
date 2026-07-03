@@ -4,19 +4,22 @@ Feature: WUD Trigger API Exposure
     When I GET /api/triggers
     Then response code should be 200
     And response body should be valid json
-    And response body path $ should be of type array with length 3
+    And response body path $ should be of type array with length 4
     And response body path $[0].id should be docker.update
     And response body path $[1].id should be remote.docker.update
     And response body path $[1].agent should be remote
-    And response body path $[2].id should be mock.example
-    And response body path $[2].type should be mock
-    And response body path $[2].name should be example
-    And response body path $[2].configuration.threshold should be all
-    And response body path $[2].configuration.mode should be simple
-    And response body path $[2].configuration.once should be true
-    And response body path $[2].configuration.simpletitle should be New \$\{container.updateKind.kind\} found for container \$\{container.name\}
-    And response body path $[2].configuration.batchtitle should be \$\{containers.length\} updates available
-    And response body path $[2].configuration.mock should be mock
+    And response body path $[2].id should be dockercompose.update
+    And response body path $[2].type should be dockercompose
+    And response body path $[2].name should be update
+    And response body path $[3].id should be mock.example
+    And response body path $[3].type should be mock
+    And response body path $[3].name should be example
+    And response body path $[3].configuration.threshold should be all
+    And response body path $[3].configuration.mode should be simple
+    And response body path $[3].configuration.once should be true
+    And response body path $[3].configuration.simpletitle should be New \$\{container.updateKind.kind\} found for container \$\{container.name\}
+    And response body path $[3].configuration.batchtitle should be \$\{containers.length\} updates available
+    And response body path $[3].configuration.mock should be mock
 
   Scenario: WUD must allow to get specific Triggers state
     When I GET /api/triggers/mock/example

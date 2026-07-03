@@ -36,6 +36,12 @@ export TARGET_DOCKER_HOST=tcp://localhost:2376
 "$SCRIPT_DIR/setup-test-containers.sh" minimal
 unset TARGET_DOCKER_HOST
 
+# 5b. Compose stack for the dockercompose batch e2e. Run against a disposable copy — the
+# trigger rewrites the compose file in place, so this keeps the committed fixture pristine.
+echo "📦 Starting compose stack..."
+cp "$SCRIPT_DIR/../test/compose-stack/docker-compose.yml" "$SCRIPT_DIR/../test/compose-stack/docker-compose.active.yml"
+docker compose -f "$SCRIPT_DIR/../test/compose-stack/docker-compose.active.yml" up -d
+
 docker build -t wud --build-arg WUD_VERSION=local "$SCRIPT_DIR/.."
 
 # 6. Start Agent
@@ -59,12 +65,14 @@ docker run -d \
   --network wud-e2e-net \
   --publish 3000:3000 \
   --volume /var/run/docker.sock:/var/run/docker.sock \
+  --volume "$SCRIPT_DIR/../test/compose-stack/docker-compose.active.yml:/compose/docker-compose.yml" \
   --env WUD_LOG_LEVEL=debug \
   --env WUD_WATCHER_DOCKER_LOCAL_ENABLE=true \
   --env WUD_WATCHER_LOCAL_WATCHBYDEFAULT=false \
   --env WUD_AGENT_REMOTE_HOST=wud-agent \
   --env WUD_AGENT_REMOTE_SECRET=testsecret \
   --env WUD_TRIGGER_DOCKER_UPDATE_AUTO=false \
+  --env WUD_TRIGGER_DOCKERCOMPOSE_UPDATE_AUTO=false \
   --env WUD_TRIGGER_MOCK_EXAMPLE_MOCK=mock \
   --env WUD_REGISTRY_ECR_PRIVATE_ACCESSKEYID="${AWS_ACCESSKEY_ID:-dummy}" \
   --env WUD_REGISTRY_ECR_PRIVATE_SECRETACCESSKEY="${AWS_SECRET_ACCESSKEY:-dummy}" \
