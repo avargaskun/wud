@@ -17,12 +17,16 @@ docker rm -f \
     lscr_radarr \
     trueforge_radarr \
     quay_prometheus \
+    zz_batch_local_1 \
+    zz_batch_local_2 \
     wud \
     wud-agent \
     wud-controller \
     wud-dind \
     remote_podinfo_update \
-    remote_podinfo_latest 2>/dev/null || true
+    remote_podinfo_latest \
+    zz_batch_remote_1 \
+    zz_batch_remote_2 2>/dev/null || true
 
 # Remove network
 docker network rm wud-e2e-net 2>/dev/null || true

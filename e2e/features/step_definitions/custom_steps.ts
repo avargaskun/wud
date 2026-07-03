@@ -117,6 +117,53 @@ When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "(
     this.apickli.setGlobalVariable(nameVar, found.name);
 });
 
+When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (this: any, remoteArg: string, name: string, idVar: string, versionVar: string, nameVar: string) {
+    await new Promise<void>((resolve, reject) => {
+        this.apickli.get('/api/containers', (error: any, response: any) => {
+            if (error) reject(error);
+            else resolve(response);
+        });
+    });
+    const response = this.apickli.getResponseObject();
+
+    let containers: Container[] | any = response.body;
+
+    if (typeof containers === 'string') {
+        try {
+            containers = JSON.parse(containers);
+        } catch (e) {
+            this.attach('Failed to parse response body:', e);
+            throw new Error('Response body is not valid JSON');
+        }
+    }
+
+    if (!response || !Array.isArray(containers)) {
+        throw new Error('Failed to retrieve containers or invalid response format');
+    }
+
+    const isRemote = !!remoteArg;
+
+    const found = (containers as Container[]).find(c => {
+        // Filter by Agent context
+        if (isRemote && !c.agent) return false;
+        if (!isRemote && c.agent) return false;
+
+        // Ignore stopped containers
+        if (c.status !== 'running') {
+            return false;
+        }
+        return c.name === name;
+    });
+
+    if (!found) {
+        throw new Error(`Container with name "${name}" (remote=${isRemote}) not found. Available: ${(containers as Container[]).map(c => `${c.name} [${c.agent || 'local'}]`).join(', ')}`);
+    }
+
+    this.apickli.setGlobalVariable(idVar, found.id);
+    this.apickli.setGlobalVariable(versionVar, found.image.tag.value);
+    this.apickli.setGlobalVariable(nameVar, found.name);
+});
+
 Then(/^I wait for (\d+) seconds$/, async function (seconds: string) {
     await new Promise(resolve => setTimeout(resolve, parseInt(seconds) * 1000));
 });
@@ -221,7 +268,21 @@ function substituteVariables(str: string, apickli: any): string {
     });
 }
 
-When(/^I send POST to (.*)$/, async function (this: any, url: string) {
+When(/^I send POST to (\S+)$/, async function (this: any, url: string) {
+    const safeUrl = substituteVariables(url, this.apickli);
+    await new Promise<void>((resolve, reject) => {
+        this.apickli.post(safeUrl, (error: any, response: any) => {
+            if (error) reject(error);
+            else resolve(response);
+        });
+    });
+});
+
+When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this: any, url: string, idVars: string) {
+    const containerIds = idVars.split(',').map(v => this.apickli.getGlobalVariable(v.trim()));
+    const body = { containerIds };
+    this.apickli.setRequestBody(JSON.stringify(body));
+    this.apickli.addRequestHeader('Content-Type', 'application/json');
     const safeUrl = substituteVariables(url, this.apickli);
     await new Promise<void>((resolve, reject) => {
         this.apickli.post(safeUrl, (error: any, response: any) => {
