@@ -1,6 +1,8 @@
 # Changelog
 
 ## dev
+- :star: Add batch trigger API endpoint (`POST /api/containers/batch/triggers/:triggerType/:triggerName`) to update multiple containers in lockstep
+- :warning: `docker`/`dockercompose` batch-mode updates are now all-or-nothing: every image is pulled before any container is swapped (compose files are rewritten after a successful pull, not before)
 - :lock: Migrate backend to typescript
 - :fire: [APPRISE] - Fix bad request error ("Payload lacks minimum requirements")
 - :fire: [DISCORD] - Fix bad request error ("Invalid URL")

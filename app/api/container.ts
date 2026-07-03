@@ -1,5 +1,5 @@
 // @ts-nocheck
-import express from 'express';
+import express, { Request, Response } from 'express';
 import nocache from 'nocache';
 import { byValues, byString } from 'sort-es';
 import * as storeContainer from '../store/container';
@@ -9,6 +9,8 @@ import { mapComponentsToList } from './component';
 import Trigger from '../triggers/providers/Trigger';
 import logger from '../log';
 import { getAgent } from '../agent/manager';
+import { Container } from '../model/container';
+import { BatchTriggerRequestBody } from './types';
 const log = logger.child({ component: 'container' });
 
 const router = express.Router();
@@ -203,6 +205,101 @@ async function runTrigger(req, res) {
 }
 
 /**
+ * Run a trigger against multiple containers as a single lockstep batch.
+ * @param req
+ * @param res
+ */
+export async function runTriggerBatch(
+    req: Request,
+    res: Response,
+): Promise<void> {
+    const { triggerAgent, triggerType, triggerName } = req.params;
+    const { containerIds }: Partial<BatchTriggerRequestBody> = req.body || {};
+
+    // 1. Body shape
+    if (!Array.isArray(containerIds) || containerIds.length === 0) {
+        res.status(400).json({
+            error: 'containerIds must be a non-empty array',
+        });
+        return;
+    }
+
+    // 2. Trigger exists
+    const triggerId = triggerAgent
+        ? `${triggerAgent}.${triggerType}.${triggerName}`
+        : `${triggerType}.${triggerName}`;
+    const triggerToRun = getTriggers()[triggerId];
+    if (!triggerToRun) {
+        res.status(404).json({ error: 'Trigger not found' });
+        return;
+    }
+
+    // 3. Resolve every container from the store — all-or-nothing
+    const containers: Container[] = [];
+    const missing: string[] = [];
+    containerIds.forEach((id) => {
+        const container = storeContainer.getContainer(id);
+        if (container) {
+            containers.push(container);
+        } else {
+            missing.push(id);
+        }
+    });
+    if (missing.length > 0) {
+        res.status(404).json({ error: 'Container(s) not found', missing });
+        return;
+    }
+
+    // 4. Homogeneity: one trigger, one host. Reject mixed agent/watcher.
+    const expectedAgent = triggerAgent || undefined;
+    const badAgent = containers.filter(
+        (container) => (container.agent || undefined) !== expectedAgent,
+    );
+    if (badAgent.length > 0) {
+        res.status(400).json({
+            error: 'All containers must belong to the trigger agent',
+            containers: badAgent.map((container) => container.id),
+        });
+        return;
+    }
+    const watchers = new Set(containers.map((container) => container.watcher));
+    if (watchers.size > 1) {
+        res.status(400).json({
+            error: 'All containers must share the same watcher',
+        });
+        return;
+    }
+
+    // 5. Fail fast: a batch update only makes sense for containers with a pending update
+    const noUpdate = containers.filter(
+        (container) => !container.updateAvailable || !container.updateKind,
+    );
+    if (noUpdate.length > 0) {
+        res.status(400).json({
+            error: 'All containers must have a pending update',
+            containers: noUpdate.map((container) => container.id),
+        });
+        return;
+    }
+
+    // 6. Run
+    try {
+        await triggerToRun.triggerBatch(containers);
+        log.info(
+            `Batch trigger executed with success (trigger=${triggerId}, containers=${containers.length})`,
+        );
+        res.status(200).json({});
+    } catch (e) {
+        log.warn(
+            `Error when running batch trigger (trigger=${triggerId}) (${e.message})`,
+        );
+        res.status(500).json({
+            error: `Error when running batch trigger (${e.message})`,
+        });
+    }
+}
+
+/**
  * Watch an image.
  * @param req
  * @param res
@@ -258,6 +355,11 @@ export function init() {
     router.use(nocache());
     router.get('/', getContainers);
     router.post('/watch', watchContainers);
+    router.post('/batch/triggers/:triggerType/:triggerName', runTriggerBatch);
+    router.post(
+        '/batch/triggers/:triggerAgent/:triggerType/:triggerName',
+        runTriggerBatch,
+    );
     router.get('/:id', getContainer);
     router.delete('/:id', deleteContainer);
     router.get('/:id/triggers', getContainerTriggers);
