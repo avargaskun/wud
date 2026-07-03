@@ -394,9 +394,55 @@ test('clone should clone an existing container spec', async () => {
     });
 });
 
+const happyContainer = {
+    watcher: 'test',
+    id: '123456789',
+    Name: '/container-name',
+    image: {
+        name: 'test/test',
+        registry: {
+            name: 'hub',
+            url: 'my-registry',
+        },
+    },
+    updateKind: {
+        remoteValue: '4.5.6',
+    },
+};
+
 test('trigger should not throw when all is ok', async () => {
+    await expect(docker.trigger(happyContainer)).resolves.toBeUndefined();
+});
+
+test('pullContainer should return an update context on the happy path', async () => {
+    const ctx = await docker.pullContainer(happyContainer);
+    expect(ctx).toBeDefined();
+    expect(ctx.newImage).toBe('my-registry/test/test:4.5.6');
+    expect(ctx.currentContainerSpec).toBeDefined();
+    expect(ctx.state).toEqual({ Running: true });
+});
+
+test('pullContainer should return undefined and warn when the container does not exist', async () => {
+    const warn = jest.fn();
+    const fakeLogger = {
+        warn,
+        info: jest.fn(),
+        debug: jest.fn(),
+        child: () => fakeLogger,
+    };
+    jest.spyOn(docker.log, 'child').mockReturnValue(fakeLogger);
+    jest.spyOn(docker, 'getCurrentContainer').mockResolvedValue(undefined);
+    const result = await docker.pullContainer(happyContainer);
+    expect(result).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+        'Unable to update the container because it does not exist',
+    );
+    jest.restoreAllMocks();
+});
+
+test('pullContainer should reject when the image pull fails', async () => {
     await expect(
-        docker.trigger({
+        docker.pullContainer({
             watcher: 'test',
             id: '123456789',
             Name: '/container-name',
@@ -408,8 +454,139 @@ test('trigger should not throw when all is ok', async () => {
                 },
             },
             updateKind: {
-                remoteValue: '4.5.6',
+                remoteValue: 'unknown',
             },
         }),
+    ).rejects.toThrowError('Error when pulling image');
+});
+
+test('swapContainer should run stop, remove, create and start on the happy path', async () => {
+    const stop = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const wait = jest.fn().mockResolvedValue(undefined);
+    const newStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({ start: newStart }),
+    };
+    const ctx = {
+        dockerApi,
+        registry: {
+            getImageFullName: () => 'my-registry/test/test:1.2.3',
+        },
+        newImage: 'my-registry/test/test:4.5.6',
+        currentContainer: { stop, remove, wait },
+        currentContainerSpec: {
+            Name: '/container-name',
+            Id: '123456789',
+            Config: {},
+            HostConfig: {},
+            NetworkSettings: { Networks: {} },
+            State: { Running: true },
+        },
+        state: { Running: true },
+    };
+    await expect(
+        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
     ).resolves.toBeUndefined();
+    expect(stop).toHaveBeenCalled();
+    expect(remove).toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+    expect(dockerApi.createContainer).toHaveBeenCalled();
+    expect(newStart).toHaveBeenCalled();
+});
+
+test('swapContainer should wait for auto-removal when HostConfig.AutoRemove is true', async () => {
+    const stop = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const wait = jest.fn().mockResolvedValue(undefined);
+    const newStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({ start: newStart }),
+    };
+    const ctx = {
+        dockerApi,
+        registry: {
+            getImageFullName: () => 'my-registry/test/test:1.2.3',
+        },
+        newImage: 'my-registry/test/test:4.5.6',
+        currentContainer: { stop, remove, wait },
+        currentContainerSpec: {
+            Name: '/container-name',
+            Id: '123456789',
+            Config: {},
+            HostConfig: { AutoRemove: true },
+            NetworkSettings: { Networks: {} },
+            State: { Running: true },
+        },
+        state: { Running: true },
+    };
+    await expect(
+        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
+    ).resolves.toBeUndefined();
+    expect(stop).toHaveBeenCalled();
+    expect(wait).toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(newStart).toHaveBeenCalled();
+});
+
+test('trigger should skip swap when dry-run mode is enabled', async () => {
+    docker.configuration = { ...configurationValid, dryrun: true };
+    const swapSpy = jest.spyOn(docker, 'swapContainer');
+    await expect(docker.trigger(happyContainer)).resolves.toBeUndefined();
+    expect(swapSpy).not.toHaveBeenCalled();
+    docker.configuration = configurationValid;
+    jest.restoreAllMocks();
+});
+
+test('triggerBatch should pull every container before swapping any (lockstep)', async () => {
+    const order = [];
+    jest.spyOn(docker, 'pullContainer').mockImplementation(async () => {
+        order.push('pull');
+        return {};
+    });
+    jest.spyOn(docker, 'swapContainer').mockImplementation(async () => {
+        order.push('swap');
+    });
+    await docker.triggerBatch([
+        { id: 'a', watcher: 'test' },
+        { id: 'b', watcher: 'test' },
+    ]);
+    expect(order).toEqual(['pull', 'pull', 'swap', 'swap']);
+    jest.restoreAllMocks();
+});
+
+test('triggerBatch should not swap any container when a pull rejects', async () => {
+    jest.spyOn(docker, 'pullContainer').mockImplementation(async (c) => {
+        if (c.id === 'bad') {
+            throw new Error('pull failed');
+        }
+        return {};
+    });
+    const swapSpy = jest
+        .spyOn(docker, 'swapContainer')
+        .mockResolvedValue(undefined);
+    await expect(
+        docker.triggerBatch([
+            { id: 'good', watcher: 'test' },
+            { id: 'bad', watcher: 'test' },
+        ]),
+    ).rejects.toThrowError('pull failed');
+    expect(swapSpy).not.toHaveBeenCalled();
+    jest.restoreAllMocks();
+});
+
+test('triggerBatch should pull all but swap none under dry-run', async () => {
+    docker.configuration = { ...configurationValid, dryrun: true };
+    const pullSpy = jest.spyOn(docker, 'pullContainer').mockResolvedValue({});
+    const swapSpy = jest
+        .spyOn(docker, 'swapContainer')
+        .mockResolvedValue(undefined);
+    await docker.triggerBatch([
+        { id: 'a', watcher: 'test' },
+        { id: 'b', watcher: 'test' },
+    ]);
+    expect(pullSpy).toHaveBeenCalledTimes(2);
+    expect(swapSpy).not.toHaveBeenCalled();
+    docker.configuration = configurationValid;
+    jest.restoreAllMocks();
 });

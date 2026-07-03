@@ -299,9 +299,7 @@ class Trigger extends Component {
                 if (containerReport.changed || !this.configuration.once) {
                     if (containerReport.container.updateAvailable) {
                         if (
-                            !this.isAutoForContainer(
-                                containerReport.container,
-                            )
+                            !this.isAutoForContainer(containerReport.container)
                         ) {
                             this.log.debug(
                                 `Auto execution disabled for container ${fullName(containerReport.container)} => skip`,
