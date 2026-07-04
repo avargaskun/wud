@@ -176,6 +176,7 @@ describe('Container API', () => {
 
     describe('runTriggerBatch', () => {
         const mockTriggerBatch = jest.fn();
+        const mockGetUnbatchable = jest.fn();
 
         const buildContainer = (overrides = {}) => ({
             id: 'c1',
@@ -194,9 +195,13 @@ describe('Container API', () => {
 
         beforeEach(() => {
             mockTriggerBatch.mockReset().mockResolvedValue(undefined);
+            mockGetUnbatchable.mockReset().mockResolvedValue([]);
             (registry.getState as jest.Mock).mockReturnValue({
                 trigger: {
-                    'docker.update': { triggerBatch: mockTriggerBatch },
+                    'docker.update': {
+                        triggerBatch: mockTriggerBatch,
+                        getUnbatchableContainers: mockGetUnbatchable,
+                    },
                 },
             });
         });
@@ -304,10 +309,65 @@ describe('Container API', () => {
             expect(mockTriggerBatch).not.toHaveBeenCalled();
         });
 
+        test('should return 400 when containerIds contains duplicates', async () => {
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c1'] },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({ duplicates: ['c1'] }),
+            );
+            expect(mockTriggerBatch).not.toHaveBeenCalled();
+        });
+
         test('should return 400 when a container has no pending update', async () => {
             (storeContainer.getContainer as jest.Mock).mockImplementation(
                 (id) => buildContainer({ id, updateAvailable: id !== 'c2' }),
             );
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c2'] },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({ containers: ['c2'] }),
+            );
+            expect(mockTriggerBatch).not.toHaveBeenCalled();
+        });
+
+        test('should return 400 when a container has updateAvailable but no updateKind', async () => {
+            (storeContainer.getContainer as jest.Mock).mockImplementation(
+                (id) =>
+                    buildContainer({
+                        id,
+                        updateAvailable: true,
+                        updateKind: id === 'c2' ? undefined : { kind: 'tag' },
+                    }),
+            );
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c2'] },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({ containers: ['c2'] }),
+            );
+            expect(mockTriggerBatch).not.toHaveBeenCalled();
+        });
+
+        test('should return 400 and not call triggerBatch when the trigger reports unbatchable containers', async () => {
+            const c1 = buildContainer({ id: 'c1' });
+            const c2 = buildContainer({ id: 'c2' });
+            (storeContainer.getContainer as jest.Mock).mockImplementation(
+                (id) => (id === 'c1' ? c1 : c2),
+            );
+            mockGetUnbatchable.mockResolvedValue([c2]);
 
             await callHandler(
                 { triggerType: 'docker', triggerName: 'update' },
@@ -345,6 +405,9 @@ describe('Container API', () => {
                 trigger: {
                     'remote.docker.update': {
                         triggerBatch: agentTriggerBatch,
+                        getUnbatchableContainers: jest
+                            .fn()
+                            .mockResolvedValue([]),
                     },
                 },
             });

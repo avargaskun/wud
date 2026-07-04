@@ -40,6 +40,22 @@ class AgentWatcher extends Watcher {
     }
 
     /**
+     * Get all containers to watch.
+     * Delegate to the agent client.
+     */
+    async getContainers(): Promise<Container[]> {
+        const agentName = this.agent;
+        if (!agentName) {
+            throw new Error('AgentWatcher must have an agent assigned');
+        }
+        const client = getAgent(agentName);
+        if (!client) {
+            throw new Error(`Agent ${agentName} not found`);
+        }
+        return client.getContainers();
+    }
+
+    /**
      * Configuration schema.
      * Relaxed validation since the agent has already validated the config.
      */

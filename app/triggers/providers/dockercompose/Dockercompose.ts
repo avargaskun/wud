@@ -149,6 +149,21 @@ class Dockercompose extends Docker {
     }
 
     /**
+     * Return the passed containers that cannot be batch-updated because they do
+     * not resolve to, or belong to, a managed compose file. Used by the batch API
+     * to reject the whole request instead of silently updating only a subset.
+     * @param containers
+     * @returns {Promise<Container[]>}
+     */
+    async getUnbatchableContainers(
+        containers: Container[],
+    ): Promise<Container[]> {
+        const groups = await this.groupByComposeFile(containers);
+        const batchable = new Set<Container>([...groups.values()].flat());
+        return containers.filter((container) => !batchable.has(container));
+    }
+
+    /**
      * Rewrite a compose file with the update versions of its containers.
      * Assumes non-dry-run (the caller guards dry-run). Does not swap containers.
      * @param composeFile
@@ -298,12 +313,13 @@ class Dockercompose extends Docker {
      * @param data
      * @returns {Promise<void>}
      */
-    async writeComposeFile(file, data) {
+    async writeComposeFile(file: string, data: string): Promise<void> {
         try {
             await fs.writeFile(file, data);
         } catch (e) {
             this.log.error(`Error when writing ${file} (${e.message})`);
             this.log.debug(e);
+            throw e;
         }
     }
 

@@ -1,12 +1,9 @@
-// @ts-nocheck
 import express, { Request, Response } from 'express';
 import nocache from 'nocache';
 import { byValues, byString } from 'sort-es';
 import * as storeContainer from '../store/container';
 import * as registry from '../registry';
 import { getServerConfiguration } from '../configuration';
-import { mapComponentsToList } from './component';
-import Trigger from '../triggers/providers/Trigger';
 import logger from '../log';
 import { getAgent } from '../agent/manager';
 import { Container } from '../model/container';
@@ -224,6 +221,22 @@ export async function runTriggerBatch(
         return;
     }
 
+    // 1b. Reject duplicate ids (a duplicate would otherwise swap the same container twice)
+    const duplicates = [
+        ...new Set(
+            containerIds.filter(
+                (id, index) => containerIds.indexOf(id) !== index,
+            ),
+        ),
+    ];
+    if (duplicates.length > 0) {
+        res.status(400).json({
+            error: 'containerIds must not contain duplicates',
+            duplicates,
+        });
+        return;
+    }
+
     // 2. Trigger exists
     const triggerId = triggerAgent
         ? `${triggerAgent}.${triggerType}.${triggerName}`
@@ -282,8 +295,20 @@ export async function runTriggerBatch(
         return;
     }
 
-    // 6. Run
+    // 6. Reject containers this trigger cannot handle as a batch (e.g. a
+    //    docker-compose container that does not belong to a managed compose file),
+    //    then run — all in one try so grouping errors surface as 500, not a hang.
     try {
+        const unbatchable =
+            await triggerToRun.getUnbatchableContainers(containers);
+        if (unbatchable.length > 0) {
+            res.status(400).json({
+                error: 'All containers must be updatable by this trigger as a batch',
+                containers: unbatchable.map((container) => container.id),
+            });
+            return;
+        }
+
         await triggerToRun.triggerBatch(containers);
         log.info(
             `Batch trigger executed with success (trigger=${triggerId}, containers=${containers.length})`,

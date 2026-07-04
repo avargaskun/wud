@@ -448,6 +448,20 @@ class Trigger extends Component {
     }
 
     /**
+     * Return the subset of containers this trigger cannot process as part of a
+     * lockstep batch. Default: none. Overridden by providers (e.g. docker-compose)
+     * that can only act on containers belonging to a managed resource.
+     * @param containers
+     * @returns {Promise<Container[]>}
+     */
+
+    async getUnbatchableContainers(
+        containers: Container[],
+    ): Promise<Container[]> {
+        return [];
+    }
+
+    /**
      * Render trigger title simple.
      * @param container
      * @returns {*}

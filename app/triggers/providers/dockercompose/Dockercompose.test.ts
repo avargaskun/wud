@@ -299,3 +299,85 @@ test('triggerBatch should pull but not rewrite or swap under dry-run', async () 
     expect(writeSpy).not.toHaveBeenCalled();
     expect(swapSpy).not.toHaveBeenCalled();
 });
+
+test('writeComposeFile should rethrow when the write fails', async () => {
+    mockedWriteFile.mockRejectedValue(new Error('EROFS'));
+    await expect(
+        dockercompose.writeComposeFile('/abs/docker-compose.yml', 'data'),
+    ).rejects.toThrow('EROFS');
+});
+
+test('triggerBatch should abort before any swap when a compose write fails', async () => {
+    const c1 = buildContainer({ id: 'c1' });
+    const c2 = buildContainer({ id: 'c2' });
+    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
+        new Map([['/abs/docker-compose.yml', [c1, c2]]]),
+    );
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
+        {} as ContainerUpdateContext,
+    );
+    mockedWriteFile.mockRejectedValue(new Error('EROFS'));
+    const swapSpy = jest
+        .spyOn(dockercompose, 'swapContainer')
+        .mockResolvedValue(undefined);
+    await expect(dockercompose.triggerBatch([c1, c2])).rejects.toThrow('EROFS');
+    expect(swapSpy).not.toHaveBeenCalled();
+});
+
+test('triggerBatch should swap only the containers whose pull returned a context', async () => {
+    const live = buildContainer({ id: 'live' });
+    const gone = buildContainer({ id: 'gone' });
+    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
+        new Map([['/abs/docker-compose.yml', [live, gone]]]),
+    );
+    jest.spyOn(dockercompose, 'pullContainer').mockImplementation(async (c) =>
+        c.id === 'gone' ? undefined : ({} as ContainerUpdateContext),
+    );
+    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue(
+        undefined,
+    );
+    const swapSpy = jest
+        .spyOn(dockercompose, 'swapContainer')
+        .mockResolvedValue(undefined);
+    await dockercompose.triggerBatch([live, gone]);
+    expect(swapSpy).toHaveBeenCalledTimes(1);
+    expect(swapSpy.mock.calls[0][0]).toBe(live);
+});
+
+test('getUnbatchableContainers should return containers that do not belong to a compose file', async () => {
+    const belongs = buildContainer({
+        id: 'c1',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const foreign = buildContainer({
+        id: 'c2',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+        image: {
+            id: 'image-id-nginx',
+            registry: { name: 'hub', url: 'ghcr.io' },
+            name: 'library/nginx',
+            tag: { value: '5.0.0', semver: true },
+            digest: { watch: false },
+            architecture: 'amd64',
+            os: 'linux',
+        },
+    });
+    const result = await dockercompose.getUnbatchableContainers([
+        belongs,
+        foreign,
+    ]);
+    expect(result).toEqual([foreign]);
+});
+
+test('getUnbatchableContainers should return an empty array when all containers belong', async () => {
+    const c1 = buildContainer({
+        id: 'c1',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const c2 = buildContainer({
+        id: 'c2',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const result = await dockercompose.getUnbatchableContainers([c1, c2]);
+    expect(result).toEqual([]);
+});

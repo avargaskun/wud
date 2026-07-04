@@ -17,6 +17,12 @@ abstract class Watcher extends Component {
      * @returns {Promise<any>}
      */
     abstract watchContainer(container: Container): Promise<ContainerReport>;
+
+    /**
+     * Get all containers to watch.
+     * @returns {Promise<Container[]>}
+     */
+    abstract getContainers(): Promise<Container[]>;
 }
 
 export default Watcher;

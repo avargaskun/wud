@@ -590,3 +590,111 @@ test('triggerBatch should pull all but swap none under dry-run', async () => {
     docker.configuration = configurationValid;
     jest.restoreAllMocks();
 });
+
+test('triggerBatch should swap only the containers whose pull returned a context', async () => {
+    jest.spyOn(docker, 'pullContainer').mockImplementation(async (c) =>
+        c.id === 'gone' ? undefined : { id: c.id },
+    );
+    const swapSpy = jest
+        .spyOn(docker, 'swapContainer')
+        .mockResolvedValue(undefined);
+    await docker.triggerBatch([
+        { id: 'gone', watcher: 'test' },
+        { id: 'live', watcher: 'test' },
+    ]);
+    expect(swapSpy).toHaveBeenCalledTimes(1);
+    expect(swapSpy.mock.calls[0][0]).toEqual({ id: 'live', watcher: 'test' });
+    jest.restoreAllMocks();
+});
+
+test('swapContainer should skip stop and start when the container is not running', async () => {
+    const stop = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const newStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({ start: newStart }),
+    };
+    const ctx = {
+        dockerApi,
+        registry: { getImageFullName: () => 'my-registry/test/test:1.2.3' },
+        newImage: 'my-registry/test/test:4.5.6',
+        currentContainer: { stop, remove },
+        currentContainerSpec: {
+            Name: '/container-name',
+            Id: '123456789',
+            Config: {},
+            HostConfig: {},
+            NetworkSettings: { Networks: {} },
+            State: { Running: false },
+        },
+        state: { Running: false },
+    };
+    await expect(
+        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
+    ).resolves.toBeUndefined();
+    expect(stop).not.toHaveBeenCalled();
+    expect(remove).toHaveBeenCalled();
+    expect(dockerApi.createContainer).toHaveBeenCalled();
+    expect(newStart).not.toHaveBeenCalled();
+});
+
+test('swapContainer should remove the previous image when prune is enabled', async () => {
+    docker.configuration = { ...configurationValid, prune: true };
+    const removeImage = jest.fn().mockResolvedValue(undefined);
+    const newStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({ start: newStart }),
+        getImage: jest.fn().mockResolvedValue({ remove: removeImage }),
+    };
+    const ctx = {
+        dockerApi,
+        registry: {
+            getImageFullName: (image, tagOrDigest) =>
+                `my-registry/${image.name}:${tagOrDigest}`,
+        },
+        newImage: 'my-registry/test/test:4.5.6',
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            remove: jest.fn().mockResolvedValue(undefined),
+        },
+        currentContainerSpec: {
+            Name: '/container-name',
+            Id: '123456789',
+            Config: {},
+            HostConfig: {},
+            NetworkSettings: { Networks: {} },
+            State: { Running: true },
+        },
+        state: { Running: true },
+    };
+    const container = {
+        name: 'container-name',
+        id: '123456789',
+        image: { name: 'test/test', tag: { value: '1.2.3' } },
+        updateKind: { kind: 'tag' },
+    };
+    await expect(docker.swapContainer(container, ctx)).resolves.toBeUndefined();
+    expect(dockerApi.getImage).toHaveBeenCalledWith(
+        'my-registry/test/test:1.2.3',
+    );
+    expect(removeImage).toHaveBeenCalled();
+    docker.configuration = configurationValid;
+});
+
+test('getNewImageFullName should keep the current tag when updateKind is digest', () => {
+    const registryMock = {
+        getImageFullName: (image, tagOrDigest) =>
+            `${image.registry.url}/${image.name}:${tagOrDigest}`,
+    };
+    const container = {
+        image: {
+            name: 'test/test',
+            registry: { url: 'my-registry' },
+            tag: { value: '1.2.3' },
+        },
+        updateKind: { kind: 'digest', remoteValue: 'sha256:abc' },
+    };
+    expect(docker.getNewImageFullName(registryMock, container)).toBe(
+        'my-registry/test/test:1.2.3',
+    );
+});

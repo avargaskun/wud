@@ -323,6 +323,14 @@ export class AgentClient {
         }
     }
 
+    async getContainers(): Promise<Container[]> {
+        const response = await axios.get<Container[]>(
+            `${this.baseUrl}/api/containers`,
+            this.axiosOptions,
+        );
+        return response.data;
+    }
+
     async watch(watcherType: string, watcherName: string) {
         try {
             const response = await axios.post<ContainerReport[]>(
