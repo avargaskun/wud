@@ -1,4 +1,4 @@
-import { deleteContainer } from './container';
+import { deleteContainer } from './container.handlers';
 import * as storeContainer from '../store/container';
 import * as manager from '../agent/manager';
 import { getServerConfiguration } from '../configuration';

@@ -7,12 +7,22 @@ import { Container } from '../../../model/container';
 import type { ContainerUpdateContext } from '../docker/types';
 
 /**
+ * Minimal shape of a parsed docker-compose file — only the fields this trigger reads.
+ */
+interface ComposeFile {
+    services: Record<string, { image: string }>;
+}
+
+/**
  * Return true if the container belongs to the compose file.
  * @param compose
  * @param container
  * @returns true/false
  */
-function doesContainerBelongToCompose(compose: any, container: Container) {
+function doesContainerBelongToCompose(
+    compose: ComposeFile,
+    container: Container,
+) {
     // Get registry configuration
     const registry = getState().registry[container.image.registry.name];
 
@@ -275,7 +285,10 @@ class Dockercompose extends Docker {
      * @param container
      * @returns {{current, update}|undefined}
      */
-    mapCurrentVersionToUpdateVersion(compose, container) {
+    mapCurrentVersionToUpdateVersion(
+        compose: ComposeFile,
+        container: Container,
+    ) {
         // Get registry configuration
         this.log.debug(`Get ${container.image.registry.name} registry manager`);
         const registry = getState().registry[container.image.registry.name];
@@ -345,7 +358,7 @@ class Dockercompose extends Docker {
      * @param file - Optional file path, defaults to configuration file
      * @returns {Promise<any>}
      */
-    async getComposeFileAsObject(file = null) {
+    async getComposeFileAsObject(file = null): Promise<ComposeFile> {
         try {
             return yaml.parse((await this.getComposeFile(file)).toString(), {
                 maxAliasCount: 10000,

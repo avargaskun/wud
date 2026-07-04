@@ -1,5 +1,5 @@
 import { Request, Response } from 'express';
-import { getContainerTriggers, runTriggerBatch } from './container';
+import { getContainerTriggers, runTriggerBatch } from './container.handlers';
 import * as storeContainer from '../store/container';
 import * as registry from '../registry';
 
