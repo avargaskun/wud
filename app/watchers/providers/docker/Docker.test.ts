@@ -619,6 +619,29 @@ describe('Docker Watcher', () => {
                 expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(2);
             });
 
+            test('should reconnect quietly (debug, not warn) on benign aborted/ECONNRESET', async () => {
+                const mockLog = {
+                    warn: jest.fn(),
+                    debug: jest.fn(),
+                    info: jest.fn(),
+                };
+                docker.log = mockLog;
+                await docker.listenDockerEvents();
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(1);
+
+                const abortError: any = new Error('aborted');
+                abortError.code = 'ECONNRESET';
+                eventStream.emit('error', abortError);
+
+                expect(mockLog.warn).not.toHaveBeenCalled();
+                expect(mockLog.debug).toHaveBeenCalledWith(
+                    expect.stringContaining('reconnecting'),
+                );
+                expect(eventStream.removeAllListeners).toHaveBeenCalled();
+                jest.runOnlyPendingTimers();
+                expect(mockDockerApi.getEvents).toHaveBeenCalledTimes(2);
+            });
+
             test('should reconnect on stream end', async () => {
                 await docker.listenDockerEvents();
                 eventStream.emit('end');
