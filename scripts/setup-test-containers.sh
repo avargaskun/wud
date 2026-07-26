@@ -18,8 +18,9 @@ if [ "$MODE" == "minimal" ]; then
     echo "   Running minimal setup..."
     
     $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:6.0.0
     $DOCKER_CMD pull ghcr.io/stefanprodan/podinfo:latest
-    
+
     # Run containers
     # Update available (podinfo 5.0.0 -> 6.0.0)
     $DOCKER_CMD run -d --name remote_podinfo_update \

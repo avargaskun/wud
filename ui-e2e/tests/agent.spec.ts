@@ -61,12 +61,17 @@ test.describe('Agents View', () => {
     const containerCard = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first();
     await expect(containerCard).toBeVisible({ timeout: 15000 });
 
-    // Verify it has an update available (usually indicated by an arrow icon or specific text/color)
-    // In WUD, updateAvailable containers have a 'mdi-arrow-up-bold-circle' icon or similar.
+    // Verify it has the remote agent
     await expect(containerCard.getByTestId('container-agent')).toHaveText('remote');
 
     // Expand container details
     await containerCard.click();
+
+    // Capture initial version before update
+    const initialVersionTag = containerCard.getByTestId('container-tag');
+    await expect(initialVersionTag).toBeVisible();
+    const initialVersion = await initialVersionTag.textContent();
+    console.log(`Initial version: ${initialVersion}`);
 
     // Go to Triggers tab
     const triggersTab = page.getByRole('tab', { name: 'Triggers' });
@@ -75,14 +80,23 @@ test.describe('Agents View', () => {
 
     // Find the 'Run' button for the trigger
     const runButton = containerCard.getByTestId('remote.docker.update').getByRole('button', { name: 'Run' });
-    
+
     // Wait for triggers to load and button to be enabled
     await expect(runButton).toBeEnabled({ timeout: 10000 });
-    
+
     // Trigger update
     await runButton.click();
 
     // Check for success toast
     await expect(page.getByText('Trigger executed with success')).toBeVisible({ timeout: 60000 });
+
+    // Wait for the UI's periodic refresh to pick up the new container version
+    const refreshedTag = page.locator('main .v-card', { hasText: 'remote_podinfo_update' }).first().getByTestId('container-tag');
+    await expect(async () => {
+      await expect(refreshedTag).not.toHaveText(initialVersion!);
+    }).toPass({ timeout: 60000, intervals: [1000] });
+
+    const updatedVersion = await refreshedTag.textContent();
+    console.log(`✓ Version updated from ${initialVersion} to ${updatedVersion}`);
   });
 });

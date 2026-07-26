@@ -156,10 +156,7 @@ export class Docker extends Watcher {
                 this.watchFromCron.bind(this),
                 DEBOUNCED_WATCH_CRON_MS,
             );
-            this.listenDockerEventsTimeout = setTimeout(
-                this.listenDockerEvents.bind(this),
-                START_WATCHER_DELAY_MS,
-            );
+            this.scheduleDockerEvents();
         }
     }
 
@@ -200,6 +197,17 @@ export class Docker extends Watcher {
         }
     }
 
+    scheduleDockerEvents() {
+        if (this.listenDockerEventsTimeout) {
+            clearTimeout(this.listenDockerEventsTimeout);
+            delete this.listenDockerEventsTimeout;
+        }
+        this.listenDockerEventsTimeout = setTimeout(
+            this.listenDockerEvents.bind(this),
+            START_WATCHER_DELAY_MS,
+        );
+    }
+
     /**
      * Listen and react to docker events.
      */
@@ -224,13 +232,13 @@ export class Docker extends Watcher {
             },
         };
         this.dockerApi.getEvents(options, (err, stream) => {
+            this.ensureLogger();
             if (err) {
-                if (this.log && typeof this.log.warn === 'function') {
-                    this.log.warn(
-                        `Unable to listen to Docker events [${err.message}]`,
-                    );
-                    this.log.debug(err);
-                }
+                this.log.warn(
+                    `Unable to listen to Docker events [${err.message}]`,
+                );
+                this.log.debug(err);
+                this.scheduleDockerEvents();
             } else {
                 let chunks: Buffer[] = [];
                 const collectChunks = (chunk: Buffer) => {
@@ -242,6 +250,24 @@ export class Docker extends Watcher {
                     }
                 };
                 stream.on('data', collectChunks);
+                stream.on('error', (error: any) => {
+                    this.log.warn(
+                        `Error when listening to Docker events [${error.message}]`,
+                    );
+                    this.log.debug(error);
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
+                stream.on('end', () => {
+                    this.log.info('Docker events stream ended');
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
+                stream.on('close', () => {
+                    this.log.info('Docker events stream closed');
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
             }
         });
     }
@@ -305,12 +331,13 @@ export class Docker extends Watcher {
                     await this.watchCronDebounced();
                 }
             } else {
-                // Update container state in db if so
+                // Update container state and name in db if so
                 try {
                     const container =
                         await this.dockerApi.getContainer(containerId);
                     const containerInspect = await container.inspect();
                     const newStatus = containerInspect.State.Status;
+                    const newName = containerInspect.Name.replace(/^\//, '');
                     const containerFound =
                         storeContainer.getContainer(containerId);
                     if (containerFound) {
@@ -319,17 +346,38 @@ export class Docker extends Watcher {
                             container: fullName(containerFound),
                         });
                         const oldStatus = containerFound.status;
+                        const oldName = containerFound.name;
+                        let changed = false;
+
                         containerFound.status = newStatus;
                         if (oldStatus !== newStatus) {
-                            storeContainer.updateContainer(containerFound);
+                            changed = true;
                             logContainer.info(
                                 `Status changed from ${oldStatus} to ${newStatus}`,
                             );
                         }
+
+                        // Update name if changed (e.g., Docker Compose rename)
+                        if (oldName !== newName) {
+                            containerFound.name = newName;
+                            // Also refresh displayName if no explicit wud.display.name label is set
+                            const hasDisplayNameLabel = containerInspect.Config?.Labels?.[wudDisplayName];
+                            if (!hasDisplayNameLabel) {
+                                containerFound.displayName = newName;
+                            }
+                            changed = true;
+                            logContainer.info(
+                                `Name changed from ${oldName} to ${newName}`,
+                            );
+                        }
+
+                        if (changed) {
+                            storeContainer.updateContainer(containerFound);
+                        }
                     }
                 } catch (e: any) {
                     this.log.debug(
-                        `Unable to get container details for container id=[${containerId}] (${e.message})`,
+                        `Unable to get container details for container action=[${action}] id=[${containerId}] (${e.message})`,
                     );
                 }
             }
@@ -538,6 +586,22 @@ export class Docker extends Watcher {
             containerInStore !== undefined &&
             containerInStore.error === undefined
         ) {
+            // Refresh name from Docker in case it was renamed
+            // (e.g., Docker Compose replace strategy assigns a hash-prefixed
+            // temp name then renames to the final name)
+            const currentName = getContainerName(container);
+            if (containerInStore.name !== currentName) {
+                this.log.info(
+                    `Container ${containerId} name changed from ${containerInStore.name} to ${currentName}`,
+                );
+                containerInStore.name = currentName;
+                // Also refresh displayName if no explicit wud.display.name label is set
+                // (displayName defaults to name, so it should track name changes)
+                if (!displayName) {
+                    containerInStore.displayName = currentName;
+                }
+                storeContainer.updateContainer(containerInStore);
+            }
             this.log.debug(`Container ${containerInStore.id} already in store`);
             return containerInStore;
         }
