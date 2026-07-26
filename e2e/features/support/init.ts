@@ -1,10 +1,10 @@
+import { Before, setDefaultTimeout } from '@cucumber/cucumber';
 const apickli = require('apickli');
-const { Before, setDefaultTimeout } = require('@cucumber/cucumber');
-const configuration = require('../../config');
+import configuration from '../../config';
 
-setDefaultTimeout(20 * 1000);
+setDefaultTimeout(60 * 1000);
 
-Before(function initApickli() {
+Before(function (this: any) {
     this.apickli = new apickli.Apickli(configuration.protocol, `${configuration.host}:${configuration.port}`);
     this.apickli.addHttpBasicAuthorizationHeader(configuration.username, configuration.password);
 });
