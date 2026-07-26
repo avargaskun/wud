@@ -27,6 +27,7 @@ describe('Container API', () => {
             configuration: { threshold: 'all' },
             apply: jest.fn(),
             maskConfiguration: jest.fn(),
+            isAutoForContainer: jest.fn().mockReturnValue(true),
         };
         const mockTrigger2 = {
             getId: () => 'slack.t2',
@@ -35,6 +36,7 @@ describe('Container API', () => {
             configuration: {},
             apply: jest.fn(),
             maskConfiguration: jest.fn(),
+            isAutoForContainer: jest.fn().mockReturnValue(true),
         };
 
         beforeEach(() => {
@@ -112,6 +114,54 @@ describe('Container API', () => {
                 expect.objectContaining({ type: 'docker', name: 't1' }),
                 expect.objectContaining({ type: 'slack', name: 't2' }),
             ]);
+        });
+
+        test('should include auto: true when isAutoForContainer returns true', async () => {
+            const container = { id: 'c1' };
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+
+            mockTrigger1.apply.mockReturnValue(mockTrigger1.configuration);
+            mockTrigger1.maskConfiguration.mockReturnValue(
+                mockTrigger1.configuration,
+            );
+            mockTrigger1.isAutoForContainer.mockReturnValue(true);
+
+            mockTrigger2.apply.mockReturnValue(undefined);
+
+            const req = { params: { id: 'c1' } };
+            await getContainerTriggers(req, mockRes);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response).toHaveLength(1);
+            expect(response[0]).toEqual(
+                expect.objectContaining({ name: 't1', auto: true }),
+            );
+        });
+
+        test('should include auto: false when isAutoForContainer returns false (per-container override)', async () => {
+            const container = { id: 'c1' };
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+
+            mockTrigger1.apply.mockReturnValue(mockTrigger1.configuration);
+            mockTrigger1.maskConfiguration.mockReturnValue(
+                mockTrigger1.configuration,
+            );
+            mockTrigger1.isAutoForContainer.mockReturnValue(false);
+
+            mockTrigger2.apply.mockReturnValue(undefined);
+
+            const req = { params: { id: 'c1' } };
+            await getContainerTriggers(req, mockRes);
+
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response).toHaveLength(1);
+            expect(response[0]).toEqual(
+                expect.objectContaining({ name: 't1', auto: false }),
+            );
         });
     });
 });

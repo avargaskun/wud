@@ -142,6 +142,7 @@ export async function getContainerTriggers(req, res) {
                     type: trigger.type,
                     name: trigger.name,
                     agent: trigger.agent,
+                    auto: trigger.isAutoForContainer(container),
                     configuration: trigger.maskConfiguration(
                         effectiveConfiguration,
                     ),
