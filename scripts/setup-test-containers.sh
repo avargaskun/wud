@@ -77,7 +77,7 @@ else
     echo "Pulling GHCR test images ..."
     $DOCKER_CMD run -d --name ghcr_radarr --label 'wud.watch=true' --label 'wud.tag.include=^\d+\.\d+\.\d+\.\d+-ls\d+$' ghcr.io/linuxserver/radarr:5.14.0.9383-ls245
     $DOCKER_CMD run -d --name ghcr_podinfo_500 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
-    $DOCKER_CMD run -d --name ghcr_podinfo_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' ghcr.io/stefanprodan/podinfo:latest
+    $DOCKER_CMD run -d --name ghcr_podinfo_latest --label 'wud.watch=true' --label 'wud.watch.digest=true' --label 'wud.tag.include=^latest$' --label 'wud.display.icon=https://img.icons8.com/?size=100&id=118497&format=png&color=000000' ghcr.io/stefanprodan/podinfo:latest
 
     # GITLAB
     echo "Pulling Gitlab test images ..."

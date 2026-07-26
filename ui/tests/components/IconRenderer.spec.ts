@@ -159,4 +159,32 @@ describe('IconRenderer', () => {
     });
     expect(selfhstWrapper.vm.isSelfhstIcon).toBe(true);
   });
+
+  it('renders img for arbitrary URL icons', () => {
+    const url = 'https://example.com/icon.png';
+    const wrapper = mount(IconRenderer, {
+      props: { icon: url }
+    });
+
+    expect(wrapper.find('img').exists()).toBe(true);
+    expect(wrapper.vm.isUrl).toBe(true);
+    expect(wrapper.find('img').attributes('src')).toBe(url);
+  });
+
+  it('detects URL icons correctly', () => {
+    const httpWrapper = mount(IconRenderer, {
+      props: { icon: 'http://example.com/icon.png' }
+    });
+    expect(httpWrapper.vm.isUrl).toBe(true);
+
+    const httpsWrapper = mount(IconRenderer, {
+      props: { icon: 'https://example.com/icon.png' }
+    });
+    expect(httpsWrapper.vm.isUrl).toBe(true);
+    
+    const nonUrlWrapper = mount(IconRenderer, {
+        props: { icon: 'mdi-docker' }
+    });
+    expect(nonUrlWrapper.vm.isUrl).toBe(false);
+  });
 });
