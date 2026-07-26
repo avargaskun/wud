@@ -3,9 +3,10 @@ import Dockerode from 'dockerode';
 import Trigger from '../Trigger';
 import { getState } from '../../../registry';
 import { Container, ContainerImage, fullName } from '../../../model/container';
-import { Docker as DockerWatcher } from '../../../watchers/providers/docker/Docker';
-import Registry from '../../../registries/Registry';
+import type DockerWatcher from '../../../watchers/providers/docker/Docker';
+import type Registry from '../../../registries/Registry';
 import Logger from 'bunyan';
+import type { ContainerUpdateContext } from './types';
 
 /**
  * Replace a Docker container with an updated one.
@@ -29,7 +30,7 @@ class Docker extends Trigger {
      * Get watcher responsible for the container.
      */
 
-    getWatcher(container: Container) {
+    getWatcher(container: Container): DockerWatcher {
         return getState().watcher[
             `docker.${container.watcher}`
         ] as DockerWatcher;
@@ -548,7 +549,7 @@ class Docker extends Trigger {
     /**
      * Get image full name.
      */
-    getNewImageFullName(registry: Registry, container: Container) {
+    getNewImageFullName(registry: Registry, container: Container): string {
         // Tag to pull/run is
         // either the same (when updateKind is digest)
         // or the new one (when updateKind is tag)
@@ -562,17 +563,19 @@ class Docker extends Trigger {
     }
 
     /**
-     * Update the container.
+     * Pull phase: everything up to and including the image pull.
+     * Returns the per-container context, or undefined if the container no longer exists.
+     * @param container the container
+     * @returns {Promise<ContainerUpdateContext | undefined>}
      */
-    async trigger(container: Container) {
+    async pullContainer(
+        container: Container,
+    ): Promise<ContainerUpdateContext | undefined> {
         // Child logger for the container to process
         const logContainer = this.log.child({ container: fullName(container) });
 
-        // Get watcher
-        const watcher = this.getWatcher(container);
-
         // Get dockerApi from watcher
-        const { dockerApi } = watcher;
+        const { dockerApi } = this.getWatcher(container);
 
         // Get registry configuration
         logContainer.debug(
@@ -594,114 +597,180 @@ class Docker extends Trigger {
             container,
         );
 
-        if (currentContainer) {
-            const currentContainerSpec = await this.inspectContainer(
-                currentContainer,
-                logContainer,
-            );
-            const currentContainerState = currentContainerSpec.State;
-
-            // Try to remove previous pulled images
-            if (this.configuration.prune) {
-                await this.pruneImages(
-                    dockerApi,
-                    registry,
-                    container,
-                    logContainer,
-                );
-            }
-
-            // Pull new image ahead of time
-            await this.pullImage(dockerApi, auth, newImage, logContainer);
-
-            // Dry-run?
-            if (this.configuration.dryrun) {
-                logContainer.info(
-                    'Do not replace the existing container because dry-run mode is enabled',
-                );
-            } else {
-                // Clone current container spec
-                const containerToCreateInspect = this.cloneContainer(
-                    currentContainerSpec,
-                    newImage,
-                );
-
-                // Stop current container
-                if (currentContainerState.Running) {
-                    await this.stopContainer(
-                        currentContainer,
-                        container.name,
-                        container.id,
-                        logContainer,
-                    );
-                }
-
-                if (currentContainerSpec.HostConfig?.AutoRemove !== true) {
-                    // Remove current container
-                    await this.removeContainer(
-                        currentContainer,
-                        container.name,
-                        container.id,
-                        logContainer,
-                    );
-                } else {
-                    // This is a special case when the container is set to be removed automatically when it stops.
-                    // In this case, we need to wait for the container to be removed before creating the new one.
-                    await this.waitContainerRemoved(
-                        currentContainer,
-                        container.name,
-                        container.id,
-                        logContainer,
-                    );
-                }
-
-                // Create new container
-                const newContainer =
-                    await this.createContainerWithMultiNetworkFallback(
-                        dockerApi,
-                        containerToCreateInspect,
-                        currentContainerSpec,
-                        container.name,
-                        logContainer,
-                    );
-
-                // Start container if it was running
-                if (currentContainerState.Running) {
-                    await this.startContainer(
-                        newContainer,
-                        container.name,
-                        logContainer,
-                    );
-                }
-
-                // Remove previous image (only when updateKind is tag)
-                if (this.configuration.prune) {
-                    const tagOrDigestToRemove =
-                        container.updateKind.kind === 'tag'
-                            ? container.image.tag.value
-                            : container.image.digest.repo;
-
-                    // Rebuild image definition string
-                    const oldImage = registry.getImageFullName(
-                        container.image,
-                        tagOrDigestToRemove,
-                    );
-                    await this.removeImage(dockerApi, oldImage, logContainer);
-                }
-            }
-        } else {
+        if (!currentContainer) {
             logContainer.warn(
                 'Unable to update the container because it does not exist',
             );
+            return undefined;
+        }
+
+        const currentContainerSpec = await this.inspectContainer(
+            currentContainer,
+            logContainer,
+        );
+
+        // Try to remove previous pulled images
+        if (this.configuration.prune) {
+            await this.pruneImages(
+                dockerApi,
+                registry,
+                container,
+                logContainer,
+            );
+        }
+
+        // Pull new image ahead of time
+        await this.pullImage(dockerApi, auth, newImage, logContainer);
+
+        return {
+            dockerApi,
+            registry,
+            newImage,
+            currentContainer,
+            currentContainerSpec,
+            state: currentContainerSpec.State,
+        };
+    }
+
+    /**
+     * Swap phase: stop/remove the current container and recreate it on the new image.
+     * @param container the container
+     * @param ctx the context returned by pullContainer
+     * @returns {Promise<void>}
+     */
+    async swapContainer(
+        container: Container,
+        ctx: ContainerUpdateContext,
+    ): Promise<void> {
+        // Child logger for the container to process
+        const logContainer = this.log.child({ container: fullName(container) });
+
+        const {
+            dockerApi,
+            registry,
+            newImage,
+            currentContainer,
+            currentContainerSpec,
+            state,
+        } = ctx;
+
+        // Clone current container spec
+        const containerToCreateInspect = this.cloneContainer(
+            currentContainerSpec,
+            newImage,
+        );
+
+        // Stop current container
+        if (state.Running) {
+            await this.stopContainer(
+                currentContainer,
+                container.name,
+                container.id,
+                logContainer,
+            );
+        }
+
+        if (currentContainerSpec.HostConfig?.AutoRemove !== true) {
+            // Remove current container
+            await this.removeContainer(
+                currentContainer,
+                container.name,
+                container.id,
+                logContainer,
+            );
+        } else {
+            // This is a special case when the container is set to be removed automatically when it stops.
+            // In this case, we need to wait for the container to be removed before creating the new one.
+            await this.waitContainerRemoved(
+                currentContainer,
+                container.name,
+                container.id,
+                logContainer,
+            );
+        }
+
+        // Create new container
+        const newContainer = await this.createContainerWithMultiNetworkFallback(
+            dockerApi,
+            containerToCreateInspect,
+            currentContainerSpec,
+            container.name,
+            logContainer,
+        );
+
+        // Start container if it was running
+        if (state.Running) {
+            await this.startContainer(
+                newContainer,
+                container.name,
+                logContainer,
+            );
+        }
+
+        // Remove previous image (only when updateKind is tag)
+        if (this.configuration.prune) {
+            const tagOrDigestToRemove =
+                container.updateKind.kind === 'tag'
+                    ? container.image.tag.value
+                    : container.image.digest.repo;
+
+            // Rebuild image definition string
+            const oldImage = registry.getImageFullName(
+                container.image,
+                tagOrDigestToRemove,
+            );
+            await this.removeImage(dockerApi, oldImage, logContainer);
         }
     }
 
     /**
-     * Update the containers.
+     * Update the container.
+     * @param container the container
+     * @returns {Promise<void>}
      */
-    async triggerBatch(containers: Container[]) {
+    async trigger(container: Container): Promise<void> {
+        const ctx = await this.pullContainer(container);
+        if (!ctx) {
+            return;
+        }
+
+        // Dry-run?
+        if (this.configuration.dryrun) {
+            const logContainer = this.log.child({
+                container: fullName(container),
+            });
+            logContainer.info(
+                'Do not replace the existing container because dry-run mode is enabled',
+            );
+            return;
+        }
+
+        await this.swapContainer(container, ctx);
+    }
+
+    /**
+     * Update the containers as a two-phase lockstep operation: pull ALL images
+     * (the barrier), then swap ALL containers back-to-back.
+     * @param containers
+     * @returns {Promise<void>}
+     */
+    async triggerBatch(containers: Container[]): Promise<void> {
+        // Phase 1 — pull ALL. A pull rejection aborts here, so no swap happens.
+        const contexts = await Promise.all(
+            containers.map((container) => this.pullContainer(container)),
+        );
+
+        // Dry-run pulls all, swaps none.
+        if (this.configuration.dryrun) {
+            return;
+        }
+
+        // Phase 2 — swap ALL. Skip any container that vanished before the pull.
         await Promise.all(
-            containers.map((container) => this.trigger(container)),
+            containers.map((container, index) => {
+                const ctx = contexts[index];
+                return ctx ? this.swapContainer(container, ctx) : undefined;
+            }),
         );
     }
 }

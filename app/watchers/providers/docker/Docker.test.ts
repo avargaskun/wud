@@ -334,7 +334,11 @@ describe('Docker Watcher', () => {
                 State: { Status: 'running' },
                 Name: '/test-container',
             });
-            const existingContainer = { id: 'container123', status: 'stopped', name: 'test-container' };
+            const existingContainer = {
+                id: 'container123',
+                status: 'stopped',
+                name: 'test-container',
+            };
             storeContainer.getContainer.mockReturnValue(existingContainer);
 
             const event = JSON.stringify({
@@ -661,9 +665,11 @@ describe('Docker Watcher', () => {
             });
 
             test('should retry on initial connection error', async () => {
-                mockDockerApi.getEvents.mockImplementationOnce((options, cb) => {
-                    cb(new Error('Connection failed'), null);
-                });
+                mockDockerApi.getEvents.mockImplementationOnce(
+                    (options, cb) => {
+                        cb(new Error('Connection failed'), null);
+                    },
+                );
 
                 await docker.listenDockerEvents();
 

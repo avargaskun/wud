@@ -34,6 +34,16 @@ if [ "$MODE" == "minimal" ]; then
         --label 'wud.tag.include=^latest$' \
         ghcr.io/stefanprodan/podinfo:latest
 
+    # Dedicated, name-findable remote containers for the batch trigger e2e (agent path)
+    $DOCKER_CMD run -d --name zz_batch_remote_1 \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.0\.0$' \
+        ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD run -d --name zz_batch_remote_2 \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.0\.0$' \
+        ghcr.io/stefanprodan/podinfo:5.0.0
+
 else
     # Full setup (Host/Controller)
     echo "   Running full setup..."
@@ -105,7 +115,12 @@ else
     echo "Pulling Quay test images ..."
     $DOCKER_CMD run -d --name quay_prometheus --label 'wud.watch=true' --label 'wud.tag.include=^v\d+\.\d+\.\d+$' --user root --tmpfs /prometheus:rw,mode=777 quay.io/prometheus/prometheus:v2.52.0
 
-    echo "✅ Test containers started (10 containers)"
-    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_)"
+    # BATCH (dedicated, name-findable local containers for the batch trigger e2e)
+    echo "Pulling batch test images ..."
+    $DOCKER_CMD run -d --name zz_batch_local_1 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD run -d --name zz_batch_local_2 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
+
+    echo "✅ Test containers started (12 containers)"
+    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_batch_)"
 fi
 

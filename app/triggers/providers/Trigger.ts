@@ -310,9 +310,7 @@ class Trigger extends Component {
                 if (containerReport.changed || !this.configuration.once) {
                     if (containerReport.container.updateAvailable) {
                         if (
-                            !this.isAutoForContainer(
-                                containerReport.container,
-                            )
+                            !this.isAutoForContainer(containerReport.container)
                         ) {
                             this.log.debug(
                                 `Auto execution disabled for container ${fullName(containerReport.container)} => skip`,
@@ -507,6 +505,20 @@ class Trigger extends Component {
         this.log.warn(
             'Cannot trigger container results; this trigger does not implement "batch" mode',
         );
+    }
+
+    /**
+     * Return the subset of containers this trigger cannot process as part of a
+     * lockstep batch. Default: none. Overridden by providers (e.g. docker-compose)
+     * that can only act on containers belonging to a managed resource.
+     * @param containers
+     * @returns {Promise<Container[]>}
+     */
+
+    async getUnbatchableContainers(
+        containers: Container[],
+    ): Promise<Container[]> {
+        return [];
     }
 
     /**

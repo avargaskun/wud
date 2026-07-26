@@ -182,6 +182,45 @@ This operation lets you manually run a trigger on the container.
 curl -X POST http://wud:3000/api/containers/31a61a8305ef1fc9a71fa4f20a68d7ec88b28e32303bbc4a5f192e851165b816/triggers/ntfy/one
 ```
 
+## Batch trigger on multiple containers
+
+This operation runs a single trigger against **multiple** containers as one lockstep
+operation. It is intended for groups of interdependent containers (e.g. `immich` +
+`immich-machine-learning`) that must always run the same version: for the `docker` and
+`dockercompose` update triggers, WUD pulls **all** the new images first and only swaps the
+containers once every pull has succeeded. This removes the long (pull-time) mismatch window;
+the containers are then recreated back-to-back, so only a brief recreate window (seconds)
+remains rather than the minutes a slow pull would otherwise cause.
+
+```bash
+# Local trigger
+curl -X POST http://wud:3000/api/containers/batch/triggers/docker/update \
+  -H 'Content-Type: application/json' \
+  -d '{ "containerIds": ["<id1>", "<id2>"] }'
+
+# Agent-scoped trigger
+curl -X POST http://wud:3000/api/containers/batch/triggers/<agent>/docker/update \
+  -H 'Content-Type: application/json' \
+  -d '{ "containerIds": ["<id1>", "<id2>"] }'
+```
+
+The request body is `{ "containerIds": [...] }`. The batch is validated strictly and is
+**all-or-nothing**: it is rejected before any Docker work begins if
+
+- `containerIds` is missing, empty, or not an array (`400`);
+- `containerIds` contains duplicates — the response lists the `duplicates` (`400`);
+- the trigger does not exist (`404`);
+- any container id is unknown — the response lists the `missing` ids (`404`);
+- the containers do not all belong to the trigger's agent (`400`);
+- the containers do not all share the same watcher (`400`);
+- any container has no pending update (`400`);
+- any container cannot be updated by this trigger as a batch — e.g. a `dockercompose`
+  container that does not belong to a managed compose file — the response lists the
+  offending `containers` (`400`).
+
+On success the response is `200` with an empty body. If a pull fails mid-batch, no
+container is swapped and the response is `500` (the whole group is left untouched).
+
 ## Delete a Container
 This operation lets you delete a container by id.
 

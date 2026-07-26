@@ -1,9 +1,17 @@
-// @ts-nocheck
 import fs from 'fs/promises';
 import path from 'path';
 import yaml from 'yaml';
 import Docker from '../docker/Docker';
 import { getState } from '../../../registry';
+import { Container } from '../../../model/container';
+import type { ContainerUpdateContext } from '../docker/types';
+
+/**
+ * Minimal shape of a parsed docker-compose file — only the fields this trigger reads.
+ */
+interface ComposeFile {
+    services: Record<string, { image?: string; build?: string }>;
+}
 
 /**
  * Return true if the container belongs to the compose file.
@@ -11,7 +19,10 @@ import { getState } from '../../../registry';
  * @param container
  * @returns true/false
  */
-function doesContainerBelongToCompose(compose, container) {
+function doesContainerBelongToCompose(
+    compose: ComposeFile,
+    container: Container,
+) {
     // Get registry configuration
     const registry = getState().registry[container.image.registry.name];
 
@@ -68,7 +79,7 @@ class Dockercompose extends Docker {
      * @param container
      * @returns {string|null}
      */
-    getComposeFileForContainer(container) {
+    getComposeFileForContainer(container: Container): string | null {
         // Check if container has a custom wud compose file label
         const composeFileLabel = this.configuration.composeFileLabel;
         if (container.labels && container.labels[composeFileLabel]) {
@@ -96,23 +107,26 @@ class Dockercompose extends Docker {
      * @param container the container
      * @returns {Promise<void>}
      */
-    async trigger(container) {
+    async trigger(container: Container): Promise<void> {
         return this.triggerBatch([container]);
     }
 
     /**
-     * Update the docker-compose stack.
+     * Group the containers by the compose file they belong to.
+     * Skips containers not running on the local host, without a resolvable or
+     * existing compose file, or that do not belong to their compose file.
      * @param containers the containers
-     * @returns {Promise<void>}
+     * @returns {Promise<Map<string, Container[]>>}
      */
-    async triggerBatch(containers) {
-        // Group containers by their compose file
-        const containersByComposeFile = new Map();
+    async groupByComposeFile(
+        containers: Container[],
+    ): Promise<Map<string, Container[]>> {
+        const groups = new Map<string, Container[]>();
 
         for (const container of containers) {
             // Filter on containers running on local host
-            const watcher = this.getWatcher(container);
-            if (watcher.dockerApi.modem.socketPath === '') {
+            const { modem } = this.getWatcher(container).dockerApi;
+            if ((modem as { socketPath?: string }).socketPath === '') {
                 this.log.warn(
                     `Cannot update container ${container.name} because not running on local host`,
                 );
@@ -130,94 +144,135 @@ class Dockercompose extends Docker {
             // Check if compose file exists
             try {
                 await fs.access(composeFile);
-            } catch (e) {
+            } catch {
                 this.log.warn(
                     `Compose file ${composeFile} for container ${container.name} does not exist`,
                 );
                 continue;
             }
 
-            if (!containersByComposeFile.has(composeFile)) {
-                containersByComposeFile.set(composeFile, []);
+            // Filter on containers that belong to this compose file
+            const compose = await this.getComposeFileAsObject(composeFile);
+            if (!doesContainerBelongToCompose(compose, container)) {
+                continue;
             }
-            containersByComposeFile.get(composeFile).push(container);
+
+            if (!groups.has(composeFile)) {
+                groups.set(composeFile, []);
+            }
+            groups.get(composeFile)!.push(container);
         }
 
-        // Process each compose file group
-        for (const [composeFile, containersInFile] of containersByComposeFile) {
-            await this.processComposeFile(composeFile, containersInFile);
-        }
+        return groups;
     }
 
     /**
-     * Process a specific compose file with its associated containers.
+     * Return the passed containers that cannot be batch-updated because they do
+     * not resolve to, or belong to, a managed compose file. Used by the batch API
+     * to reject the whole request instead of silently updating only a subset.
+     * @param containers
+     * @returns {Promise<Container[]>}
+     */
+    async getUnbatchableContainers(
+        containers: Container[],
+    ): Promise<Container[]> {
+        const groups = await this.groupByComposeFile(containers);
+        const batchable = new Set<Container>([...groups.values()].flat());
+        return containers.filter((container) => !batchable.has(container));
+    }
+
+    /**
+     * Rewrite a compose file with the update versions of its containers.
+     * Assumes non-dry-run (the caller guards dry-run). Does not swap containers.
      * @param composeFile
      * @param containers
      * @returns {Promise<void>}
      */
-    async processComposeFile(composeFile, containers) {
+    async rewriteComposeFile(
+        composeFile: string,
+        containers: Container[],
+    ): Promise<void> {
         this.log.info(`Processing compose file: ${composeFile}`);
 
         const compose = await this.getComposeFileAsObject(composeFile);
 
-        // Filter containers that belong to this compose file
-        const containersFiltered = containers.filter((container) =>
-            doesContainerBelongToCompose(compose, container),
-        );
-
-        if (containersFiltered.length === 0) {
-            this.log.warn(`No containers found in compose file ${composeFile}`);
-            return;
-        }
-
         // Track which services have already been mapped to avoid duplicates
         // (multiple containers can share the same image/service)
-        const processedServices = new Set();
+        const processedServices = new Set<string>();
 
         // [{ current: '1.0.0', update: '2.0.0' }, {...}]
-        const currentVersionToUpdateVersionArray = containersFiltered
-            .map((container) => {
-                const mapping = this.mapCurrentVersionToUpdateVersion(
+        const currentVersionToUpdateVersionArray = containers
+            .map((container) =>
+                this.mapCurrentVersionToUpdateVersion(
                     compose,
                     container,
                     processedServices,
-                );
-                return mapping;
-            })
+                ),
+            )
             .filter((map) => map !== undefined);
 
-        // Dry-run?
-        if (this.configuration.dryrun) {
-            this.log.info(
-                `Do not replace existing docker-compose file ${composeFile} (dry-run mode enabled)`,
-            );
-        } else {
-            // Backup docker-compose file
-            if (this.configuration.backup) {
-                const backupFile = `${composeFile}.back`;
-                await this.backup(composeFile, backupFile);
-            }
-
-            // Read the compose file as a string
-            let composeFileStr = (
-                await this.getComposeFile(composeFile)
-            ).toString();
-
-            // Replace all versions
-            currentVersionToUpdateVersionArray.forEach(
-                ({ current, update }) => {
-                    composeFileStr = composeFileStr.replaceAll(current, update);
-                },
-            );
-
-            // Write docker-compose.yml file back
-            await this.writeComposeFile(composeFile, composeFileStr);
+        // Backup docker-compose file
+        if (this.configuration.backup) {
+            const backupFile = `${composeFile}.back`;
+            await this.backup(composeFile, backupFile);
         }
 
-        // Update all containers
-        // (super.notify will take care of the dry-run mode for each container as well)
+        // Read the compose file as a string
+        let composeFileStr = (
+            await this.getComposeFile(composeFile)
+        ).toString();
+
+        // Replace all versions
+        currentVersionToUpdateVersionArray.forEach(({ current, update }) => {
+            composeFileStr = composeFileStr.replaceAll(current, update);
+        });
+
+        // Write docker-compose.yml file back
+        await this.writeComposeFile(composeFile, composeFileStr);
+    }
+
+    /**
+     * Update the docker-compose stack(s) as a two-phase lockstep operation:
+     * pull ALL images (the barrier), rewrite each compose file, then swap ALL
+     * containers back-to-back.
+     * @param containers the containers
+     * @returns {Promise<void>}
+     */
+    async triggerBatch(containers: Container[]): Promise<void> {
+        // Validate + group (local-host only, resolvable/existing compose file,
+        // container belongs to that file).
+        const groups = await this.groupByComposeFile(containers);
+        const valid = [...groups.values()].flat();
+        if (valid.length === 0) {
+            return;
+        }
+
+        // Pull phase — barrier across ALL containers in ALL files. A pull
+        // rejection aborts here, before any file write or swap.
+        const contexts = await Promise.all(
+            valid.map((container) => this.pullContainer(container)),
+        );
+        const ctxByContainer = new Map<
+            Container,
+            ContainerUpdateContext | undefined
+        >(valid.map((container, index) => [container, contexts[index]]));
+
+        // Dry-run: pull-only, no rewrite, no swap (matches previous behavior).
+        if (this.configuration.dryrun) {
+            return;
+        }
+
+        // Rewrite phase — images are local now; rewrite each compose file.
+        for (const [composeFile, groupContainers] of groups) {
+            await this.rewriteComposeFile(composeFile, groupContainers);
+        }
+
+        // Swap phase — barrier across ALL containers. Skip any that vanished.
         await Promise.all(
-            containersFiltered.map((container) => super.trigger(container)),
+            valid.map((container) => {
+                const ctx = ctxByContainer.get(container);
+                return ctx ? this.swapContainer(container, ctx) : undefined;
+            }),
         );
     }
 
@@ -247,7 +302,11 @@ class Dockercompose extends Docker {
      * @param processedServices - Set to track which services have already been processed
      * @returns {{current, update}|undefined}
      */
-    mapCurrentVersionToUpdateVersion(compose, container, processedServices) {
+    mapCurrentVersionToUpdateVersion(
+        compose: ComposeFile,
+        container: Container,
+        processedServices?: Set<string>,
+    ) {
         // Get registry configuration
         this.log.debug(`Get ${container.image.registry.name} registry manager`);
         const registry = getState().registry[container.image.registry.name];
@@ -301,12 +360,13 @@ class Dockercompose extends Docker {
      * @param data
      * @returns {Promise<void>}
      */
-    async writeComposeFile(file, data) {
+    async writeComposeFile(file: string, data: string): Promise<void> {
         try {
             await fs.writeFile(file, data);
         } catch (e) {
             this.log.error(`Error when writing ${file} (${e.message})`);
             this.log.debug(e);
+            throw e;
         }
     }
 
@@ -332,7 +392,7 @@ class Dockercompose extends Docker {
      * @param file - Optional file path, defaults to configuration file
      * @returns {Promise<any>}
      */
-    async getComposeFileAsObject(file = null) {
+    async getComposeFileAsObject(file = null): Promise<ComposeFile> {
         try {
             return yaml.parse((await this.getComposeFile(file)).toString(), {
                 maxAliasCount: 10000,

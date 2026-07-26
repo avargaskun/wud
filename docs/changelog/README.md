@@ -8,6 +8,8 @@
 - :fire: [OIDC] - Fix issues when WUD starts while OIDC provider is temporarily unavailable
 - :fire: [DOCKER] - Fix Docker container update when container is attached to multiple networks
 - :wrench: [TELEGRAM] - Replace deprecated client by direct HTTP API use
+- :star: Add batch trigger API endpoint (`POST /api/containers/batch/triggers/:triggerType/:triggerName`) to update multiple containers in lockstep
+- :warning: `docker`/`dockercompose` batch-mode updates are now all-or-nothing: every image is pulled before any container is swapped (compose files are rewritten after a successful pull, not before)
 
 ## 8.3.0
 - :star: Add opt-in mode for trigger association

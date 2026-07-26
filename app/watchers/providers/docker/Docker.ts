@@ -371,7 +371,10 @@ export class Docker extends Watcher {
                         if (oldName !== newName) {
                             containerFound.name = newName;
                             // Also refresh displayName if no explicit wud.display.name label is set
-                            const hasDisplayNameLabel = containerInspect.Config?.Labels?.[wudDisplayName];
+                            const hasDisplayNameLabel =
+                                containerInspect.Config?.Labels?.[
+                                    wudDisplayName
+                                ];
                             if (!hasDisplayNameLabel) {
                                 containerFound.displayName = newName;
                             }
