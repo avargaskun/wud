@@ -70,24 +70,15 @@ test.describe('Navigation', () => {
              }
         }
 
-        // Just click with force. Scrolling hidden elements causes timeout.
-        // Try waiting for actionability with a short timeout first
-        try {
-            await navItem.hover({ timeout: 1000 });
-            await navItem.click({ force: true, timeout: 5000 });
-        } catch (e) {
-            // If failed, try opening group again?
-            if (await configGroup.isVisible()) {
+        // Retry click+URL together: a click can be swallowed when the router is still resolving async guards
+        await expect(async () => {
+            if (await configGroup.isVisible() && !(await navItem.isVisible())) {
                 await configGroup.click();
                 await page.waitForTimeout(500);
-                await navItem.click({ force: true });
             }
-        }
-
-        // Wait for URL to change before moving to next item.
-        // If we don't wait, the next click might happen before navigation completes, leading to race conditions
-        // where we are still on the old page when we check the URL or click next item.
-        await expect(page).toHaveURL(new RegExp(`.*configuration/${link}`), { timeout: 15000 });
+            await navItem.click({ force: true, timeout: 5000 });
+            await expect(page).toHaveURL(new RegExp(`.*configuration/${link}`), { timeout: 5000 });
+        }).toPass({ timeout: 30000 });
 
         // Wait a bit to ensure the drawer state is stable (sometimes navigation causes drawer to re-render or close group)
         // If the URL check passed, we are on the page.

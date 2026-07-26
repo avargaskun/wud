@@ -4,7 +4,7 @@ Feature: WUD Registry API Exposure
     When I GET /api/registries
     Then response code should be 200
     And response body should be valid json
-    And response body path $ should be of type array with length 10
+    And response body path $ should be of type array with length 11
 
     And response body path $[0].id should be acr.private
     And response body path $[0].type should be acr
@@ -24,35 +24,40 @@ Feature: WUD Registry API Exposure
     And response body path $[2].configuration.accesskeyid should be .\*.*.
     And response body path $[2].configuration.secretaccesskey should be .\*.*.
 
-    And response body path $[3].id should be gcr.private
-    And response body path $[3].type should be gcr
-    And response body path $[3].name should be private
-    And response body path $[3].configuration.clientemail should be gcr@wud-test.iam.gserviceaccount.com
-    And response body path $[3].configuration.privatekey should be .\*.*.
+    And response body path $[3].id should be forgejo.public
+    And response body path $[3].type should be forgejo
+    And response body path $[3].name should be public
+    And response body path $[3].configuration.url should be https://code.forgejo.org
 
-    And response body path $[4].id should be ghcr.public
-    And response body path $[4].type should be ghcr
-    And response body path $[4].name should be public
+    And response body path $[4].id should be gcr.private
+    And response body path $[4].type should be gcr
+    And response body path $[4].name should be private
+    And response body path $[4].configuration.clientemail should be gcr@wud-test.iam.gserviceaccount.com
+    And response body path $[4].configuration.privatekey should be .\*.*.
 
-    And response body path $[5].id should be gitlab.private
-    And response body path $[5].type should be gitlab
-    And response body path $[5].name should be private
+    And response body path $[5].id should be ghcr.public
+    And response body path $[5].type should be ghcr
+    And response body path $[5].name should be public
 
-    And response body path $[6].id should be hub.public
-    And response body path $[6].type should be hub
-    And response body path $[6].name should be public
+    And response body path $[6].id should be gitlab.private
+    And response body path $[6].type should be gitlab
+    And response body path $[6].name should be private
 
-    And response body path $[7].id should be lscr.private
-    And response body path $[7].type should be lscr
-    And response body path $[7].name should be private
+    And response body path $[7].id should be hub.public
+    And response body path $[7].type should be hub
+    And response body path $[7].name should be public
 
-    And response body path $[8].id should be quay.public
-    And response body path $[8].type should be quay
-    And response body path $[8].name should be public
+    And response body path $[8].id should be lscr.private
+    And response body path $[8].type should be lscr
+    And response body path $[8].name should be private
 
-    And response body path $[9].id should be trueforge.private
-    And response body path $[9].type should be trueforge
-    And response body path $[9].name should be private
+    And response body path $[9].id should be quay.public
+    And response body path $[9].type should be quay
+    And response body path $[9].name should be public
+
+    And response body path $[10].id should be trueforge.private
+    And response body path $[10].type should be trueforge
+    And response body path $[10].name should be private
 
   Scenario: WUD must allow to get specific Registry state
     When I GET /api/registries/acr/private

@@ -440,8 +440,6 @@ describe('Docker Watcher', () => {
                 error: jest.fn(),
                 child: jest.fn().mockReturnThis(),
             };
-            docker.ensureLogger = jest.fn();
-
             // Mock watchCronDebounced
             docker.watchCronDebounced = jest.fn();
 

@@ -232,7 +232,6 @@ export class Docker extends Watcher {
             },
         };
         this.dockerApi.getEvents(options, (err, stream) => {
-            this.ensureLogger();
             if (err) {
                 this.log.warn(
                     `Unable to listen to Docker events [${err.message}]`,
