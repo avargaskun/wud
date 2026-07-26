@@ -1,8 +1,8 @@
 import Component, { ComponentConfiguration } from '../../registry/Component';
 import * as event from '../../event';
 import { getTriggerCounter } from '../../prometheus/trigger';
-import { fullName, Container } from '../../model/container';
-import { AlternativesSchema, ObjectSchema } from 'joi';
+import { fullName, Container, ContainerReport } from '../../model/container';
+import { ObjectSchema } from 'joi';
 
 export interface TriggerConfiguration extends ComponentConfiguration {
     auto?: boolean;
@@ -13,11 +13,6 @@ export interface TriggerConfiguration extends ComponentConfiguration {
     simplebody?: string;
     batchtitle?: string;
     includebydefault?: boolean;
-}
-
-export interface ContainerReport {
-    container: Container;
-    changed: boolean;
 }
 
 /**
@@ -74,6 +69,7 @@ function renderBatch(template: string, containers: Container[]) {
  */
 class Trigger extends Component {
     public configuration: TriggerConfiguration = {};
+    public strictAgentMatch = false;
 
     /**
      * Return true if update reaches trigger threshold.
@@ -154,6 +150,75 @@ class Trigger extends Component {
     }
 
     /**
+     * Apply the trigger to the container.
+     * Return the effective configuration if the trigger applies to the container.
+     * Return undefined if the trigger does not apply.
+     * @param container
+     * @returns {TriggerConfiguration|undefined}
+     */
+    apply(container: Container): TriggerConfiguration | undefined {
+        // Check Agent compatibility
+        if (
+            (this.agent || this.strictAgentMatch) &&
+            this.agent !== container.agent
+        ) {
+            return undefined;
+        }
+
+        // Use 'local' trigger id syntax - which is the syntax that will be used in remote Agents
+        const triggerId = `${this.type}.${this.name}`;
+
+        const includedTriggers = container.triggerInclude
+            ? container.triggerInclude
+                  .split(/\s*,\s*/)
+                  .map((includedTrigger) =>
+                      Trigger.parseIncludeOrIncludeTriggerString(
+                          includedTrigger.trim(),
+                      ),
+                  )
+            : undefined;
+
+        const excludedTriggers = container.triggerExclude
+            ? container.triggerExclude
+                  .split(/\s*,\s*/)
+                  .map((excludedTrigger) =>
+                      Trigger.parseIncludeOrIncludeTriggerString(
+                          excludedTrigger.trim(),
+                      ),
+                  )
+            : undefined;
+
+        const configuration = { ...this.configuration };
+        let isIncluded = this.configuration.includebydefault !== false;
+
+        if (includedTriggers) {
+            const includedTrigger = includedTriggers.find(
+                (tr) => tr.id === triggerId,
+            );
+            if (includedTrigger) {
+                isIncluded = true;
+                configuration.threshold = includedTrigger.threshold;
+            } else {
+                isIncluded = false;
+            }
+        }
+
+        if (
+            excludedTriggers &&
+            excludedTriggers
+                .map((excludedTrigger) => excludedTrigger.id)
+                .includes(triggerId)
+        ) {
+            isIncluded = false;
+        }
+
+        if (isIncluded) {
+            return configuration;
+        }
+        return undefined;
+    }
+
+    /**
      * Handle container report (simple mode).
      * @param containerReport
      * @returns {Promise<void>}
@@ -170,15 +235,20 @@ class Trigger extends Component {
                 }) || this.log;
             let status = 'error';
             try {
-                if (
+                const effectiveConfiguration = this.apply(
+                    containerReport.container,
+                );
+                if (!effectiveConfiguration) {
+                    logContainer.debug('Trigger conditions not met => ignore');
+                } else if (
                     !Trigger.isThresholdReached(
                         containerReport.container,
-                        (this.configuration.threshold || 'all').toLowerCase(),
+                        (
+                            effectiveConfiguration.threshold || 'all'
+                        ).toLowerCase(),
                     )
                 ) {
                     logContainer.debug('Threshold not reached => ignore');
-                } else if (!this.mustTrigger(containerReport.container)) {
-                    logContainer.debug('Trigger conditions not met => ignore');
                 } else {
                     logContainer.debug('Run');
                     await this.trigger(containerReport.container);
@@ -214,27 +284,28 @@ class Trigger extends Component {
     async handleContainerReports(containerReports: ContainerReport[]) {
         // Filter on containers with update available and passing trigger threshold
         try {
-            const containerReportsFiltered = containerReports
-                .filter(
-                    (containerReport) =>
-                        containerReport.changed || !this.configuration.once,
-                )
-                .filter(
-                    (containerReport) =>
-                        containerReport.container.updateAvailable,
-                )
-                .filter((containerReport) =>
-                    this.mustTrigger(containerReport.container),
-                )
-                .filter((containerReport) =>
-                    Trigger.isThresholdReached(
-                        containerReport.container,
-                        (this.configuration.threshold || 'all').toLowerCase(),
-                    ),
-                );
-            const containersFiltered = containerReportsFiltered.map(
-                (containerReport) => containerReport.container,
-            );
+            const containersFiltered: Container[] = [];
+            containerReports.forEach((containerReport) => {
+                if (containerReport.changed || !this.configuration.once) {
+                    if (containerReport.container.updateAvailable) {
+                        const effectiveConfiguration = this.apply(
+                            containerReport.container,
+                        );
+                        if (
+                            effectiveConfiguration &&
+                            Trigger.isThresholdReached(
+                                containerReport.container,
+                                (
+                                    effectiveConfiguration.threshold || 'all'
+                                ).toLowerCase(),
+                            )
+                        ) {
+                            containersFiltered.push(containerReport.container);
+                        }
+                    }
+                }
+            });
+
             if (containersFiltered.length > 0) {
                 this.log.debug('Run batch');
                 await this.triggerBatch(containersFiltered);

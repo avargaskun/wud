@@ -1,130 +1,117 @@
-// @ts-nocheck
-jest.mock('express', () => ({
-    Router: jest.fn(() => ({
-        use: jest.fn(),
-        get: jest.fn(),
-        post: jest.fn(),
-        delete: jest.fn(),
-    })),
-}));
-
-jest.mock('nocache', () => jest.fn());
-
-jest.mock('../configuration', () => ({
-    getLogLevel: jest.fn(() => 'info'),
-    getServerConfiguration: jest.fn(() => ({
-        feature: {
-            delete: true,
-        },
-    })),
-}));
-
-jest.mock('../store/container', () => ({
-    getContainer: jest.fn(),
-    getContainers: jest.fn(),
-    deleteContainer: jest.fn(),
-}));
-
-jest.mock('../registry', () => ({
-    getState: jest.fn(),
-}));
-
-import * as containerRouter from './container';
+import { getContainerTriggers } from './container';
 import * as storeContainer from '../store/container';
 import * as registry from '../registry';
 
-function createTrigger(type, name, configuration) {
-    return {
-        type,
-        name,
-        maskConfiguration: () => configuration,
+jest.mock('../store/container');
+jest.mock('../registry');
+jest.mock('./component');
+jest.mock('../triggers/providers/Trigger');
+
+describe('Container API', () => {
+    const mockRes = {
+        status: jest.fn().mockReturnThis(),
+        json: jest.fn(),
+        sendStatus: jest.fn(),
     };
-}
 
-describe('Container Router', () => {
-    beforeEach(async () => {
+    beforeEach(() => {
         jest.clearAllMocks();
+        (registry.getState as jest.Mock).mockReturnValue({ trigger: {} });
     });
 
-    test('getContainerTriggers should not associate opt-in triggers by default', async () => {
-        const router = containerRouter.init();
-        const routeHandler = router.get.mock.calls.find(
-            ([route]) => route === '/:id/triggers',
-        )[1];
-
-        storeContainer.getContainer.mockReturnValue({
-            id: 'container1',
-        });
-        registry.getState.mockReturnValue({
-            trigger: {
-                'smtp.gmail': createTrigger('smtp', 'gmail', {
-                    includebydefault: true,
-                }),
-                'dockercompose.local': createTrigger('dockercompose', 'local', {
-                    includebydefault: false,
-                }),
-            },
-        });
-
-        const mockRes = {
-            status: jest.fn().mockReturnThis(),
-            json: jest.fn(),
+    describe('getContainerTriggers', () => {
+        const mockTrigger1 = {
+            getId: () => 'docker.t1',
+            type: 'docker',
+            name: 't1',
+            configuration: { threshold: 'all' },
+            apply: jest.fn(),
+            maskConfiguration: jest.fn(),
+        };
+        const mockTrigger2 = {
+            getId: () => 'slack.t2',
+            type: 'slack',
+            name: 't2',
+            configuration: {},
+            apply: jest.fn(),
+            maskConfiguration: jest.fn(),
         };
 
-        await routeHandler({ params: { id: 'container1' } }, mockRes);
-
-        expect(mockRes.status).toHaveBeenCalledWith(200);
-        expect(mockRes.json).toHaveBeenCalledWith([
-            {
-                id: 'smtp.gmail',
-                type: 'smtp',
-                name: 'gmail',
-                configuration: {
-                    includebydefault: true,
+        beforeEach(() => {
+            (registry.getState as jest.Mock).mockReturnValue({
+                trigger: {
+                    'docker.t1': mockTrigger1,
+                    'slack.t2': mockTrigger2,
                 },
-            },
-        ]);
-    });
-
-    test('getContainerTriggers should associate explicitly included opt-in triggers', async () => {
-        const router = containerRouter.init();
-        const routeHandler = router.get.mock.calls.find(
-            ([route]) => route === '/:id/triggers',
-        )[1];
-
-        storeContainer.getContainer.mockReturnValue({
-            id: 'container1',
-            triggerInclude: 'dockercompose.local:minor',
-        });
-        registry.getState.mockReturnValue({
-            trigger: {
-                'smtp.gmail': createTrigger('smtp', 'gmail', {
-                    includebydefault: true,
-                }),
-                'dockercompose.local': createTrigger('dockercompose', 'local', {
-                    includebydefault: false,
-                }),
-            },
+            });
+            mockTrigger1.apply.mockReset();
+            mockTrigger2.apply.mockReset();
+            mockTrigger1.maskConfiguration.mockReset();
+            mockTrigger2.maskConfiguration.mockReset();
         });
 
-        const mockRes = {
-            status: jest.fn().mockReturnThis(),
-            json: jest.fn(),
-        };
+        test('should return 404 if container is not found', async () => {
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                undefined,
+            );
+            const req = { params: { id: 'unknown' } };
 
-        await routeHandler({ params: { id: 'container1' } }, mockRes);
+            await getContainerTriggers(req, mockRes);
 
-        expect(mockRes.status).toHaveBeenCalledWith(200);
-        expect(mockRes.json).toHaveBeenCalledWith([
-            {
-                id: 'dockercompose.local',
-                type: 'dockercompose',
-                name: 'local',
-                configuration: {
-                    includebydefault: false,
-                    threshold: 'minor',
-                },
-            },
-        ]);
+            expect(mockRes.sendStatus).toHaveBeenCalledWith(404);
+        });
+
+        test('should return triggers that are applicable', async () => {
+            const container = { id: 'c1' };
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+
+            mockTrigger1.apply.mockReturnValue(mockTrigger1.configuration);
+            mockTrigger1.maskConfiguration.mockReturnValue(
+                mockTrigger1.configuration,
+            );
+
+            mockTrigger2.apply.mockReturnValue(undefined); // Not applicable
+
+            const req = { params: { id: 'c1' } };
+            await getContainerTriggers(req, mockRes);
+
+            expect(mockTrigger1.apply).toHaveBeenCalledWith(container);
+            expect(mockTrigger2.apply).toHaveBeenCalledWith(container);
+
+            expect(mockRes.json).toHaveBeenCalledWith([
+                expect.objectContaining({ name: 't1' }),
+            ]);
+            // check t2 not present
+            const response = mockRes.json.mock.calls[0][0];
+            expect(response).toHaveLength(1);
+            expect(response[0].name).toBe('t1');
+        });
+
+        test('should return triggers sorted by type and name', async () => {
+            const container = { id: 'c1' };
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+
+            // t1 is docker, t2 is slack. docker < slack.
+            mockTrigger1.apply.mockReturnValue(mockTrigger1.configuration);
+            mockTrigger1.maskConfiguration.mockReturnValue(
+                mockTrigger1.configuration,
+            );
+            mockTrigger2.apply.mockReturnValue(mockTrigger2.configuration);
+            mockTrigger2.maskConfiguration.mockReturnValue(
+                mockTrigger2.configuration,
+            );
+
+            const req = { params: { id: 'c1' } };
+            await getContainerTriggers(req, mockRes);
+
+            expect(mockRes.json).toHaveBeenCalledWith([
+                expect.objectContaining({ type: 'docker', name: 't1' }),
+                expect.objectContaining({ type: 'slack', name: 't2' }),
+            ]);
+        });
     });
 });

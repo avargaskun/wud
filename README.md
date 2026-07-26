@@ -13,9 +13,16 @@ aka ***What's up Docker?***
 
 ### [:rocket: Getting started](https://getwud.github.io/wud/)
 
+### Agent Mode
+WUD supports a distributed mode where "Agents" run on remote nodes to discover containers, and report back to a central "Controller".
+See the [documentation](docs/configuration/agents/README.md) for details.
+
 ### Contact & Support
 - Create a [GitHub issue](https://github.com/getwud/wud/issues) for bug reports, feature requests, or questions
 - Add a ⭐️ [star on GitHub](https://github.com/getwud/wud) or [Buy me coffee](https://www.buymeacoffee.com/61rUNMm)&nbsp;to support the project!
+
+### Development
+Interested in contributing? Check out our [Developer Guide](dev/README.md).
 
 ### License
 This project is licensed under the [MIT license](https://github.com/getwud/wud/blob/main/LICENSE).

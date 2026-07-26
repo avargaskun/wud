@@ -1,5 +1,10 @@
-import axios, { AxiosRequestConfig, Method, AxiosResponse } from 'axios';
-import log from '../log';
+import axios, {
+    AxiosRequestConfig,
+    Method,
+    AxiosResponse,
+    AxiosInstance,
+} from 'axios';
+import log, { registerAxiosErrorLogging } from '../log';
 import Component from '../registry/Component';
 import { getSummaryTags } from '../prometheus/registry';
 import { ContainerImage } from '../model/container';
@@ -40,6 +45,14 @@ export interface RegistryManifestResponse {
  * Docker Registry Abstract class.
  */
 export class Registry extends Component {
+    protected axiosInstance: AxiosInstance;
+
+    constructor() {
+        super();
+        this.axiosInstance = axios.create();
+        registerAxiosErrorLogging(this.axiosInstance, () => this.log);
+    }
+
     /**
      * Encode Bse64(login:password)
      */
@@ -147,10 +160,12 @@ export class Registry extends Component {
                 },
             });
         if (responseManifests) {
-            log.debug(`Found manifests [${JSON.stringify(responseManifests)}]`);
+            this.log.debug(
+                `Found manifests [${JSON.stringify(responseManifests)}]`,
+            );
             if (responseManifests.schemaVersion === 2) {
-                log.debug('Manifests found with schemaVersion = 2');
-                log.debug(
+                this.log.debug('Manifests found with schemaVersion = 2');
+                this.log.debug(
                     `Manifests media type detected [${responseManifests.mediaType}]`,
                 );
                 if (
@@ -159,7 +174,7 @@ export class Registry extends Component {
                     responseManifests.mediaType ===
                         'application/vnd.oci.image.index.v1+json'
                 ) {
-                    log.debug(
+                    this.log.debug(
                         `Filter manifest for [arch=${image.architecture}, os=${image.os}, variant=${image.variant}]`,
                     );
                     let manifestFound;
@@ -190,7 +205,7 @@ export class Registry extends Component {
                     }
 
                     if (manifestFound) {
-                        log.debug(
+                        this.log.debug(
                             `Manifest found with [digest=${manifestFound.digest}, mediaType=${manifestFound.mediaType}]`,
                         );
                         manifestDigestFound = manifestFound.digest;
@@ -207,14 +222,14 @@ export class Registry extends Component {
                     // identifier. Do not use responseManifests.config.digest here;
                     // that's the digest of the config blob, not of the manifest,
                     // and is not a valid value to re-request a manifest with.
-                    log.debug(
+                    this.log.debug(
                         `Manifest found with [reference=${tagOrDigest}, mediaType=${responseManifests.mediaType}]`,
                     );
                     manifestDigestFound = tagOrDigest;
                     manifestMediaType = responseManifests.mediaType;
                 }
             } else if (responseManifests.schemaVersion === 1) {
-                log.debug('Manifests found with schemaVersion = 1');
+                this.log.debug('Manifests found with schemaVersion = 1');
                 const v1Compat = JSON.parse(
                     responseManifests.history[0].v1Compatibility,
                 );
@@ -223,7 +238,7 @@ export class Registry extends Component {
                     created: v1Compat.created,
                     version: 1,
                 };
-                log.debug(
+                this.log.debug(
                     `Manifest found with [digest=${manifestFound.digest}, created=${manifestFound.created}, version=${manifestFound.version}]`,
                 );
                 return manifestFound;
@@ -327,19 +342,19 @@ export class Registry extends Component {
         );
 
         try {
-            const response = (await axios(
+            const response = (await this.axiosInstance(
                 axiosOptionsWithAuth,
             )) as AxiosResponse<T>;
             this.observePrometheusSummaryTags(start);
             return resolveWithFullResponse ? response : response.data;
         } catch (error) {
-            const end = new Date().getTime();
             this.observePrometheusSummaryTags(start);
             throw error;
         }
     }
 
     observePrometheusSummaryTags(start: number) {
+        // The metric may be undefined if running in Agent mode because Prometheus is disabled
         const summaryTags = getSummaryTags();
         if (summaryTags) {
             const end = new Date().getTime();

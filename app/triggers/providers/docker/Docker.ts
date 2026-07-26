@@ -11,6 +11,8 @@ import Logger from 'bunyan';
  * Replace a Docker container with an updated one.
  */
 class Docker extends Trigger {
+    public strictAgentMatch = true;
+
     /**
      * Get the Trigger configuration schema.
      */

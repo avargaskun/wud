@@ -1,6 +1,7 @@
 import ContainerItem from "@/components/ContainerItem.vue";
 import ContainerFilter from "@/components/ContainerFilter.vue";
 import { deleteContainer, getAllContainers } from "@/services/container";
+import agentService from "@/services/agent";
 import { defineComponent } from "vue";
 
 export default defineComponent({
@@ -12,7 +13,9 @@ export default defineComponent({
   data() {
     return {
       containers: [] as any[],
+      agentsList: [] as any[],
       registrySelected: "",
+      agentSelected: "",
       watcherSelected: "",
       updateKindSelected: "",
       updateAvailableSelected: false,
@@ -33,6 +36,16 @@ export default defineComponent({
         ...new Set(
           this.containers
             .map((container) => container.image.registry.name)
+            .sort(),
+        ),
+      ];
+    },
+    agents() {
+      return [
+        ...new Set(
+          this.containers
+            .map((container) => container.agent)
+            .filter((agent) => agent)
             .sort(),
         ),
       ];
@@ -62,6 +75,9 @@ export default defineComponent({
           this.registrySelected
             ? this.registrySelected === container.image.registry.name
             : true,
+        )
+        .filter((container) =>
+          this.agentSelected ? this.agentSelected === container.agent : true,
         )
         .filter((container) =>
           this.watcherSelected
@@ -106,6 +122,10 @@ export default defineComponent({
       this.registrySelected = registrySelected;
       this.updateQueryParams();
     },
+    onAgentChanged(agentSelected: string) {
+      this.agentSelected = agentSelected;
+      this.updateQueryParams();
+    },
     onWatcherChanged(watcherSelected: string) {
       this.watcherSelected = watcherSelected;
       this.updateQueryParams();
@@ -130,6 +150,9 @@ export default defineComponent({
       const query: any = {};
       if (this.registrySelected) {
         query["registry"] = this.registrySelected;
+      }
+      if (this.agentSelected) {
+        query["agent"] = this.agentSelected;
       }
       if (this.watcherSelected) {
         query["watcher"] = this.watcherSelected;
@@ -170,16 +193,23 @@ export default defineComponent({
 
   async beforeRouteEnter(to, from, next) {
     const registrySelected = to.query["registry"];
+    const agentSelected = to.query["agent"];
     const watcherSelected = to.query["watcher"];
     const updateKindSelected = to.query["update-kind"];
     const updateAvailable = to.query["update-available"];
     const oldestFirst = to.query["oldest-first"];
     const groupByLabel = to.query["group-by-label"];
     try {
-      const containers = await getAllContainers();
+      const [containers, agents] = await Promise.all([
+        getAllContainers(),
+        agentService.getAgents(),
+      ]);
       next((vm: any) => {
         if (registrySelected) {
           vm.registrySelected = registrySelected;
+        }
+        if (agentSelected) {
+          vm.agentSelected = agentSelected;
         }
         if (watcherSelected) {
           vm.watcherSelected = watcherSelected;
@@ -197,6 +227,7 @@ export default defineComponent({
           vm.groupByLabel = groupByLabel;
         }
         vm.containers = containers;
+        vm.agentsList = agents;
       });
     } catch (e: any) {
       next((vm: any) => {

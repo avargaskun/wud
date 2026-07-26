@@ -4,6 +4,19 @@
       <v-col cols="12" sm="6" md="3">
         <v-select
           :hide-details="true"
+          v-model="agentSelected"
+          :items="agents"
+          @update:modelValue="emitAgentChanged"
+          :clearable="true"
+          label="Agent"
+          variant="outlined"
+          density="compact"
+          data-testid="filter-agent"
+        ></v-select>
+      </v-col>
+      <v-col>
+        <v-select
+          :hide-details="true"
           v-model="watcherSelected"
           :items="watchers"
           @update:modelValue="emitWatcherChanged"
@@ -11,6 +24,7 @@
           label="Watcher"
           variant="outlined"
           density="compact"
+          data-testid="filter-watcher"
         ></v-select>
       </v-col>
       <v-col cols="12" sm="6" md="3">
@@ -23,6 +37,7 @@
           label="Registry"
           variant="outlined"
           density="compact"
+          data-testid="filter-registry"
         ></v-select>
       </v-col>
       <v-col cols="12" sm="6" md="3">
@@ -35,6 +50,7 @@
           label="Update kind"
           variant="outlined"
           density="compact"
+          data-testid="filter-update-kind"
         ></v-select>
       </v-col>
 
@@ -47,6 +63,7 @@
           clearable
           variant="outlined"
           density="compact"
+          data-testid="filter-group-by"
         >
         </v-autocomplete>
       </v-col>
@@ -58,6 +75,7 @@
           @update:modelValue="emitUpdateAvailableChanged"
           :hide-details="true"
           density="compact"
+          data-testid="filter-update-available"
         />
       </v-col>
       <v-col cols="6" sm="6" md="3">
@@ -68,6 +86,7 @@
           @update:modelValue="emitOldestFirstChanged"
           :hide-details="true"
           density="compact"
+          data-testid="filter-oldest-first"
         />
       </v-col>
       <v-col cols="12" sm="12" md="6" class="d-flex justify-center justify-md-end">
@@ -75,6 +94,7 @@
           color="secondary"
           @click.stop="refreshAllContainers"
           :loading="isRefreshing"
+          data-testid="filter-refresh"
         >
           Watch now
           <v-icon> mdi-refresh</v-icon>

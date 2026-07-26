@@ -369,44 +369,44 @@ test('isThresholdReached should return true when there is no semverDiff regardle
     ).toBeTruthy();
 });
 
-test('mustTrigger should include containers without trigger include label by default', async () => {
+test('apply should include containers without trigger include label by default', async () => {
     trigger.type = 'smtp';
     trigger.name = 'gmail';
     delete trigger.configuration.includebydefault;
 
-    expect(trigger.mustTrigger({})).toBeTruthy();
+    expect(trigger.apply({})).toBeTruthy();
 });
 
-test('mustTrigger should ignore containers without trigger include label when include by default is disabled', async () => {
+test('apply should ignore containers without trigger include label when include by default is disabled', async () => {
     trigger.type = 'dockercompose';
     trigger.name = 'local';
     trigger.configuration.includebydefault = false;
 
-    expect(trigger.mustTrigger({})).toBeFalsy();
+    expect(trigger.apply({})).toBeUndefined();
 });
 
-test('mustTrigger should include explicitly selected containers when include by default is disabled', async () => {
+test('apply should include explicitly selected containers when include by default is disabled', async () => {
     trigger.type = 'dockercompose';
     trigger.name = 'local';
     trigger.configuration.includebydefault = false;
 
     expect(
-        trigger.mustTrigger({
+        trigger.apply({
             triggerInclude: 'dockercompose.local',
         }),
     ).toBeTruthy();
 });
 
-test('mustTrigger should still honor trigger exclude when include by default is enabled', async () => {
+test('apply should still honor trigger exclude when include by default is enabled', async () => {
     trigger.type = 'dockercompose';
     trigger.name = 'local';
     trigger.configuration.includebydefault = true;
 
     expect(
-        trigger.mustTrigger({
+        trigger.apply({
             triggerExclude: 'dockercompose.local',
         }),
-    ).toBeFalsy();
+    ).toBeUndefined();
 });
 
 test('renderSimpleTitle should replace placeholders when called', async () => {
@@ -501,4 +501,110 @@ test('renderBatchBody should replace placeholders when called', async () => {
     ).toEqual(
         '- Container container-name running with tag 1.0.0 can be updated to tag 2.0.0\nhttp://test\n',
     );
+});
+
+describe('apply', () => {
+    test('should return configuration if container has no include/exclude', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        const container = { id: 'c1' };
+        expect(trigger.apply(container)).toEqual(trigger.configuration);
+    });
+
+    test('should return undefined if trigger is agent and container is local', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.agent = 'agent1';
+        const container = { id: 'c1' };
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('should return undefined if trigger is agent and container is from another agent', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.agent = 'agent1';
+        const container = { id: 'c1', agent: 'agent2' };
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('should return configuration if trigger is agent and container is from same agent', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.agent = 'agent1';
+        const container = { id: 'c1', agent: 'agent1' };
+        expect(trigger.apply(container)).toEqual(trigger.configuration);
+    });
+
+    test('should return configuration if trigger is in include list', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        const container = { id: 'c1', triggerInclude: 'docker.t1' };
+        expect(trigger.apply(container)).toEqual(trigger.configuration);
+    });
+
+    test('should return configuration with overridden threshold if trigger is in include list with threshold', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.configuration.threshold = 'all';
+        const container = { id: 'c1', triggerInclude: 'docker.t1:major' };
+        const expectedConfig = { ...trigger.configuration, threshold: 'major' };
+        expect(trigger.apply(container)).toEqual(expectedConfig);
+    });
+
+    test('should return undefined if trigger is not in include list', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        const container = { id: 'c1', triggerInclude: 'docker.t2' };
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('should return undefined if trigger is in exclude list', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        const container = { id: 'c1', triggerExclude: 'docker.t1' };
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('should return undefined if trigger is in exclude list even if in include list', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        const container = {
+            id: 'c1',
+            triggerInclude: 'docker.t1',
+            triggerExclude: 'docker.t1',
+        };
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('should handle spaces in include/exclude strings', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        const container = { id: 'c1', triggerInclude: ' docker.t1 ' };
+        expect(trigger.apply(container)).toEqual(trigger.configuration);
+    });
+
+    test('should return undefined if strictAgentMatch is true and trigger is local but container is remote', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.strictAgentMatch = true;
+        const container = { id: 'c1', agent: 'agent1' };
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('should return configuration if strictAgentMatch is true and trigger is local and container is local', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.strictAgentMatch = true;
+        const container = { id: 'c1' };
+        expect(trigger.apply(container)).toEqual(trigger.configuration);
+    });
+
+    test('should return configuration if strictAgentMatch is true and trigger is agent and container is same agent', () => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.agent = 'agent1';
+        trigger.strictAgentMatch = true;
+        const container = { id: 'c1', agent: 'agent1' };
+        expect(trigger.apply(container)).toEqual(trigger.configuration);
+    });
 });

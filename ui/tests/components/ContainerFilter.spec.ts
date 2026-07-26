@@ -6,6 +6,8 @@ const mockProps = {
   registrySelectedInit: '',
   watchers: ['local', 'docker'],
   watcherSelectedInit: '',
+  agents: [ { name: 'agent1', connected: true }, { name: 'agent2', connected: false } ],
+  agentSelectedInit: '',
   updateKinds: ['major', 'minor', 'patch'],
   updateKindSelectedInit: '',
   updateAvailable: false,

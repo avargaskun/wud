@@ -1,4 +1,3 @@
-import { execSync } from 'child_process';
 import * as https from 'https';
 import * as os from 'os';
 import * as semver from 'semver';
@@ -40,18 +39,6 @@ function getDockerArchitecture(): string {
         case 'arm': return 'arm';
         case 'ia32': return '386';
         default: return 'amd64';
-    }
-}
-
-/**
- * Get the architecture of a locally pulled image (wud resolves digests for the
- * architecture of the watched container's image, not the host's).
- */
-function getLocalImageArchitecture(imageRef: string): string | null {
-    try {
-        return execSync(`docker image inspect --format '{{.Architecture}}' ${imageRef}`, { stdio: ['ignore', 'pipe', 'ignore'] }).toString().trim() || null;
-    } catch {
-        return null;
     }
 }
 
@@ -234,15 +221,6 @@ async function mintGitlabToken(image: string, ctx: RequestContext): Promise<stri
     return `Bearer ${data.token}`;
 }
 
-async function mintDockerHubToken(repo: string, ctx: RequestContext): Promise<string> {
-    const url = `https://auth.docker.io/token?service=registry.docker.io&scope=repository:${repo}:pull`;
-    const data = await requestJson<{ token?: string }>(url, {}, ctx);
-    if (!data.token) {
-        throw new Error(`${ctx.label}: no token returned by ${url}`);
-    }
-    return `Bearer ${data.token}`;
-}
-
 function hubRepo(image: string): string {
     return image.includes('/') ? image : `library/${image}`;
 }
@@ -385,7 +363,7 @@ async function resolveLatestVersion(registry: string, image: string, pattern: st
             const url = `https://hub.docker.com/v2/repositories/${hubRepo(image)}/tags?page_size=100&ordering=last_updated`;
             const data = await requestJson<{ results?: { name: string }[] | null }>(url, {}, { label, deadline });
             tags = (data.results || []).map((r) => r.name);
-        } else if (registry === 'ghcr.public' || registry === 'ghcr.private' || registry === 'lscr.private') {
+        } else if (registry === 'ghcr.public' || registry === 'lscr.private') {
             const collected = await collectV2Tags('ghcr.io', image, label, (ctx) => mintGhcrToken(image, ctx), deadline);
             tags = collected.tags;
             pages = collected.pages;
@@ -433,11 +411,6 @@ async function resolveLatestDigest(registry: string, image: string, tag: string)
             auth = await mintGhcrToken(image, { label, deadline });
             url = `https://ghcr.io/v2/${image}/manifests/${tag}`;
             arch = getDockerArchitecture();
-        } else if (registry === 'hub.public') {
-            const repo = hubRepo(image);
-            auth = await mintDockerHubToken(repo, { label, deadline });
-            url = `https://registry-1.docker.io/v2/${repo}/manifests/${tag}`;
-            arch = getLocalImageArchitecture(`${repo}:${tag}`) || getDockerArchitecture();
         } else {
             throw new Error(`getLatestDigest not implemented for registry: ${registry}`);
         }

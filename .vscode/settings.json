@@ -1,3 +1,13 @@
 {
-    "jest.rootPath": "app"
+    "jest.virtualFolders": [
+        {
+            "name": "app",
+            "rootPath": "app",
+        },
+        {
+            "name": "ui",
+            "rootPath": "ui",
+        },
+    ],
+    "jest.runMode": "on-demand"
 }
