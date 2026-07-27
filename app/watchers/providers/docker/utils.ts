@@ -7,7 +7,7 @@ import {
     compare as compareSemver,
 } from '../../../tag';
 import log from '../../../log';
-import { wudWatchDigest } from './label';
+import { wudWatchDigest, wudWatchDigestSemver } from './label';
 import {
     validate as validateContainer,
     fullName,
@@ -328,6 +328,33 @@ export function computeUpdateBuckets(
     return updates;
 }
 
+/**
+ * Return true if the digest must be watched for a container.
+ * @param registryProvider
+ * @param isSemver
+ * @param watchDigestLabelValue the value of the wud.watch.digest label
+ * @param watchDigestSemverLabelValue the value of the wud.watch.digest.semver label
+ * @param imageName
+ */
+export function shouldWatchDigestForContainer(
+    registryProvider: any,
+    isSemver: boolean,
+    watchDigestLabelValue: string | undefined,
+    watchDigestSemverLabelValue: string | undefined,
+    imageName: string,
+): boolean {
+    if (isSemver) {
+        // Semver containers: opt in via the DEDICATED label only.
+        // Deliberately NOT wud.watch.digest -- that label is inert on semver tags
+        // today, so honouring it would activate digest watching on upgrade for
+        // deployments that already set it, recreating running containers unprompted.
+        // The provider default is likewise not consulted: most providers default to
+        // true, which would add 2 HTTP calls per container per cycle everywhere.
+        return watchDigestSemverLabelValue === 'true';
+    }
+    return registryProvider.shouldWatchDigest(watchDigestLabelValue, imageName);
+}
+
 export function normalizeContainer(container: Container): Container {
     const containerWithNormalizedImage = container;
     const registryProvider = Object.values(getRegistries()).find((provider) =>
@@ -392,6 +419,11 @@ export function isContainerToWatch(
         : watchByDefault;
 }
 
+export interface FindNewVersionResult {
+    result: ContainerResult;
+    updates: ContainerUpdates;
+}
+
 /**
  * Find new version for a Container.
  * @param container
@@ -402,21 +434,22 @@ export async function findNewVersion(
     container: Container,
     dockerApi: any,
     logContainer: any,
-): Promise<ContainerResult> {
+): Promise<FindNewVersionResult> {
     const registryProvider = getRegistry(container.image.registry.name);
     const result: ContainerResult = { tag: container.image.tag.value };
     if (!registryProvider) {
         logContainer.error(
             `Unsupported registry (${container.image.registry.name})`,
         );
-        return result;
+        return { result, updates: {} };
     } else {
-        const watchDigest =
-            !container.image.tag.semver &&
-            registryProvider.shouldWatchDigest(
-                container.labels?.[wudWatchDigest],
-                container.image.name,
-            );
+        const watchDigest = shouldWatchDigestForContainer(
+            registryProvider,
+            container.image.tag.semver,
+            container.labels?.[wudWatchDigest],
+            container.labels?.[wudWatchDigestSemver],
+            container.image.name,
+        );
 
         if (!container.image.tag.semver && !watchDigest) {
             logContainer.warn(
@@ -432,16 +465,10 @@ export async function findNewVersion(
 
         // Must watch digest? => Find local/remote digests on registry
         if (watchDigest && container.image.digest.repo) {
-            // If we have a tag candidate BUT we also watch digest
-            // (case where local=`mongo:8` and remote=`mongo:8.0.0`),
-            // Then get the digest of the tag candidate
-            // Else get the digest of the same tag as the local one
+            // The digest is always resolved against the currently running tag
             const imageToGetDigestFrom = JSON.parse(
                 JSON.stringify(container.image),
             );
-            if (tagsCandidates.length > 0) {
-                [imageToGetDigestFrom.tag.value] = tagsCandidates;
-            }
 
             const remoteDigest =
                 await registryProvider.getImageManifestDigest(
@@ -483,6 +510,10 @@ export async function findNewVersion(
         if (tagsCandidates && tagsCandidates.length > 0) {
             [result.tag] = tagsCandidates;
         }
+
+        return {
+            result,
+            updates: computeUpdateBuckets(container, tagsCandidates, result),
+        };
     }
-    return result;
 }

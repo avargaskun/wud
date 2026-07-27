@@ -105,7 +105,10 @@ describe('Docker Watcher', () => {
         fullName.mockReturnValue('test_container');
 
         // Setup utils mock
-        utils.findNewVersion.mockResolvedValue({ tag: '1.0.0' });
+        utils.findNewVersion.mockResolvedValue({
+            result: { tag: '1.0.0' },
+            updates: {},
+        });
         utils.normalizeContainer.mockImplementation((c) => c);
         utils.getContainerName.mockReturnValue('test-container');
         utils.getRepoDigest.mockReturnValue('sha256:123');
@@ -404,7 +407,10 @@ describe('Docker Watcher', () => {
             };
             docker.log = mockLog;
             docker.configuration = { discoveryonly: false };
-            utils.findNewVersion.mockResolvedValue({ tag: '2.0.0' });
+            utils.findNewVersion.mockResolvedValue({
+                result: { tag: '2.0.0' },
+                updates: {},
+            });
             docker.mapContainerToContainerReport = jest
                 .fn()
                 .mockReturnValue({ container, changed: false });
@@ -417,6 +423,78 @@ describe('Docker Watcher', () => {
                 expect.anything(),
             );
             expect(event.emitContainerReport).toHaveBeenCalled();
+        });
+
+        test('should assign both result and updates from findNewVersion', async () => {
+            const container = {
+                id: 'test123',
+                name: 'test',
+                updates: {
+                    major: {
+                        kind: 'tag',
+                        localValue: '1.0.0',
+                        remoteValue: '9.9.9',
+                    },
+                },
+            };
+            docker.log = {
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+            };
+            docker.configuration = { discoveryonly: false };
+            const updates = {
+                major: null,
+                patch: {
+                    kind: 'tag',
+                    localValue: '1.0.0',
+                    remoteValue: '1.0.1',
+                },
+            };
+            utils.findNewVersion.mockResolvedValue({
+                result: { tag: '1.0.1' },
+                updates,
+            });
+            docker.mapContainerToContainerReport = jest
+                .fn()
+                .mockImplementation((c) => ({ container: c, changed: false }));
+
+            await docker.watchContainer(container);
+
+            expect(container.result).toEqual({ tag: '1.0.1' });
+            // Replaced, not merged with the stale major bucket
+            expect(container.updates).toEqual(updates);
+        });
+
+        test('should clear stale updates when findNewVersion fails', async () => {
+            const container = {
+                id: 'test123',
+                name: 'test',
+                result: { tag: '9.9.9' },
+                updates: {
+                    major: {
+                        kind: 'tag',
+                        localValue: '1.0.0',
+                        remoteValue: '9.9.9',
+                    },
+                },
+            };
+            docker.log = {
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+            };
+            docker.configuration = { discoveryonly: false };
+            utils.findNewVersion.mockRejectedValue(new Error('boom'));
+            docker.mapContainerToContainerReport = jest
+                .fn()
+                .mockImplementation((c) => ({ container: c, changed: false }));
+
+            await docker.watchContainer(container);
+
+            expect('updates' in container).toBe(false);
+            expect('result' in container).toBe(false);
+            expect(container.error).toEqual({ message: 'boom' });
         });
     });
 

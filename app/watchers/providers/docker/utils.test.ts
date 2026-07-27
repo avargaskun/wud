@@ -574,6 +574,106 @@ describe('Docker Watcher Utils', () => {
         });
     });
 
+    describe('shouldWatchDigestForContainer', () => {
+        let mockRegistryProvider;
+
+        beforeEach(() => {
+            mockRegistryProvider = {
+                shouldWatchDigest: jest.fn().mockReturnValue(true),
+            };
+        });
+
+        test('should watch digest of a semver container opting in with the dedicated label', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    undefined,
+                    'true',
+                    'library/nginx',
+                ),
+            ).toBe(true);
+        });
+
+        test('should not watch digest of a semver container without the dedicated label, even when the provider says yes', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    undefined,
+                    undefined,
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(
+                mockRegistryProvider.shouldWatchDigest,
+            ).not.toHaveBeenCalled();
+        });
+
+        test('should not watch digest of a semver container when the dedicated label is false', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    undefined,
+                    'false',
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(
+                mockRegistryProvider.shouldWatchDigest,
+            ).not.toHaveBeenCalled();
+        });
+
+        test('should not watch digest of a semver container carrying only the legacy wud.watch.digest label', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    'true',
+                    undefined,
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(
+                mockRegistryProvider.shouldWatchDigest,
+            ).not.toHaveBeenCalled();
+        });
+
+        test('should delegate to the registry provider with the legacy label for a non semver container', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    false,
+                    'true',
+                    undefined,
+                    'library/nginx',
+                ),
+            ).toBe(true);
+            expect(mockRegistryProvider.shouldWatchDigest).toHaveBeenCalledWith(
+                'true',
+                'library/nginx',
+            );
+        });
+
+        test('should delegate to the registry provider even when the semver label is set on a non semver container', () => {
+            mockRegistryProvider.shouldWatchDigest.mockReturnValue(false);
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    false,
+                    undefined,
+                    'true',
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(mockRegistryProvider.shouldWatchDigest).toHaveBeenCalledWith(
+                undefined,
+                'library/nginx',
+            );
+        });
+    });
+
     describe('findNewVersion', () => {
         test('should throw error if no registry', async () => {
             registry.getState.mockReturnValue({ registry: {} });
@@ -611,12 +711,51 @@ describe('Docker Watcher Utils', () => {
                 transformTags: undefined,
             };
 
-            const result = await utils.findNewVersion(
+            const { result } = await utils.findNewVersion(
                 container,
                 null,
                 mockLogContainer,
             );
             expect(result.tag).toBe('1.0.1');
+        });
+
+        test('should return the update buckets alongside the result', async () => {
+            const actualTag = jest.requireActual('../../../tag');
+            tag.parse.mockImplementation(actualTag.parse);
+            tag.isGreater.mockImplementation(actualTag.isGreater);
+            tag.transform.mockImplementation(actualTag.transform);
+            tag.diff.mockImplementation(actualTag.diff);
+            tag.compare.mockImplementation(actualTag.compare);
+
+            const mockProvider = {
+                getTags: jest
+                    .fn()
+                    .mockResolvedValue(['1.0.0', '1.0.1', '1.1.0', '2.0.0']),
+            };
+            registry.getState.mockReturnValue({
+                registry: { docker: mockProvider },
+            });
+
+            const container = {
+                image: {
+                    registry: { name: 'docker' },
+                    tag: { value: '1.0.0', semver: true },
+                    digest: { watch: false },
+                },
+                transformTags: undefined,
+            };
+
+            const { result, updates } = await utils.findNewVersion(
+                container,
+                null,
+                mockLogContainer,
+            );
+
+            expect(result.tag).toBe('2.0.0');
+            expect(updates.major.remoteValue).toBe('2.0.0');
+            expect(updates.minor.remoteValue).toBe('1.1.0');
+            expect(updates.patch.remoteValue).toBe('1.0.1');
+            expect('digest' in updates).toBe(false);
         });
 
         test('should handle digest watching with v2 manifest when registry allows digest watching', async () => {
@@ -647,7 +786,7 @@ describe('Docker Watcher Utils', () => {
                 registry: { hub: mockRegistry },
             });
 
-            const result = await utils.findNewVersion(
+            const { result } = await utils.findNewVersion(
                 container,
                 null,
                 mockLogContainer,
@@ -659,6 +798,67 @@ describe('Docker Watcher Utils', () => {
             );
             expect(result.digest).toBe('sha256:def456');
             expect(container.image.digest.value).toBe('sha256:manifest123');
+        });
+
+        test('should resolve the digest against the running tag, not a tag candidate', async () => {
+            const actualTag = jest.requireActual('../../../tag');
+            tag.parse.mockImplementation(actualTag.parse);
+            tag.isGreater.mockImplementation(actualTag.isGreater);
+            tag.transform.mockImplementation(actualTag.transform);
+            tag.diff.mockImplementation(actualTag.diff);
+            tag.compare.mockImplementation(actualTag.compare);
+
+            const container = {
+                image: {
+                    id: 'image123',
+                    registry: { name: 'hub' },
+                    name: 'library/nginx',
+                    tag: { value: '1.0.0', semver: true },
+                    digest: { watch: true, repo: 'sha256:abc123' },
+                },
+                labels: { 'wud.watch.digest.semver': 'true' },
+                transformTags: undefined,
+            };
+            const mockRegistry = {
+                getTags: jest.fn().mockResolvedValue(['1.0.0', '1.0.1']),
+                shouldWatchDigest: jest.fn().mockReturnValue(true),
+                getImageManifestDigest: jest
+                    .fn()
+                    .mockResolvedValueOnce({
+                        digest: 'sha256:def456',
+                        created: '2023-01-01',
+                        version: 2,
+                    })
+                    .mockResolvedValueOnce({
+                        digest: 'sha256:manifest123',
+                    }),
+            };
+            registry.getState.mockReturnValue({
+                registry: { hub: mockRegistry },
+            });
+
+            const { result, updates } = await utils.findNewVersion(
+                container,
+                null,
+                mockLogContainer,
+            );
+
+            // The tag candidate 1.0.1 must NOT be the image the digest is read from
+            expect(result.tag).toBe('1.0.1');
+            expect(
+                mockRegistry.getImageManifestDigest.mock.calls[0][0].tag.value,
+            ).toBe('1.0.0');
+            expect(
+                mockRegistry.getImageManifestDigest.mock.calls[1][0].tag.value,
+            ).toBe('1.0.0');
+            expect(updates.patch.remoteValue).toBe('1.0.1');
+            expect(updates.digest).toEqual(
+                expect.objectContaining({
+                    kind: 'digest',
+                    localValue: 'sha256:manifest123',
+                    remoteValue: 'sha256:def456',
+                }),
+            );
         });
 
         test('should warn and skip digest check for non-semver image when registry disables digest watching', async () => {
@@ -803,7 +1003,7 @@ describe('Docker Watcher Utils', () => {
                 registry: { ghcr: ghcrRegistry },
             });
 
-            const result = await utils.findNewVersion(
+            const { result } = await utils.findNewVersion(
                 container,
                 null,
                 mockLogContainer,

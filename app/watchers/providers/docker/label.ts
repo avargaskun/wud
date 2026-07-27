@@ -29,6 +29,13 @@ export const wudTagTransform = 'wud.tag.transform';
 export const wudWatchDigest = 'wud.watch.digest';
 
 /**
+ * Should digest be tracked for a semver tagged container? (true | false).
+ * Dedicated label: wud.watch.digest is inert on semver tags today, so honouring
+ * it here would silently activate digest watching on upgrade.
+ */
+export const wudWatchDigestSemver = 'wud.watch.digest.semver';
+
+/**
  * Optional templated string pointing to a browsable link.
  */
 export const wudLinkTemplate = 'wud.link.template';
