@@ -227,6 +227,10 @@ export class AgentClient {
                                         this.handleEvent(
                                             payload.type,
                                             payload.data,
+                                        ).catch((err: any) =>
+                                            this.log.warn(
+                                                `Error handling agent event ${payload.type} (container=${payload.data?.id}): ${err.message}`,
+                                            ),
                                         );
                                     }
                                 } catch (e: any) {
