@@ -232,12 +232,18 @@ function addUpdateAvailableProperty(container: Container) {
             }
 
             // Compare digests if we have them
+            let digestCompared = false;
             if (
                 this.image.digest.watch &&
                 this.image.digest.value !== undefined &&
                 this.result.digest !== undefined
             ) {
-                return this.image.digest.value !== this.result.digest;
+                const digestChanged =
+                    this.image.digest.value !== this.result.digest;
+                // Non-semver containers never have tag candidates: preserve the legacy early return.
+                if (!this.image.tag.semver) return digestChanged;
+                if (digestChanged) return true;
+                digestCompared = true;
             }
 
             // Compare tags otherwise
@@ -252,8 +258,10 @@ function addUpdateAvailableProperty(container: Container) {
             );
             updateAvailable = localTag !== remoteTag;
 
-            // Fallback to image created date (especially for legacy v1 manifests)
+            // Fallback to image created date (especially for legacy v1 manifests).
+            // Suppressed only when digests were actually compared and found equal.
             if (
+                !digestCompared &&
                 this.image.created !== undefined &&
                 this.result.created !== undefined
             ) {
@@ -379,6 +387,23 @@ function addUpdateKindProperty(container: Container) {
 }
 
 /**
+ * Build a comparable signature of the update buckets.
+ * The `!` marker distinguishes an absent bucket from a present-but-null one,
+ * so a change in bucket applicability is itself a change.
+ * @param container
+ * @returns {string}
+ */
+function updatesSignature(container: Container | undefined): string {
+    const u = container?.updates;
+    if (!u) return '';
+    return (['major', 'minor', 'patch', 'digest'] as const)
+        .map((k) =>
+            k in u ? `${k}=${u[k] ? u[k]!.remoteValue : ''}` : `${k}!`,
+        )
+        .join('|');
+}
+
+/**
  * Computed function to check whether the result is different.
  * @param otherContainer
  * @returns {boolean}
@@ -391,7 +416,8 @@ function resultChangedFunction(
         otherContainer === undefined ||
         this.result?.tag !== otherContainer.result?.tag ||
         this.result?.digest !== otherContainer.result?.digest ||
-        this.result?.created !== otherContainer.result?.created
+        this.result?.created !== otherContainer.result?.created ||
+        updatesSignature(this) !== updatesSignature(otherContainer)
     );
 }
 
