@@ -3,15 +3,24 @@ import {
     parse as parseSemver,
     isGreater as isGreaterSemver,
     transform as transformTag,
+    diff as diffSemver,
+    compare as compareSemver,
 } from '../../../tag';
 import log from '../../../log';
 import { wudWatchDigest } from './label';
 import {
     validate as validateContainer,
     fullName,
+    renderLink,
 } from '../../../model/container';
 import * as registry from '../../../registry';
-import { Container, ContainerResult } from '../../../model/container';
+import {
+    Container,
+    ContainerResult,
+    ContainerUpdate,
+    ContainerUpdates,
+    UpdateBucketKey,
+} from '../../../model/container';
 
 /**
  * Return all supported registries
@@ -143,17 +152,180 @@ export function getTagCandidates(
 
         // Apply semver sort desc
         filteredTags.sort((t1, t2) => {
-            const greater = isGreaterSemver(
+            const cmp = compareSemver(
                 transformTag(container.transformTags, t2),
                 transformTag(container.transformTags, t1),
             );
-            return greater ? 1 : -1;
+            // Unparseable pair -> preserve the previous behaviour rather than inventing an order
+            return cmp === null ? (isGreaterSemver(t2, t1) ? 1 : -1) : cmp;
         });
     } else {
         // Non semver tag -> do not propose any other registry tag
         filteredTags = [];
     }
     return filteredTags;
+}
+
+/**
+ * Map a raw semver diff to the update bucket it belongs to.
+ * A prerelease diff deliberately folds into the patch bucket.
+ * @param rawDiff
+ */
+export function mapDiffToBucket(
+    rawDiff: string | null,
+): UpdateBucketKey | undefined {
+    switch (rawDiff) {
+        case 'major':
+        case 'premajor':
+            return 'major';
+        case 'minor':
+        case 'preminor':
+            return 'minor';
+        case 'patch':
+        case 'prepatch':
+            return 'patch';
+        case 'prerelease':
+            return 'patch';
+        default:
+            return undefined;
+    }
+}
+
+/**
+ * Map a raw semver diff to the semverDiff reported on the bucket.
+ * @param rawDiff
+ */
+export function mapDiffToSemverDiff(
+    rawDiff: string | null,
+): ContainerUpdate['semverDiff'] {
+    switch (rawDiff) {
+        case 'major':
+        case 'premajor':
+            return 'major';
+        case 'minor':
+        case 'preminor':
+            return 'minor';
+        case 'patch':
+        case 'prepatch':
+            return 'patch';
+        case 'prerelease':
+            return 'prerelease';
+        default:
+            return undefined;
+    }
+}
+
+/**
+ * Return the buckets that are structurally possible for a container.
+ * @param container
+ */
+export function getApplicableBuckets(container: Container): UpdateBucketKey[] {
+    const buckets: UpdateBucketKey[] = [];
+    if (container.image.tag.semver) {
+        // Measure the TRANSFORMED tag: computeUpdateBuckets assigns buckets by diffing
+        // transformed values, so a segment-changing wud.tag.transform would otherwise
+        // drop every bucket via the `bucket in updates` guard.
+        const localTransformed = transformTag(
+            container.transformTags,
+            container.image.tag.value,
+        );
+        const numericPart = localTransformed.match(/(\d+(\.\d+)*)/);
+        // No numeric part -> the segment lock is skipped entirely, so all levels are possible
+        const segments = numericPart ? numericPart[0].split('.').length : 3;
+        if (segments >= 1) buckets.push('major');
+        if (segments >= 2) buckets.push('minor');
+        if (segments >= 3) buckets.push('patch');
+    }
+    if (container.image.digest.watch) buckets.push('digest');
+    return buckets;
+}
+
+/**
+ * Render a bucket link, never throwing: renderLink evals a user-supplied label.
+ * @param container
+ * @param tagValue
+ */
+function renderBucketLink(
+    container: Container,
+    tagValue: string,
+): string | undefined {
+    try {
+        return renderLink(container, tagValue);
+    } catch (e) {
+        log.debug(
+            `Error when rendering link template for tag [${tagValue}] (${e})`,
+        );
+        return undefined;
+    }
+}
+
+/**
+ * Compute the per-kind update buckets of a container.
+ * @param container
+ * @param tagsCandidates
+ * @param result
+ */
+export function computeUpdateBuckets(
+    container: Container,
+    tagsCandidates: string[],
+    result: ContainerResult,
+): ContainerUpdates {
+    const updates: ContainerUpdates = {};
+    getApplicableBuckets(container).forEach((bucketKey) => {
+        updates[bucketKey] = null;
+    });
+
+    const localTag = container.image.tag.value;
+    const localTransformed = transformTag(container.transformTags, localTag);
+
+    (tagsCandidates ?? []).forEach((candidate) => {
+        const candidateTransformed = transformTag(
+            container.transformTags,
+            candidate,
+        );
+        const rawDiff = diffSemver(localTransformed, candidateTransformed);
+        const bucket = mapDiffToBucket(rawDiff);
+        if (!bucket || !(bucket in updates)) {
+            return;
+        }
+
+        const incumbent = updates[bucket];
+        if (incumbent) {
+            const cmp = compareSemver(
+                candidateTransformed,
+                transformTag(container.transformTags, incumbent.remoteValue),
+            );
+            // Ties and unparseable pairs keep the incumbent (first encountered wins)
+            if (cmp === null || cmp <= 0) {
+                return;
+            }
+        }
+        updates[bucket] = {
+            kind: 'tag',
+            localValue: localTag,
+            remoteValue: candidate,
+            semverDiff: mapDiffToSemverDiff(rawDiff),
+            link: renderBucketLink(container, candidate),
+        };
+    });
+
+    // Digest bucket - always against the CURRENT tag
+    if (
+        'digest' in updates &&
+        container.image.digest.value !== undefined &&
+        result.digest !== undefined &&
+        container.image.digest.value !== result.digest
+    ) {
+        updates.digest = {
+            kind: 'digest',
+            localValue: container.image.digest.value,
+            remoteValue: result.digest,
+            created: result.created,
+            link: renderBucketLink(container, localTag),
+        };
+    }
+
+    return updates;
 }
 
 export function normalizeContainer(container: Container): Container {
