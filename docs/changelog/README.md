@@ -1,6 +1,17 @@
 # Changelog
 
 ## next
+- :warning: **Invalid threshold values in `wud.trigger.include` are now rejected instead of silently falling back to `all`.** A container whose label carries a typo (e.g. `wud.trigger.include=docker.update:pacth`) **stops triggering entirely**, where it previously triggered for every update level. **The only signal is a `log.warn`** — nothing in the API or the UI indicates why the trigger went quiet. Audit your `wud.trigger.include` labels **before** upgrading, and grep the logs for `Invalid threshold` afterwards.
+- :star: Detect every available update per container, split by kind (`major`, `minor`, `patch`, `digest`), exposed through the new `updates` field of the container API, usable in notification templates (`${container.updates.patch.remoteValue}`, `${container.selectedUpdate.remoteValue}`) and published as 24 new `updates_*` Prometheus labels
+- :warning: [AGENT] Agents must be upgraded in lock-step with the controller (controller first if the upgrade is staged). A new agent reporting to an old controller has its containers silently rejected by the controller's validation
+- :warning: Threshold-gated triggers now fire for permitted lower-level updates that were previously masked by a higher-level one. This is the point of the change, but it means containers that were silently never updating will start updating
+- :star: Add `wud.watch.digest.semver` label to enable digest watching on **semver** tagged containers (costs two extra registry calls per watch cycle per opted-in container). It is deliberately *not* `wud.watch.digest`, which remains inert on semver tags: reusing it would have activated digest watching at upgrade time for anyone already carrying it, potentially recreating running containers unprompted
+- :warning: The persisted container layout changes. The first watch cycle after the upgrade repopulates update data and produces **one round of re-notification** (only for containers that actually have an update available)
+- :warning: Notification frequency may increase for containers where lower-level updates appear independently of the highest one
+- :warning: `wud.trigger.exclude` entries carrying a threshold now log a warning. The threshold has always been ignored there; the exclusion itself is unchanged
+- :warning: The WebUI still displays the highest available update; with a threshold other than `all`, the version actually installed may be a lower one
+- :fire: Fix notifications and updates for containers whose update kind cannot be determined (`updateKind.kind` is `unknown`): the notification now renders `digest` instead of `unknown` (previously `...running with unknown undefined can be updated to unknown undefined`) and the malformed image reference the trigger produced in that state is fixed
+- :fire: Fix non-deterministic candidate tag ordering when two tags carry the same semver value (the comparator was self-contradictory for such pairs, leaving the resulting order unspecified)
 - :star: Add `WUD_REGISTRY_HUB_PUBLIC_SUPPRESSDIGESTWATCHWARNING` env var
 - :star: [GITLAB] - Add support for GitLab group access tokens
 - :fire: [DOCKER-COMPOSE] - Fix trigger fails to detect containers in compose file

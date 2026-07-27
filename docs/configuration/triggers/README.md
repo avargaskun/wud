@@ -43,6 +43,37 @@ All implemented triggers, in addition to their specific configuration, also supp
 
 ?> `WUD_TRIGGER_{trigger_type}_{trigger_name}_INCLUDEBYDEFAULT=false` makes a trigger opt-in: the trigger will only be associated with containers explicitly listing it in `wud.trigger.include`.
 
+### Threshold and multiple available updates
+
+WUD detects **every** available update for a container, split by kind (`major`, `minor`, `patch` and `digest`), not only the highest one.
+
+> The threshold is a **ceiling on the eligible update kinds**. The trigger fires if **any** eligible kind has an update available, and it installs the **highest eligible** one.
+
+| Threshold                                     | `major` | `minor` | `patch` | `digest` |
+| --------------------------------------------- | :-----: | :-----: | :-----: | :------: |
+| `all`                                         |    ✓    |    ✓    |    ✓    |    ✓     |
+| `major`                                       |    ✓    |    ✓    |    ✓    |    ✓     |
+| `minor`                                       |    ✗    |    ✓    |    ✓    |    ✓     |
+| `patch`                                       |    ✗    |    ✗    |    ✓    |    ✓     |
+| `major-only`                                  |    ✓    |    ✗    |    ✗    |    ✓     |
+| `minor-only`                                  |    ✗    |    ✓    |    ✗    |    ✓     |
+
+?> A `digest` update is eligible at **every** threshold — this has always been the case, digest updates never went through the threshold check.
+
+?> A `prerelease` update counts as a `patch` update.
+
+!> A higher update no longer **masks** a lower one. A container running `1.2.3` with both `1.2.4` and `2.0.0` available and a `patch` threshold now installs `1.2.4`; previously the `major` change was the only one considered and the trigger never ran. Containers that were silently never updating will start updating.
+
+?> The WebUI keeps displaying the **highest** available update, so with a threshold other than `all` the version actually installed may be a lower one.
+
+### Per container threshold
+
+The threshold can be overridden per container with the `wud.trigger.include` label, using the `$trigger_id:$threshold` syntax (see the [Watchers](/configuration/watchers/) documentation).
+
+!> **An invalid threshold in `wud.trigger.include` is now rejected and the entry fails closed.** `wud.trigger.include=docker.update:pacth` no longer silently degrades to `all` — the trigger is simply **not** associated with that container and a `warn` log is emitted. Failing open was dangerous: a typo on an auto-updating trigger authorised every `major` update.
+
+!> A threshold on `wud.trigger.exclude` has always been meaningless (an exclusion is unconditional) and now emits a `warn` log. The container is excluded either way.
+
 ### Examples
 
 <!-- tabs:start -->
