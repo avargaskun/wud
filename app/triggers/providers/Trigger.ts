@@ -260,14 +260,19 @@ class Trigger extends Component {
         if (includeOrExcludeTrigger.thresholdPresent) {
             const thresholdToken = includeOrExcludeTriggerSplit[1];
             includeOrExcludeTrigger.thresholdToken = thresholdToken;
-            switch (thresholdToken) {
+            // Matched case-insensitively to stay consistent with the rest of this
+            // vocabulary: validateConfiguration uses joi .insensitive() and both
+            // handlers lowercase the threshold before selectUpdate. The raw token is
+            // kept in thresholdToken so the warning can quote what the user typed.
+            const thresholdNormalized = thresholdToken.toLowerCase();
+            switch (thresholdNormalized) {
                 case 'major-only':
                 case 'minor-only':
                 case 'major':
                 case 'minor':
                 case 'patch':
                 case 'all':
-                    includeOrExcludeTrigger.threshold = thresholdToken;
+                    includeOrExcludeTrigger.threshold = thresholdNormalized;
                     break;
                 default:
                     // Threshold stays 'all' so existing consumers are unaffected;

@@ -77,7 +77,7 @@ Each populated entry is an object with the following fields.
 | `remoteValue` | The tag to update to (the new digest for the `digest` entry)                                                  |
 | `semverDiff`  | `major`, `minor`, `patch` or `prerelease` (absent for the `digest` entry)                                     |
 | `created`     | The creation date of the remote image (only populated for the `digest` entry)                                 |
-| `link`        | The `wud.link.template` rendered for `remoteValue` (absent when no link template is configured)               |
+| `link`        | The `wud.link.template` rendered for the tag this entry would deploy — `remoteValue` for the tag entries, the **currently running** tag for the `digest` entry (absent when no link template is configured) |
 
 !> A `prerelease` update is reported in the **`patch`** entry, with `semverDiff` set to `prerelease`.
 

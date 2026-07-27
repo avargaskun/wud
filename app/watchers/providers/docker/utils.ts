@@ -152,12 +152,17 @@ export function getTagCandidates(
 
         // Apply semver sort desc
         filteredTags.sort((t1, t2) => {
-            const cmp = compareSemver(
-                transformTag(container.transformTags, t2),
-                transformTag(container.transformTags, t1),
-            );
-            // Unparseable pair -> preserve the previous behaviour rather than inventing an order
-            return cmp === null ? (isGreaterSemver(t2, t1) ? 1 : -1) : cmp;
+            const t1Transformed = transformTag(container.transformTags, t1);
+            const t2Transformed = transformTag(container.transformTags, t2);
+            const cmp = compareSemver(t2Transformed, t1Transformed);
+            if (cmp !== null) {
+                return cmp;
+            }
+            // Defensive only: the filters above already dropped every tag that does
+            // not parse after transform, so compareSemver cannot return null here.
+            // Compare the TRANSFORMED values, not the raw ones, so this stays
+            // consistent with the line above if that filtering ever changes.
+            return isGreaterSemver(t2Transformed, t1Transformed) ? 1 : -1;
         });
     } else {
         // Non semver tag -> do not propose any other registry tag

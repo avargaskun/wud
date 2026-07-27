@@ -121,7 +121,8 @@ else
     $DOCKER_CMD run -d --name zz_batch_local_2 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
 
     # MULTI-VERSION (per-kind update buckets)
-    echo "Pulling multi-version test images ..."
+    # No pull needed: podinfo:6.0.0 is already pulled above.
+    echo "Starting multi-version test containers ..."
     $DOCKER_CMD run -d --name zz_mv_buckets \
         --label 'wud.watch=true' \
         --label 'wud.tag.include=^6\.\d+\.\d+$' \

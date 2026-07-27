@@ -1428,6 +1428,33 @@ describe('threshold label validation', () => {
         },
     );
 
+    test.each([
+        ['Patch', 'patch'],
+        ['PATCH', 'patch'],
+        ['Major-Only', 'major-only'],
+        ['ALL', 'all'],
+    ])(
+        'parseIncludeOrIncludeTriggerString should accept the %s threshold token case-insensitively',
+        (token, expected) => {
+            const parsed = Trigger.parseIncludeOrIncludeTriggerString(
+                `docker.t1:${token}`,
+            );
+            // The rest of this vocabulary is case-insensitive (joi .insensitive() on
+            // the global config, .toLowerCase() in both handlers). A case-sensitive
+            // match here would set thresholdInvalid and silently stop the trigger.
+            expect(parsed.thresholdInvalid).toBe(false);
+            expect(parsed.threshold).toEqual(expected);
+            // The raw token is preserved so the warning can quote what was typed.
+            expect(parsed.thresholdToken).toEqual(token);
+        },
+    );
+
+    test('apply should not fail closed on a differently-cased threshold', () => {
+        const container = containerNamed({ triggerInclude: 'docker.t1:Patch' });
+        expect(trigger.apply(container)).toBeDefined();
+        expect(trigger.apply(container).threshold).toEqual('patch');
+    });
+
     test('parseIncludeOrIncludeTriggerString should report no threshold when none is present', () => {
         const parsed = Trigger.parseIncludeOrIncludeTriggerString('docker.t1');
         expect(parsed.id).toEqual('docker.t1');
