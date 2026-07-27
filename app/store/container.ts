@@ -33,6 +33,13 @@ export function createCollections(db) {
  */
 export function insertContainer(container) {
     const containerToSave = validateContainer(container);
+    // selectedUpdate is a TRANSPORT-ONLY field carried by the trigger view (see design §E).
+    // It must never be persisted. It is joi-legal so the view survives validation across the
+    // agent hop, which also makes it storable -- and if it were stored, flatten() would emit
+    // six undeclared selected_update_* keys into the Prometheus gauge. An undeclared label
+    // makes prom-client throw, populateGauge swallows the throw, and the container VANISHES
+    // from wud_containers with no error surfaced anywhere. Do not "clean this up".
+    delete containerToSave.selectedUpdate;
     containers.insert({
         data: containerToSave,
     });
@@ -46,6 +53,13 @@ export function insertContainer(container) {
  */
 export function updateContainer(container) {
     const containerToReturn = validateContainer(container);
+    // selectedUpdate is a TRANSPORT-ONLY field carried by the trigger view (see design §E).
+    // It must never be persisted. It is joi-legal so the view survives validation across the
+    // agent hop, which also makes it storable -- and if it were stored, flatten() would emit
+    // six undeclared selected_update_* keys into the Prometheus gauge. An undeclared label
+    // makes prom-client throw, populateGauge swallows the throw, and the container VANISHES
+    // from wud_containers with no error surfaced anywhere. Do not "clean this up".
+    delete containerToReturn.selectedUpdate;
 
     // Remove existing container
     containers

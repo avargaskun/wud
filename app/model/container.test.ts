@@ -318,6 +318,139 @@ test('flatten should be flatten the nested properties with underscores when call
     });
 });
 
+const containerWithUpdates = (extra = {}) => ({
+    id: 'container-123456789',
+    name: 'test',
+    watcher: 'test',
+    image: {
+        id: 'image-123456789',
+        registry: {
+            name: 'hub',
+            url: 'https://hub',
+        },
+        name: 'organization/image',
+        tag: {
+            value: '1.0.0',
+            semver: true,
+        },
+        digest: {
+            watch: false,
+            repo: undefined,
+        },
+        architecture: 'arch',
+        os: 'os',
+        created: '2021-06-12T05:33:38.440Z',
+    },
+    result: {
+        tag: '2.0.0',
+    },
+    ...extra,
+});
+
+test('model should validate updates mixing object buckets, null buckets and absent keys', async () => {
+    const updates = {
+        major: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '2.0.0',
+            semverDiff: 'major',
+            link: 'https://release-2.0.0.acme.com',
+        },
+        minor: null,
+        patch: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '1.0.1',
+            semverDiff: 'patch',
+        },
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ updates }),
+    );
+
+    expect(containerValidated.updates).toStrictEqual(updates);
+    expect('major' in containerValidated.updates).toBe(true);
+    expect('minor' in containerValidated.updates).toBe(true);
+    expect('patch' in containerValidated.updates).toBe(true);
+    expect('digest' in containerValidated.updates).toBe(false);
+});
+
+test('model should validate a digest bucket with a created date', async () => {
+    const updates = {
+        digest: {
+            kind: 'digest',
+            localValue: 'sha256:123456789',
+            remoteValue: 'sha256:987654321',
+            created: '2021-06-15T05:33:38.440Z',
+        },
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ updates }),
+    );
+    expect(containerValidated.updates).toStrictEqual(updates);
+});
+
+test('model should not synthesise updates when the stored record has none', async () => {
+    const containerValidated = container.validate(containerWithUpdates());
+    expect('updates' in containerValidated).toBe(false);
+    expect(containerValidated.updates).toBeUndefined();
+});
+
+test('model should validate a selectedUpdate', async () => {
+    const selectedUpdate = {
+        kind: 'tag',
+        localValue: '1.0.0',
+        remoteValue: '1.0.1',
+        semverDiff: 'patch',
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ selectedUpdate }),
+    );
+    expect(containerValidated.selectedUpdate).toStrictEqual(selectedUpdate);
+});
+
+test('model should reject an update bucket without a kind', async () => {
+    expect(() => {
+        container.validate(
+            containerWithUpdates({
+                updates: { major: { localValue: '1.0.0' } },
+            }),
+        );
+    }).toThrow();
+});
+
+test('renderLink should render link templates for an arbitrary tag value', async () => {
+    expect(
+        container.renderLink(
+            {
+                linkTemplate:
+                    'https://test-${major}.${minor}.${patch}.acme.com',
+                image: {
+                    tag: {
+                        semver: true,
+                    },
+                },
+            },
+            '10.5.2',
+        ),
+    ).toEqual('https://test-10.5.2.acme.com');
+});
+
+test('renderLink should render undefined when template is missing', async () => {
+    expect(
+        container.renderLink(
+            {
+                image: {
+                    tag: {
+                        semver: true,
+                    },
+                },
+            },
+            '10.5.2',
+        ),
+    ).toBeUndefined();
+});
+
 test('fullName should build an id with watcher name & container name when called', async () => {
     expect(
         container.fullName({
