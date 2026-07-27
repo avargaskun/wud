@@ -383,18 +383,26 @@ class Trigger extends Component {
                 );
                 if (!effectiveConfiguration) {
                     logContainer.debug('Trigger conditions not met => ignore');
-                } else if (
-                    !Trigger.isThresholdReached(
+                } else {
+                    const update = Trigger.selectUpdate(
                         containerReport.container,
                         (
                             effectiveConfiguration.threshold || 'all'
                         ).toLowerCase(),
-                    )
-                ) {
-                    logContainer.debug('Threshold not reached => ignore');
-                } else {
-                    logContainer.debug('Run');
-                    await this.trigger(containerReport.container);
+                    );
+                    if (!update) {
+                        logContainer.debug(
+                            'No eligible update for threshold => ignore',
+                        );
+                    } else {
+                        logContainer.debug('Run');
+                        await this.trigger(
+                            Trigger.buildTriggerView(
+                                containerReport.container,
+                                update,
+                            ),
+                        );
+                    }
                 }
                 status = 'success';
             } catch (e: any) {
@@ -442,16 +450,21 @@ class Trigger extends Component {
                         const effectiveConfiguration = this.apply(
                             containerReport.container,
                         );
-                        if (
-                            effectiveConfiguration &&
-                            Trigger.isThresholdReached(
+                        if (effectiveConfiguration) {
+                            const update = Trigger.selectUpdate(
                                 containerReport.container,
                                 (
                                     effectiveConfiguration.threshold || 'all'
                                 ).toLowerCase(),
-                            )
-                        ) {
-                            containersFiltered.push(containerReport.container);
+                            );
+                            if (update) {
+                                containersFiltered.push(
+                                    Trigger.buildTriggerView(
+                                        containerReport.container,
+                                        update,
+                                    ),
+                                );
+                            }
                         }
                     }
                 }

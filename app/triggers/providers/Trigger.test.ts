@@ -130,12 +130,31 @@ test.each(handleContainerReportTestCases)(
             },
         });
         if (item.shouldTrigger) {
+            // The container has no updates buckets, so selectUpdate falls back to
+            // legacyUpdate and trigger() receives the resulting view.
+            expect(spy).toHaveBeenCalledTimes(1);
             expect(spy).toHaveBeenCalledWith({
                 name: 'container1',
                 updateAvailable: item.updateAvailable,
                 updateKind: {
                     kind: 'tag',
+                    localValue: '',
+                    remoteValue: '',
                     semverDiff: item.semverDiff,
+                },
+                result: {
+                    tag: '',
+                    digest: undefined,
+                    created: undefined,
+                    link: undefined,
+                },
+                selectedUpdate: {
+                    kind: 'tag',
+                    localValue: '',
+                    remoteValue: '',
+                    semverDiff: item.semverDiff,
+                    created: undefined,
+                    link: undefined,
                 },
             });
         } else {
@@ -159,6 +178,11 @@ test('handleContainerReport should warn when trigger method of the trigger fails
         container: {
             name: 'container1',
             updateAvailable: true,
+            image: {
+                name: 'organization/image',
+                tag: { value: '1.2.3', semver: true },
+                digest: { watch: true, repo: 'sha256:repo' },
+            },
         },
     });
     expect(spyLog).toHaveBeenCalledWith('Error (Fail!!!)');
@@ -232,13 +256,32 @@ test.each(handleContainerReportsTestCases)(
             },
         ]);
         if (item.shouldTrigger) {
+            // The container has no updates buckets, so selectUpdate falls back to
+            // legacyUpdate and triggerBatch() receives the resulting view.
+            expect(spy).toHaveBeenCalledTimes(1);
             expect(spy).toHaveBeenCalledWith([
                 {
                     name: 'container1',
                     updateAvailable: item.updateAvailable,
                     updateKind: {
                         kind: 'tag',
+                        localValue: '',
+                        remoteValue: '',
                         semverDiff: item.semverDiff,
+                    },
+                    result: {
+                        tag: '',
+                        digest: undefined,
+                        created: undefined,
+                        link: undefined,
+                    },
+                    selectedUpdate: {
+                        kind: 'tag',
+                        localValue: '',
+                        remoteValue: '',
+                        semverDiff: item.semverDiff,
+                        created: undefined,
+                        link: undefined,
                     },
                 },
             ]);
@@ -1134,6 +1177,192 @@ describe('bucket selection', () => {
             remoteValue: '1.2-rc.2',
         });
         expect(view.updateKind.semverDiff).toEqual('unknown');
+    });
+});
+
+describe('handler bucket wiring', () => {
+    const majorBucket = {
+        kind: 'tag',
+        localValue: '1.2.3',
+        remoteValue: '2.0.0',
+        semverDiff: 'major',
+        created: '2021-02-01T00:00:00.000Z',
+        link: 'https://link/2.0.0',
+    };
+    const patchBucket = {
+        kind: 'tag',
+        localValue: '1.2.3',
+        remoteValue: '1.2.9',
+        semverDiff: 'patch',
+        created: '2021-01-10T00:00:00.000Z',
+        link: 'https://link/1.2.9',
+    };
+
+    const containerWithBuckets = (updates, extra = {}) => ({
+        id: 'container-123',
+        name: 'container1',
+        watcher: 'local',
+        image: {
+            name: 'organization/image',
+            tag: { value: '1.2.3', semver: true },
+            digest: { watch: false, value: 'sha256:local' },
+        },
+        result: {
+            tag: '2.0.0',
+            created: '2021-02-01T00:00:00.000Z',
+            link: 'https://link/2.0.0',
+        },
+        updateAvailable: true,
+        updateKind: {
+            kind: 'tag',
+            localValue: '1.2.3',
+            remoteValue: '2.0.0',
+            semverDiff: 'major',
+        },
+        updates,
+        ...extra,
+    });
+
+    beforeEach(() => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.configuration.mode = 'simple';
+        trigger.configuration.auto = true;
+    });
+
+    test('handleContainerReport should install the patch update at threshold patch even when a major update exists', async () => {
+        trigger.configuration.threshold = 'patch';
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: true,
+            container: containerWithBuckets({
+                major: majorBucket,
+                minor: null,
+                patch: patchBucket,
+            }),
+        });
+        expect(spy).toHaveBeenCalledTimes(1);
+        const view = spy.mock.calls[0][0];
+        expect(view.updateKind).toStrictEqual({
+            kind: 'tag',
+            localValue: '1.2.3',
+            remoteValue: '1.2.9',
+            semverDiff: 'patch',
+        });
+        expect(view.result.tag).toEqual('1.2.9');
+        expect(view.selectedUpdate).toStrictEqual(patchBucket);
+    });
+
+    test('handleContainerReport should not call trigger at threshold patch when only a major update exists', async () => {
+        trigger.configuration.threshold = 'patch';
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: true,
+            container: containerWithBuckets({
+                major: majorBucket,
+                minor: null,
+                patch: null,
+            }),
+        });
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('handleContainerReport at threshold all must pass a view identical to the container result and update kind', async () => {
+        trigger.configuration.threshold = 'all';
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: null,
+            patch: patchBucket,
+        });
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({ changed: true, container });
+        expect(spy).toHaveBeenCalledTimes(1);
+        const view = spy.mock.calls[0][0];
+        expect(view.updateKind).toStrictEqual(container.updateKind);
+        expect(view.result.tag).toEqual(container.result.tag);
+        expect(view.result.created).toEqual(container.result.created);
+        expect(view.result.link).toEqual(container.result.link);
+        expect(view.updateAvailable).toBe(true);
+    });
+
+    test('handleContainerReport must still respect once when the container has not changed', async () => {
+        trigger.configuration.threshold = 'all';
+        trigger.configuration.once = true;
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: false,
+            container: containerWithBuckets({ major: majorBucket }),
+        });
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('handleContainerReport must still respect updateAvailable', async () => {
+        trigger.configuration.threshold = 'all';
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: true,
+            container: containerWithBuckets(
+                { major: majorBucket },
+                { updateAvailable: false },
+            ),
+        });
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('handleContainerReport must still respect isAutoForContainer', async () => {
+        trigger.configuration.threshold = 'all';
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: true,
+            container: containerWithBuckets(
+                { major: majorBucket },
+                { labels: { 'wud.trigger.docker.t1.auto': 'false' } },
+            ),
+        });
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('handleContainerReport must still respect apply', async () => {
+        trigger.configuration.threshold = 'all';
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: true,
+            container: containerWithBuckets(
+                { major: majorBucket },
+                { triggerExclude: 'docker.t1' },
+            ),
+        });
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('handleContainerReports should push views and drop containers with no eligible bucket', async () => {
+        trigger.configuration.mode = 'batch';
+        trigger.configuration.threshold = 'patch';
+        const eligible = containerWithBuckets(
+            { major: majorBucket, minor: null, patch: patchBucket },
+            { name: 'containerA' },
+        );
+        const notEligible = containerWithBuckets(
+            { major: majorBucket, minor: null, patch: null },
+            { name: 'containerB' },
+        );
+        const spy = jest.spyOn(trigger, 'triggerBatch');
+        await trigger.handleContainerReports([
+            { changed: true, container: eligible },
+            { changed: true, container: notEligible },
+        ]);
+        expect(spy).toHaveBeenCalledTimes(1);
+        const batch = spy.mock.calls[0][0];
+        expect(batch).toHaveLength(1);
+        expect(batch[0].name).toEqual('containerA');
+        // a view, not the raw container
+        expect(batch[0]).not.toBe(eligible);
+        expect(batch[0].selectedUpdate).toStrictEqual(patchBucket);
+        expect(batch[0].updateKind.remoteValue).toEqual('1.2.9');
+        expect(batch[0].result.tag).toEqual('1.2.9');
+        // the source container must not be mutated
+        expect(eligible.updateKind.remoteValue).toEqual('2.0.0');
+        expect('selectedUpdate' in eligible).toBe(false);
     });
 });
 
