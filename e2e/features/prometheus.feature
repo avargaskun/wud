@@ -10,6 +10,22 @@ Feature: Prometheus exposure
     And response body should contain nodejs_eventloop_lag_seconds
     And response body should contain wud_containers{id=
 
+  # The zz_mv_buckets container appearing at all is the real assertion: an undeclared gauge label
+  # makes prom-client throw, populateGauge swallows it, and the container vanishes from wud_containers.
+  Scenario: WUD must expose per-kind update buckets as gauge labels
+    When I GET /metrics
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.0\.\d+$" and value "" as "EXPECTED_PATCH_TAG"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.[1-9]\d*\.\d+$" and value "" as "EXPECTED_MINOR_TAG"
+    Then response code should be 200
+    And response body should contain name="zz_mv_buckets"
+    And response body should contain updates_patch_kind="tag"
+    And response body should contain updates_patch_semver_diff="patch"
+    And response body should have substituted "updates_patch_remote_value=\"`EXPECTED_PATCH_TAG`\""
+    And response body should contain updates_minor_semver_diff="minor"
+    And response body should have substituted "updates_minor_remote_value=\"`EXPECTED_MINOR_TAG`\""
+    And response body should have substituted "result_tag=\"`EXPECTED_MINOR_TAG`\""
+    And response body should contain update_available="true"
+
   Scenario Outline: WUD must expose watched containers
     When I GET /metrics
     And I resolve the latest version for image "<imageName>" on registry "<registry>" with strategy "<strategy>" and pattern "<pattern>" and value "<resultTag>" as "EXPECTED_TAG"

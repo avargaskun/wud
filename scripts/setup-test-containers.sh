@@ -120,7 +120,19 @@ else
     $DOCKER_CMD run -d --name zz_batch_local_1 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
     $DOCKER_CMD run -d --name zz_batch_local_2 --label 'wud.watch=true' --label 'wud.tag.include=^6\.0\.0$' ghcr.io/stefanprodan/podinfo:5.0.0
 
-    echo "✅ Test containers started (12 containers)"
-    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_batch_)"
+    # MULTI-VERSION (per-kind update buckets)
+    echo "Pulling multi-version test images ..."
+    $DOCKER_CMD run -d --name zz_mv_buckets \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.\d+\.\d+$' \
+        ghcr.io/stefanprodan/podinfo:6.0.0
+    $DOCKER_CMD run -d --name zz_mv_semver_digest \
+        --label 'wud.watch=true' \
+        --label 'wud.watch.digest.semver=true' \
+        --label 'wud.tag.include=^999\.\d+\.\d+$' \
+        ghcr.io/stefanprodan/podinfo:6.0.0
+
+    echo "✅ Test containers started (14 containers)"
+    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_batch_|zz_mv_)"
 fi
 
