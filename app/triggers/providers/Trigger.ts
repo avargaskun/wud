@@ -21,6 +21,14 @@ export interface TriggerConfiguration extends ComponentConfiguration {
     includebydefault?: boolean;
 }
 
+export interface ParsedIncludeOrExcludeTrigger {
+    id: string;
+    threshold: string;
+    thresholdInvalid: boolean;
+    thresholdPresent: boolean;
+    thresholdToken?: string;
+}
+
 /**
  * Render body or title simple template.
  * @param template
@@ -240,32 +248,32 @@ class Trigger extends Component {
      */
     static parseIncludeOrIncludeTriggerString(
         includeOrExcludeTriggerString: string,
-    ) {
+    ): ParsedIncludeOrExcludeTrigger {
         const includeOrExcludeTriggerSplit =
             includeOrExcludeTriggerString.split(/\s*:\s*/);
-        const includeOrExcludeTrigger = {
+        const includeOrExcludeTrigger: ParsedIncludeOrExcludeTrigger = {
             id: includeOrExcludeTriggerSplit[0],
             threshold: 'all',
+            thresholdInvalid: false,
+            thresholdPresent: includeOrExcludeTriggerSplit.length === 2,
         };
-        if (includeOrExcludeTriggerSplit.length === 2) {
-            switch (includeOrExcludeTriggerSplit[1]) {
+        if (includeOrExcludeTrigger.thresholdPresent) {
+            const thresholdToken = includeOrExcludeTriggerSplit[1];
+            includeOrExcludeTrigger.thresholdToken = thresholdToken;
+            switch (thresholdToken) {
                 case 'major-only':
-                    includeOrExcludeTrigger.threshold = 'major-only';
-                    break;
                 case 'minor-only':
-                    includeOrExcludeTrigger.threshold = 'minor-only';
-                    break;
                 case 'major':
-                    includeOrExcludeTrigger.threshold = 'major';
-                    break;
                 case 'minor':
-                    includeOrExcludeTrigger.threshold = 'minor';
-                    break;
                 case 'patch':
-                    includeOrExcludeTrigger.threshold = 'patch';
+                case 'all':
+                    includeOrExcludeTrigger.threshold = thresholdToken;
                     break;
                 default:
+                    // Threshold stays 'all' so existing consumers are unaffected;
+                    // apply() is what fails closed on the invalid flag.
                     includeOrExcludeTrigger.threshold = 'all';
+                    includeOrExcludeTrigger.thresholdInvalid = true;
             }
         }
         return includeOrExcludeTrigger;
@@ -317,21 +325,33 @@ class Trigger extends Component {
             const includedTrigger = includedTriggers.find(
                 (tr) => tr.id === triggerId,
             );
-            if (includedTrigger) {
+            if (!includedTrigger) {
+                isIncluded = false;
+            } else if (includedTrigger.thresholdInvalid) {
+                // Fail closed: degrading an unrecognised token to 'all' would authorise
+                // every major update on an auto-updating trigger because of a typo.
+                this.log.warn(
+                    `Invalid threshold [${includedTrigger.thresholdToken}] in trigger include [${triggerId}] of container [${fullName(container)}] => trigger ignored for this container`,
+                );
+                isIncluded = false;
+            } else {
                 isIncluded = true;
                 configuration.threshold = includedTrigger.threshold;
-            } else {
-                isIncluded = false;
             }
         }
 
-        if (
-            excludedTriggers &&
-            excludedTriggers
-                .map((excludedTrigger) => excludedTrigger.id)
-                .includes(triggerId)
-        ) {
-            isIncluded = false;
+        if (excludedTriggers) {
+            const excludedTrigger = excludedTriggers.find(
+                (tr) => tr.id === triggerId,
+            );
+            if (excludedTrigger) {
+                if (excludedTrigger.thresholdPresent) {
+                    this.log.warn(
+                        `Threshold [${excludedTrigger.thresholdToken}] is meaningless in trigger exclude [${triggerId}] of container [${fullName(container)}] => container excluded anyway`,
+                    );
+                }
+                isIncluded = false;
+            }
         }
 
         if (isIncluded) {

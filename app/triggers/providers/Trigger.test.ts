@@ -1386,3 +1386,216 @@ test.each(isThresholdReachedOnlyTestCases)(
         ).toEqual(item.result);
     },
 );
+
+describe('threshold label validation', () => {
+    beforeEach(() => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+        trigger.configuration.threshold = 'all';
+    });
+
+    const containerNamed = (extra = {}) => ({
+        id: 'c1',
+        name: 'mycontainer',
+        watcher: 'local',
+        ...extra,
+    });
+
+    test('parseIncludeOrIncludeTriggerString should flag an invalid threshold token', () => {
+        const parsed = Trigger.parseIncludeOrIncludeTriggerString(
+            'docker.update:pacth',
+        );
+        expect(parsed.id).toEqual('docker.update');
+        expect(parsed.thresholdPresent).toBe(true);
+        expect(parsed.thresholdInvalid).toBe(true);
+        expect(parsed.thresholdToken).toEqual('pacth');
+        // threshold still defaults to 'all' for legacy consumers, but the entry
+        // must NOT present itself as a legitimately configured 'all'
+        expect(parsed.threshold).toEqual('all');
+    });
+
+    test.each(['all', 'major', 'minor', 'patch', 'major-only', 'minor-only'])(
+        'parseIncludeOrIncludeTriggerString should accept the %s threshold token',
+        (token) => {
+            const parsed = Trigger.parseIncludeOrIncludeTriggerString(
+                `docker.t1:${token}`,
+            );
+            expect(parsed.id).toEqual('docker.t1');
+            expect(parsed.threshold).toEqual(token);
+            expect(parsed.thresholdPresent).toBe(true);
+            expect(parsed.thresholdInvalid).toBe(false);
+            expect(parsed.thresholdToken).toEqual(token);
+        },
+    );
+
+    test('parseIncludeOrIncludeTriggerString should report no threshold when none is present', () => {
+        const parsed = Trigger.parseIncludeOrIncludeTriggerString('docker.t1');
+        expect(parsed.id).toEqual('docker.t1');
+        expect(parsed.threshold).toEqual('all');
+        expect(parsed.thresholdPresent).toBe(false);
+        expect(parsed.thresholdInvalid).toBe(false);
+        expect(parsed.thresholdToken).toBeUndefined();
+    });
+
+    test('apply should fail closed when the include threshold is invalid', () => {
+        const container = containerNamed({ triggerInclude: 'docker.t1:pacth' });
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('apply should fail closed even when includebydefault is true', () => {
+        trigger.configuration.includebydefault = true;
+        const container = containerNamed({ triggerInclude: 'docker.t1:pacth' });
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('apply should log a warning naming the container, the trigger id and the offending token on an invalid include', () => {
+        const spyLog = jest.spyOn(log, 'warn');
+        const container = containerNamed({ triggerInclude: 'docker.t1:pacth' });
+        trigger.apply(container);
+        expect(spyLog).toHaveBeenCalledTimes(1);
+        const message = spyLog.mock.calls[0][0];
+        expect(message).toContain('local_mycontainer');
+        expect(message).toContain('docker.t1');
+        expect(message).toContain('pacth');
+    });
+
+    test('apply should still return the effective configuration for a valid include threshold', () => {
+        const container = containerNamed({ triggerInclude: 'docker.t1:patch' });
+        const spyLog = jest.spyOn(log, 'warn');
+        expect(trigger.apply(container)).toEqual({
+            ...trigger.configuration,
+            threshold: 'patch',
+        });
+        expect(spyLog).not.toHaveBeenCalled();
+    });
+
+    test('apply should ignore an invalid threshold on an entry naming another trigger', () => {
+        const spyLog = jest.spyOn(log, 'warn');
+        const container = containerNamed({
+            triggerInclude: 'docker.t2:pacth, docker.t1:patch',
+        });
+        expect(trigger.apply(container)).toEqual({
+            ...trigger.configuration,
+            threshold: 'patch',
+        });
+        expect(spyLog).not.toHaveBeenCalled();
+    });
+
+    test('apply should still exclude when the exclude entry carries a threshold token', () => {
+        const container = containerNamed({
+            triggerExclude: 'docker.t1:patch',
+        });
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
+    test('apply should log a warning naming the container, the trigger id and the token when a threshold is set on an exclude', () => {
+        const spyLog = jest.spyOn(log, 'warn');
+        const container = containerNamed({
+            triggerExclude: 'docker.t1:patch',
+        });
+        trigger.apply(container);
+        expect(spyLog).toHaveBeenCalledTimes(1);
+        const message = spyLog.mock.calls[0][0];
+        expect(message).toContain('local_mycontainer');
+        expect(message).toContain('docker.t1');
+        expect(message).toContain('patch');
+    });
+
+    test('apply should exclude with an invalid threshold token on the exclude entry without failing open', () => {
+        const spyLog = jest.spyOn(log, 'warn');
+        const container = containerNamed({
+            triggerExclude: 'docker.t1:pacth',
+        });
+        expect(trigger.apply(container)).toBeUndefined();
+        expect(spyLog).toHaveBeenCalledTimes(1);
+    });
+
+    test('apply should not warn when the exclude entry carries no threshold', () => {
+        const spyLog = jest.spyOn(log, 'warn');
+        const container = containerNamed({ triggerExclude: 'docker.t1' });
+        expect(trigger.apply(container)).toBeUndefined();
+        expect(spyLog).not.toHaveBeenCalled();
+    });
+});
+
+describe('isTriggerIncludedOrExcluded / mustTrigger (unchanged by the parse shape change)', () => {
+    beforeEach(() => {
+        trigger.type = 'docker';
+        trigger.name = 't1';
+    });
+
+    const patchUpdate = {
+        updateKind: { kind: 'tag', semverDiff: 'patch' },
+    };
+    const majorUpdate = {
+        updateKind: { kind: 'tag', semverDiff: 'major' },
+    };
+
+    test('isTriggerIncludedOrExcluded should return false when the trigger is not named', () => {
+        expect(
+            trigger.isTriggerIncludedOrExcluded(patchUpdate, 'docker.t2'),
+        ).toBe(false);
+    });
+
+    test('isTriggerIncludedOrExcluded should return true when the trigger is named without a threshold', () => {
+        expect(
+            trigger.isTriggerIncludedOrExcluded(majorUpdate, 'docker.t1'),
+        ).toBe(true);
+    });
+
+    test('isTriggerIncludedOrExcluded should apply the parsed threshold', () => {
+        expect(
+            trigger.isTriggerIncludedOrExcluded(majorUpdate, 'docker.t1:patch'),
+        ).toBe(false);
+        expect(
+            trigger.isTriggerIncludedOrExcluded(patchUpdate, 'docker.t1:patch'),
+        ).toBe(true);
+    });
+
+    test('isTriggerIncludedOrExcluded still degrades an invalid threshold token to all', () => {
+        // These helpers are not the fail-closed path (apply() is); the additive
+        // parse change must leave their behaviour exactly as it is today.
+        expect(
+            trigger.isTriggerIncludedOrExcluded(majorUpdate, 'docker.t1:pacth'),
+        ).toBe(true);
+    });
+
+    test('isTriggerIncluded should fall back to includebydefault when no include is set', () => {
+        trigger.configuration.includebydefault = true;
+        expect(trigger.isTriggerIncluded(patchUpdate, undefined)).toBe(true);
+        trigger.configuration.includebydefault = false;
+        expect(trigger.isTriggerIncluded(patchUpdate, undefined)).toBe(false);
+    });
+
+    test('isTriggerExcluded should return false when no exclude is set', () => {
+        expect(trigger.isTriggerExcluded(patchUpdate, undefined)).toBe(false);
+    });
+
+    test('mustTrigger should return true when included and not excluded', () => {
+        expect(
+            trigger.mustTrigger({
+                ...patchUpdate,
+                triggerInclude: 'docker.t1:patch',
+            }),
+        ).toBe(true);
+    });
+
+    test('mustTrigger should return false when excluded', () => {
+        expect(
+            trigger.mustTrigger({
+                ...patchUpdate,
+                triggerInclude: 'docker.t1',
+                triggerExclude: 'docker.t1',
+            }),
+        ).toBe(false);
+    });
+
+    test('mustTrigger should return false when the include threshold is not reached', () => {
+        expect(
+            trigger.mustTrigger({
+                ...majorUpdate,
+                triggerInclude: 'docker.t1:patch',
+            }),
+        ).toBe(false);
+    });
+});
