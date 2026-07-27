@@ -1,4 +1,3 @@
-// @ts-nocheck
 import parse from 'parse-docker-image-name';
 import {
     parse as parseSemver,
@@ -12,13 +11,13 @@ import {
     fullName,
 } from '../../../model/container';
 import * as registry from '../../../registry';
-import { ContainerResult } from '../../../model/container';
+import { Container, ContainerResult } from '../../../model/container';
 
 /**
  * Return all supported registries
  * @returns {*}
  */
-export function getRegistries() {
+export function getRegistries(): Record<string, any> {
     return registry.getState().registry;
 }
 
@@ -26,7 +25,7 @@ export function getRegistries() {
  * Get the Docker Registry by name.
  * @param registryName
  */
-export function getRegistry(registryName) {
+export function getRegistry(registryName: string): any {
     const registryToReturn = getRegistries()[registryName];
     if (!registryToReturn) {
         throw new Error(`Unsupported Registry ${registryName}`);
@@ -40,7 +39,11 @@ export function getRegistry(registryName) {
  * @param tags
  * @returns {*}
  */
-export function getTagCandidates(container, tags, logContainer) {
+export function getTagCandidates(
+    container: Container,
+    tags: string[],
+    logContainer: any,
+): string[] {
     let filteredTags = tags;
 
     // Match include tag regex
@@ -153,7 +156,7 @@ export function getTagCandidates(container, tags, logContainer) {
     return filteredTags;
 }
 
-export function normalizeContainer(container) {
+export function normalizeContainer(container: Container): Container {
     const containerWithNormalizedImage = container;
     const registryProvider = Object.values(getRegistries()).find((provider) =>
         provider.match(container.image.registry.url),
@@ -174,7 +177,7 @@ export function normalizeContainer(container) {
     return validateContainer(containerWithNormalizedImage);
 }
 
-export function getContainerName(container) {
+export function getContainerName(container: any): string {
     let containerName;
     const names = container.Names;
     if (names && names.length > 0) {
@@ -190,7 +193,7 @@ export function getContainerName(container) {
  * @param containerImage
  * @returns {*} digest
  */
-export function getRepoDigest(containerImage) {
+export function getRepoDigest(containerImage: any): string | undefined {
     if (
         !containerImage.RepoDigests ||
         containerImage.RepoDigests.length === 0
@@ -208,7 +211,10 @@ export function getRepoDigest(containerImage) {
  * @param watchByDefault true if containers must be watched by default
  * @returns {boolean}
  */
-export function isContainerToWatch(wudWatchLabelValue, watchByDefault) {
+export function isContainerToWatch(
+    wudWatchLabelValue: string | undefined,
+    watchByDefault: boolean,
+): boolean {
     return wudWatchLabelValue !== undefined && wudWatchLabelValue !== ''
         ? wudWatchLabelValue.toLowerCase() === 'true'
         : watchByDefault;
@@ -221,9 +227,9 @@ export function isContainerToWatch(wudWatchLabelValue, watchByDefault) {
  * @param logContainer
  */
 export async function findNewVersion(
-    container,
-    dockerApi,
-    logContainer,
+    container: Container,
+    dockerApi: any,
+    logContainer: any,
 ): Promise<ContainerResult> {
     const registryProvider = getRegistry(container.image.registry.name);
     const result: ContainerResult = { tag: container.image.tag.value };
