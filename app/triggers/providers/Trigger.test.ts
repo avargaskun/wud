@@ -838,3 +838,322 @@ describe('handleContainerReports auto filtering', () => {
         ]);
     });
 });
+
+describe('bucket selection', () => {
+    const majorBucket = {
+        kind: 'tag',
+        localValue: '1.2.3',
+        remoteValue: '2.0.0',
+        semverDiff: 'major',
+        created: '2021-02-01T00:00:00.000Z',
+        link: 'https://link/2.0.0',
+    };
+    const minorBucket = {
+        kind: 'tag',
+        localValue: '1.2.3',
+        remoteValue: '1.9.0',
+        semverDiff: 'minor',
+        created: '2021-01-15T00:00:00.000Z',
+        link: 'https://link/1.9.0',
+    };
+    const patchBucket = {
+        kind: 'tag',
+        localValue: '1.2.3',
+        remoteValue: '1.2.9',
+        semverDiff: 'patch',
+        created: '2021-01-10T00:00:00.000Z',
+        link: 'https://link/1.2.9',
+    };
+    const digestBucket = {
+        kind: 'digest',
+        localValue: 'sha256:local',
+        remoteValue: 'sha256:remote',
+        created: '2021-01-20T00:00:00.000Z',
+        link: 'https://link/1.2.3',
+    };
+
+    const containerWithBuckets = (updates, extra = {}) => ({
+        id: 'container-123',
+        name: 'container1',
+        watcher: 'local',
+        image: {
+            name: 'organization/image',
+            tag: { value: '1.2.3', semver: true },
+            digest: { watch: false, value: 'sha256:local' },
+        },
+        result: {
+            tag: '2.0.0',
+            created: '2021-02-01T00:00:00.000Z',
+            link: 'https://link/2.0.0',
+        },
+        updateAvailable: true,
+        updateKind: {
+            kind: 'tag',
+            localValue: '1.2.3',
+            remoteValue: '2.0.0',
+            semverDiff: 'major',
+        },
+        updates,
+        ...extra,
+    });
+
+    const getEligibleBucketsTestCases = [
+        { threshold: 'all', buckets: ['major', 'minor', 'patch', 'digest'] },
+        { threshold: 'major', buckets: ['major', 'minor', 'patch', 'digest'] },
+        { threshold: 'minor', buckets: ['minor', 'patch', 'digest'] },
+        { threshold: 'patch', buckets: ['patch', 'digest'] },
+        { threshold: 'major-only', buckets: ['major', 'digest'] },
+        { threshold: 'minor-only', buckets: ['minor', 'digest'] },
+        { threshold: 'pacth', buckets: ['major', 'minor', 'patch', 'digest'] },
+    ];
+
+    test.each(getEligibleBucketsTestCases)(
+        'getEligibleBuckets should return $buckets when threshold is $threshold',
+        (item) => {
+            expect(Trigger.getEligibleBuckets(item.threshold)).toStrictEqual(
+                item.buckets,
+            );
+        },
+    );
+
+    test('selectUpdate should select the patch bucket at threshold patch even when a major bucket is populated', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: null,
+            patch: patchBucket,
+        });
+        expect(Trigger.selectUpdate(container, 'patch')).toStrictEqual(
+            patchBucket,
+        );
+    });
+
+    test('selectUpdate should return undefined at threshold patch when only the major bucket is populated', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: null,
+            patch: null,
+        });
+        expect(Trigger.selectUpdate(container, 'patch')).toBeUndefined();
+    });
+
+    test('selectUpdate should select the minor bucket at threshold minor-only when major and minor are populated', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: minorBucket,
+            patch: null,
+        });
+        expect(Trigger.selectUpdate(container, 'minor-only')).toStrictEqual(
+            minorBucket,
+        );
+    });
+
+    test('selectUpdate should select the digest bucket at threshold patch when no eligible tag bucket is populated', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: null,
+            patch: null,
+            digest: digestBucket,
+        });
+        expect(Trigger.selectUpdate(container, 'patch')).toStrictEqual(
+            digestBucket,
+        );
+    });
+
+    test('selectUpdate should prefer a tag bucket over the digest bucket when both are populated', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: minorBucket,
+            patch: patchBucket,
+            digest: digestBucket,
+        });
+        expect(Trigger.selectUpdate(container, 'all')).toStrictEqual(
+            majorBucket,
+        );
+        expect(Trigger.selectUpdate(container, 'patch')).toStrictEqual(
+            patchBucket,
+        );
+    });
+
+    test.each(['all', 'major', 'minor', 'patch', 'major-only', 'minor-only'])(
+        'selectUpdate should fall back to the legacy update at threshold %s when no bucket can be populated',
+        (threshold) => {
+            const container = containerWithBuckets(
+                {},
+                {
+                    result: {
+                        tag: '1.2-rc.2',
+                        created: '2021-03-01T00:00:00.000Z',
+                        link: 'https://link/1.2-rc.2',
+                    },
+                    updateKind: {
+                        kind: 'tag',
+                        localValue: '1.2-rc.1',
+                        remoteValue: '1.2-rc.2',
+                        semverDiff: 'unknown',
+                    },
+                },
+            );
+            expect(Trigger.selectUpdate(container, threshold)).toStrictEqual({
+                kind: 'tag',
+                localValue: '1.2-rc.1',
+                remoteValue: '1.2-rc.2',
+                semverDiff: undefined,
+                created: '2021-03-01T00:00:00.000Z',
+                link: 'https://link/1.2-rc.2',
+            });
+        },
+    );
+
+    test('selectUpdate legacy fallback should still respect the threshold ceiling', () => {
+        const container = containerWithBuckets(undefined);
+        expect('updates' in container).toBe(true);
+        expect(container.updates).toBeUndefined();
+        expect(Trigger.selectUpdate(container, 'patch')).toBeUndefined();
+        expect(Trigger.selectUpdate(container, 'all')).toBeDefined();
+    });
+
+    test('selectUpdate should return undefined when no update is available and no bucket is populated', () => {
+        const container = containerWithBuckets(
+            { major: null, minor: null, patch: null },
+            { updateAvailable: false },
+        );
+        expect(Trigger.selectUpdate(container, 'all')).toBeUndefined();
+    });
+
+    test('legacyUpdate should map an unknown update kind to a digest update on the current tag', () => {
+        const container = containerWithBuckets(
+            {},
+            {
+                result: { created: '2021-04-01T00:00:00.000Z' },
+                updateKind: { kind: 'unknown' },
+            },
+        );
+        expect(Trigger.legacyUpdate(container)).toStrictEqual({
+            kind: 'digest',
+            localValue: 'sha256:local',
+            remoteValue: '',
+            semverDiff: undefined,
+            created: '2021-04-01T00:00:00.000Z',
+            link: undefined,
+        });
+    });
+
+    test('legacyUpdate should use the result digest as the remote value for a digest update', () => {
+        const container = containerWithBuckets(
+            {},
+            {
+                result: {
+                    digest: 'sha256:remote',
+                    created: '2021-04-01T00:00:00.000Z',
+                },
+                updateKind: {
+                    kind: 'digest',
+                    localValue: 'sha256:local',
+                    remoteValue: 'sha256:remote',
+                },
+            },
+        );
+        expect(Trigger.legacyUpdate(container)).toStrictEqual({
+            kind: 'digest',
+            localValue: 'sha256:local',
+            remoteValue: 'sha256:remote',
+            semverDiff: undefined,
+            created: '2021-04-01T00:00:00.000Z',
+            link: undefined,
+        });
+    });
+
+    test('selectUpdate and buildTriggerView must be backward compatible at threshold all', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: minorBucket,
+            patch: patchBucket,
+        });
+        const update = Trigger.selectUpdate(container, 'all');
+        expect(update).toStrictEqual(majorBucket);
+
+        const view = Trigger.buildTriggerView(container, update);
+        expect(view.result.tag).toEqual(container.result.tag);
+        expect(view.result.created).toEqual(container.result.created);
+        expect(view.result.link).toEqual(container.result.link);
+        expect(view.updateKind).toStrictEqual(container.updateKind);
+        expect(view.updateAvailable).toBe(true);
+    });
+
+    test('buildTriggerView should rewrite the update kind to the selected target and expose the selected update', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: minorBucket,
+            patch: patchBucket,
+        });
+        const update = Trigger.selectUpdate(container, 'patch');
+        const view = Trigger.buildTriggerView(container, update);
+
+        expect(view.updateKind).toStrictEqual({
+            kind: 'tag',
+            localValue: '1.2.3',
+            remoteValue: '1.2.9',
+            semverDiff: 'patch',
+        });
+        expect(view.result.tag).toEqual('1.2.9');
+        expect(view.result.created).toEqual('2021-01-10T00:00:00.000Z');
+        expect(view.result.link).toEqual('https://link/1.2.9');
+        expect(view.updateAvailable).toBe(true);
+        expect(view.selectedUpdate).toStrictEqual(patchBucket);
+        // the source container must not be mutated
+        expect(container.updateKind.remoteValue).toEqual('2.0.0');
+        expect(container.result.tag).toEqual('2.0.0');
+        expect('selectedUpdate' in container).toBe(false);
+    });
+
+    test('buildTriggerView should keep the current tag when the selected update is a digest update', () => {
+        const container = containerWithBuckets({
+            major: null,
+            minor: null,
+            patch: null,
+            digest: digestBucket,
+        });
+        const view = Trigger.buildTriggerView(container, digestBucket);
+
+        expect(view.result.tag).toEqual(container.image.tag.value);
+        expect(view.result.digest).toEqual('sha256:remote');
+        expect(view.updateKind).toStrictEqual({
+            kind: 'digest',
+            localValue: 'sha256:local',
+            remoteValue: 'sha256:remote',
+            semverDiff: undefined,
+        });
+        expect(view.selectedUpdate).toStrictEqual(digestBucket);
+    });
+
+    test('buildTriggerView should mark a tag update with no semver diff as unknown', () => {
+        const container = containerWithBuckets({});
+        const view = Trigger.buildTriggerView(container, {
+            kind: 'tag',
+            localValue: '1.2-rc.1',
+            remoteValue: '1.2-rc.2',
+        });
+        expect(view.updateKind.semverDiff).toEqual('unknown');
+    });
+});
+
+const isThresholdReachedOnlyTestCases = [
+    { result: true, threshold: 'major-only', change: 'major' },
+    { result: false, threshold: 'major-only', change: 'minor' },
+    { result: false, threshold: 'major-only', change: 'patch' },
+    { result: false, threshold: 'minor-only', change: 'major' },
+    { result: true, threshold: 'minor-only', change: 'minor' },
+    { result: false, threshold: 'minor-only', change: 'patch' },
+];
+
+test.each(isThresholdReachedOnlyTestCases)(
+    'isThresholdReached should return $result when threshold is $threshold and change is $change',
+    (item) => {
+        expect(
+            Trigger.isThresholdReached(
+                { updateKind: { kind: 'tag', semverDiff: item.change } },
+                item.threshold,
+            ),
+        ).toEqual(item.result);
+    },
+);

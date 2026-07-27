@@ -1,7 +1,13 @@
 import Component, { ComponentConfiguration } from '../../registry/Component';
 import * as event from '../../event';
 import { getTriggerCounter } from '../../prometheus/trigger';
-import { fullName, Container, ContainerReport } from '../../model/container';
+import {
+    fullName,
+    Container,
+    ContainerReport,
+    ContainerUpdate,
+    UpdateBucketKey,
+} from '../../model/container';
 import { ObjectSchema } from 'joi';
 
 export interface TriggerConfiguration extends ComponentConfiguration {
@@ -109,6 +115,122 @@ class Trigger extends Component {
             }
         }
         return thresholdPassing;
+    }
+
+    /**
+     * Return the update buckets a threshold allows to be installed.
+     * The threshold is a ceiling on eligible buckets, not a filter on the highest one.
+     * digest is eligible at every threshold, preserving today's behaviour where
+     * isThresholdReached only applies its switch when updateKind.kind === 'tag'.
+     * @param threshold
+     * @returns {UpdateBucketKey[]}
+     */
+    static getEligibleBuckets(threshold: string): UpdateBucketKey[] {
+        switch (threshold) {
+            case 'minor':
+                return ['minor', 'patch', 'digest'];
+            case 'patch':
+                return ['patch', 'digest'];
+            case 'major-only':
+                return ['major', 'digest'];
+            case 'minor-only':
+                return ['minor', 'digest'];
+            case 'all':
+            case 'major':
+            default:
+                return ['major', 'minor', 'patch', 'digest'];
+        }
+    }
+
+    /**
+     * Describe an update that could not be bucketed, from the legacy result/updateKind fields.
+     * kind 'unknown' is mapped to 'digest' (target = the current tag) because the legacy path
+     * would otherwise produce getImageFullName(image, undefined).
+     * @param container
+     * @returns {ContainerUpdate}
+     */
+    static legacyUpdate(container: Container): ContainerUpdate {
+        const uk = container.updateKind;
+        const isTag = uk?.kind === 'tag';
+        return {
+            kind: isTag ? 'tag' : 'digest',
+            localValue:
+                (isTag ? uk?.localValue : container.image?.digest?.value) ?? '',
+            remoteValue:
+                (isTag ? uk?.remoteValue : container.result?.digest) ?? '',
+            semverDiff:
+                uk?.semverDiff === 'unknown' ? undefined : uk?.semverDiff,
+            created: container.result?.created,
+            link: container.result?.link,
+        };
+    }
+
+    /**
+     * Return the highest update the threshold permits to be installed, if any.
+     * Precedence is major -> minor -> patch -> digest.
+     * @param container
+     * @param threshold
+     * @returns {ContainerUpdate|undefined}
+     */
+    static selectUpdate(
+        container: Container,
+        threshold: string,
+    ): ContainerUpdate | undefined {
+        const eligible = Trigger.getEligibleBuckets(threshold);
+        const updates = container.updates;
+        if (updates) {
+            for (const key of ['major', 'minor', 'patch'] as const) {
+                if (eligible.includes(key) && updates[key]) return updates[key];
+            }
+            if (eligible.includes('digest') && updates.digest)
+                return updates.digest;
+        }
+        // Legacy fallback: updates that cannot be bucketed at all
+        if (
+            container.updateAvailable &&
+            Trigger.isThresholdReached(container, threshold)
+        ) {
+            return Trigger.legacyUpdate(container);
+        }
+        return undefined;
+    }
+
+    /**
+     * Build the shallow container view describing the selected update.
+     * The spread evaluates the computed getters into plain values before they are overwritten.
+     * @param container
+     * @param update
+     * @returns {Container}
+     */
+    static buildTriggerView(
+        container: Container,
+        update: ContainerUpdate,
+    ): Container {
+        const view: any = { ...container };
+        view.result = {
+            ...container.result,
+            tag:
+                update.kind === 'tag'
+                    ? update.remoteValue
+                    : container.image.tag.value,
+            digest:
+                update.kind === 'digest'
+                    ? update.remoteValue
+                    : container.result?.digest,
+            created: update.created ?? container.result?.created,
+            link: update.link ?? container.result?.link,
+        };
+        view.updateKind = {
+            kind: update.kind,
+            localValue: update.localValue,
+            remoteValue: update.remoteValue,
+            semverDiff:
+                update.semverDiff ??
+                (update.kind === 'tag' ? 'unknown' : undefined),
+        };
+        view.updateAvailable = true;
+        view.selectedUpdate = update;
+        return view;
     }
 
     /**
