@@ -1,24 +1,32 @@
-// @ts-nocheck
 import parse from 'parse-docker-image-name';
 import {
     parse as parseSemver,
     isGreater as isGreaterSemver,
     transform as transformTag,
+    diff as diffSemver,
+    compare as compareSemver,
 } from '../../../tag';
 import log from '../../../log';
-import { wudWatchDigest } from './label';
+import { wudWatchDigest, wudWatchDigestSemver } from './label';
 import {
     validate as validateContainer,
     fullName,
+    renderLink,
 } from '../../../model/container';
 import * as registry from '../../../registry';
-import { ContainerResult } from '../../../model/container';
+import {
+    Container,
+    ContainerResult,
+    ContainerUpdate,
+    ContainerUpdates,
+    UpdateBucketKey,
+} from '../../../model/container';
 
 /**
  * Return all supported registries
  * @returns {*}
  */
-export function getRegistries() {
+export function getRegistries(): Record<string, any> {
     return registry.getState().registry;
 }
 
@@ -26,7 +34,7 @@ export function getRegistries() {
  * Get the Docker Registry by name.
  * @param registryName
  */
-export function getRegistry(registryName) {
+export function getRegistry(registryName: string): any {
     const registryToReturn = getRegistries()[registryName];
     if (!registryToReturn) {
         throw new Error(`Unsupported Registry ${registryName}`);
@@ -40,7 +48,11 @@ export function getRegistry(registryName) {
  * @param tags
  * @returns {*}
  */
-export function getTagCandidates(container, tags, logContainer) {
+export function getTagCandidates(
+    container: Container,
+    tags: string[],
+    logContainer: any,
+): string[] {
     let filteredTags = tags;
 
     // Match include tag regex
@@ -140,11 +152,17 @@ export function getTagCandidates(container, tags, logContainer) {
 
         // Apply semver sort desc
         filteredTags.sort((t1, t2) => {
-            const greater = isGreaterSemver(
-                transformTag(container.transformTags, t2),
-                transformTag(container.transformTags, t1),
-            );
-            return greater ? 1 : -1;
+            const t1Transformed = transformTag(container.transformTags, t1);
+            const t2Transformed = transformTag(container.transformTags, t2);
+            const cmp = compareSemver(t2Transformed, t1Transformed);
+            if (cmp !== null) {
+                return cmp;
+            }
+            // Defensive only: the filters above already dropped every tag that does
+            // not parse after transform, so compareSemver cannot return null here.
+            // Compare the TRANSFORMED values, not the raw ones, so this stays
+            // consistent with the line above if that filtering ever changes.
+            return isGreaterSemver(t2Transformed, t1Transformed) ? 1 : -1;
         });
     } else {
         // Non semver tag -> do not propose any other registry tag
@@ -153,7 +171,196 @@ export function getTagCandidates(container, tags, logContainer) {
     return filteredTags;
 }
 
-export function normalizeContainer(container) {
+/**
+ * Map a raw semver diff to the update bucket it belongs to.
+ * A prerelease diff deliberately folds into the patch bucket.
+ * @param rawDiff
+ */
+export function mapDiffToBucket(
+    rawDiff: string | null,
+): UpdateBucketKey | undefined {
+    switch (rawDiff) {
+        case 'major':
+        case 'premajor':
+            return 'major';
+        case 'minor':
+        case 'preminor':
+            return 'minor';
+        case 'patch':
+        case 'prepatch':
+            return 'patch';
+        case 'prerelease':
+            return 'patch';
+        default:
+            return undefined;
+    }
+}
+
+/**
+ * Map a raw semver diff to the semverDiff reported on the bucket.
+ * @param rawDiff
+ */
+export function mapDiffToSemverDiff(
+    rawDiff: string | null,
+): ContainerUpdate['semverDiff'] {
+    switch (rawDiff) {
+        case 'major':
+        case 'premajor':
+            return 'major';
+        case 'minor':
+        case 'preminor':
+            return 'minor';
+        case 'patch':
+        case 'prepatch':
+            return 'patch';
+        case 'prerelease':
+            return 'prerelease';
+        default:
+            return undefined;
+    }
+}
+
+/**
+ * Return the buckets that are structurally possible for a container.
+ * @param container
+ */
+export function getApplicableBuckets(container: Container): UpdateBucketKey[] {
+    const buckets: UpdateBucketKey[] = [];
+    if (container.image.tag.semver) {
+        // Measure the TRANSFORMED tag: computeUpdateBuckets assigns buckets by diffing
+        // transformed values, so a segment-changing wud.tag.transform would otherwise
+        // drop every bucket via the `bucket in updates` guard.
+        const localTransformed = transformTag(
+            container.transformTags,
+            container.image.tag.value,
+        );
+        const numericPart = localTransformed.match(/(\d+(\.\d+)*)/);
+        // No numeric part -> the segment lock is skipped entirely, so all levels are possible
+        const segments = numericPart ? numericPart[0].split('.').length : 3;
+        if (segments >= 1) buckets.push('major');
+        if (segments >= 2) buckets.push('minor');
+        if (segments >= 3) buckets.push('patch');
+    }
+    if (container.image.digest.watch) buckets.push('digest');
+    return buckets;
+}
+
+/**
+ * Render a bucket link, never throwing: renderLink evals a user-supplied label.
+ * @param container
+ * @param tagValue
+ */
+function renderBucketLink(
+    container: Container,
+    tagValue: string,
+): string | undefined {
+    try {
+        return renderLink(container, tagValue);
+    } catch (e) {
+        log.debug(
+            `Error when rendering link template for tag [${tagValue}] (${e})`,
+        );
+        return undefined;
+    }
+}
+
+/**
+ * Compute the per-kind update buckets of a container.
+ * @param container
+ * @param tagsCandidates
+ * @param result
+ */
+export function computeUpdateBuckets(
+    container: Container,
+    tagsCandidates: string[],
+    result: ContainerResult,
+): ContainerUpdates {
+    const updates: ContainerUpdates = {};
+    getApplicableBuckets(container).forEach((bucketKey) => {
+        updates[bucketKey] = null;
+    });
+
+    const localTag = container.image.tag.value;
+    const localTransformed = transformTag(container.transformTags, localTag);
+
+    (tagsCandidates ?? []).forEach((candidate) => {
+        const candidateTransformed = transformTag(
+            container.transformTags,
+            candidate,
+        );
+        const rawDiff = diffSemver(localTransformed, candidateTransformed);
+        const bucket = mapDiffToBucket(rawDiff);
+        if (!bucket || !(bucket in updates)) {
+            return;
+        }
+
+        const incumbent = updates[bucket];
+        if (incumbent) {
+            const cmp = compareSemver(
+                candidateTransformed,
+                transformTag(container.transformTags, incumbent.remoteValue),
+            );
+            // Ties and unparseable pairs keep the incumbent (first encountered wins)
+            if (cmp === null || cmp <= 0) {
+                return;
+            }
+        }
+        updates[bucket] = {
+            kind: 'tag',
+            localValue: localTag,
+            remoteValue: candidate,
+            semverDiff: mapDiffToSemverDiff(rawDiff),
+            link: renderBucketLink(container, candidate),
+        };
+    });
+
+    // Digest bucket - always against the CURRENT tag
+    if (
+        'digest' in updates &&
+        container.image.digest.value !== undefined &&
+        result.digest !== undefined &&
+        container.image.digest.value !== result.digest
+    ) {
+        updates.digest = {
+            kind: 'digest',
+            localValue: container.image.digest.value,
+            remoteValue: result.digest,
+            created: result.created,
+            link: renderBucketLink(container, localTag),
+        };
+    }
+
+    return updates;
+}
+
+/**
+ * Return true if the digest must be watched for a container.
+ * @param registryProvider
+ * @param isSemver
+ * @param watchDigestLabelValue the value of the wud.watch.digest label
+ * @param watchDigestSemverLabelValue the value of the wud.watch.digest.semver label
+ * @param imageName
+ */
+export function shouldWatchDigestForContainer(
+    registryProvider: any,
+    isSemver: boolean,
+    watchDigestLabelValue: string | undefined,
+    watchDigestSemverLabelValue: string | undefined,
+    imageName: string,
+): boolean {
+    if (isSemver) {
+        // Semver containers: opt in via the DEDICATED label only.
+        // Deliberately NOT wud.watch.digest -- that label is inert on semver tags
+        // today, so honouring it would activate digest watching on upgrade for
+        // deployments that already set it, recreating running containers unprompted.
+        // The provider default is likewise not consulted: most providers default to
+        // true, which would add 2 HTTP calls per container per cycle everywhere.
+        return watchDigestSemverLabelValue === 'true';
+    }
+    return registryProvider.shouldWatchDigest(watchDigestLabelValue, imageName);
+}
+
+export function normalizeContainer(container: Container): Container {
     const containerWithNormalizedImage = container;
     const registryProvider = Object.values(getRegistries()).find((provider) =>
         provider.match(container.image.registry.url),
@@ -174,7 +381,7 @@ export function normalizeContainer(container) {
     return validateContainer(containerWithNormalizedImage);
 }
 
-export function getContainerName(container) {
+export function getContainerName(container: any): string {
     let containerName;
     const names = container.Names;
     if (names && names.length > 0) {
@@ -190,7 +397,7 @@ export function getContainerName(container) {
  * @param containerImage
  * @returns {*} digest
  */
-export function getRepoDigest(containerImage) {
+export function getRepoDigest(containerImage: any): string | undefined {
     if (
         !containerImage.RepoDigests ||
         containerImage.RepoDigests.length === 0
@@ -208,10 +415,18 @@ export function getRepoDigest(containerImage) {
  * @param watchByDefault true if containers must be watched by default
  * @returns {boolean}
  */
-export function isContainerToWatch(wudWatchLabelValue, watchByDefault) {
+export function isContainerToWatch(
+    wudWatchLabelValue: string | undefined,
+    watchByDefault: boolean,
+): boolean {
     return wudWatchLabelValue !== undefined && wudWatchLabelValue !== ''
         ? wudWatchLabelValue.toLowerCase() === 'true'
         : watchByDefault;
+}
+
+export interface FindNewVersionResult {
+    result: ContainerResult;
+    updates: ContainerUpdates;
 }
 
 /**
@@ -221,24 +436,25 @@ export function isContainerToWatch(wudWatchLabelValue, watchByDefault) {
  * @param logContainer
  */
 export async function findNewVersion(
-    container,
-    dockerApi,
-    logContainer,
-): Promise<ContainerResult> {
+    container: Container,
+    dockerApi: any,
+    logContainer: any,
+): Promise<FindNewVersionResult> {
     const registryProvider = getRegistry(container.image.registry.name);
     const result: ContainerResult = { tag: container.image.tag.value };
     if (!registryProvider) {
         logContainer.error(
             `Unsupported registry (${container.image.registry.name})`,
         );
-        return result;
+        return { result, updates: {} };
     } else {
-        const watchDigest =
-            !container.image.tag.semver &&
-            registryProvider.shouldWatchDigest(
-                container.labels?.[wudWatchDigest],
-                container.image.name,
-            );
+        const watchDigest = shouldWatchDigestForContainer(
+            registryProvider,
+            container.image.tag.semver,
+            container.labels?.[wudWatchDigest],
+            container.labels?.[wudWatchDigestSemver],
+            container.image.name,
+        );
 
         if (!container.image.tag.semver && !watchDigest) {
             logContainer.warn(
@@ -254,16 +470,10 @@ export async function findNewVersion(
 
         // Must watch digest? => Find local/remote digests on registry
         if (watchDigest && container.image.digest.repo) {
-            // If we have a tag candidate BUT we also watch digest
-            // (case where local=`mongo:8` and remote=`mongo:8.0.0`),
-            // Then get the digest of the tag candidate
-            // Else get the digest of the same tag as the local one
+            // The digest is always resolved against the currently running tag
             const imageToGetDigestFrom = JSON.parse(
                 JSON.stringify(container.image),
             );
-            if (tagsCandidates.length > 0) {
-                [imageToGetDigestFrom.tag.value] = tagsCandidates;
-            }
 
             const remoteDigest =
                 await registryProvider.getImageManifestDigest(
@@ -305,6 +515,10 @@ export async function findNewVersion(
         if (tagsCandidates && tagsCandidates.length > 0) {
             [result.tag] = tagsCandidates;
         }
+
+        return {
+            result,
+            updates: computeUpdateBuckets(container, tagsCandidates, result),
+        };
     }
-    return result;
 }

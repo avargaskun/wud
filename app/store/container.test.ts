@@ -127,6 +127,75 @@ test('updateContainer should update doc and emit an event', async () => {
     expect(spyEvent).toHaveBeenCalled();
 });
 
+test('insertContainer and updateContainer should never persist selectedUpdate', async () => {
+    const collection = {
+        findOne: () => {},
+        insert: () => {},
+        chain: () => ({
+            find: () => ({
+                remove: () => ({}),
+            }),
+        }),
+    };
+    const db = {
+        getCollection: () => collection,
+        addCollection: () => null,
+    };
+    const containerToSave = {
+        id: 'container-123456789',
+        name: 'test',
+        watcher: 'test',
+        image: {
+            id: 'image-123456789',
+            registry: {
+                name: 'registry',
+                url: 'https://hub',
+            },
+            name: 'organization/image',
+            tag: {
+                value: '1.0.0',
+                semver: true,
+            },
+            digest: {
+                watch: false,
+                repo: undefined,
+            },
+            architecture: 'arch',
+            os: 'os',
+            created: '2021-06-12T05:33:38.440Z',
+        },
+        result: {
+            tag: '1.0.1',
+        },
+        updates: {
+            patch: {
+                kind: 'tag',
+                localValue: '1.0.0',
+                remoteValue: '1.0.1',
+                semverDiff: 'patch',
+            },
+        },
+        selectedUpdate: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '1.0.1',
+            semverDiff: 'patch',
+        },
+    };
+    const spyInsert = jest.spyOn(collection, 'insert');
+    container.createCollections(db);
+
+    const inserted = container.insertContainer({ ...containerToSave });
+    expect('selectedUpdate' in inserted).toBe(false);
+    expect('selectedUpdate' in spyInsert.mock.calls[0][0].data).toBe(false);
+    expect(inserted.updates).toEqual(containerToSave.updates);
+
+    const updated = container.updateContainer({ ...containerToSave });
+    expect('selectedUpdate' in updated).toBe(false);
+    expect('selectedUpdate' in spyInsert.mock.calls[1][0].data).toBe(false);
+    expect(updated.updates).toEqual(containerToSave.updates);
+});
+
 test('getContainers should return all containers sorted by name', async () => {
     const containerExample = {
         id: 'container-123456789',

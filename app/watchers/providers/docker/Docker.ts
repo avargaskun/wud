@@ -13,6 +13,7 @@ import {
     wudTagExclude,
     wudTagTransform,
     wudWatchDigest,
+    wudWatchDigestSemver,
     wudLinkTemplate,
     wudDisplayName,
     wudDisplayIcon,
@@ -30,6 +31,7 @@ import {
     normalizeContainer,
     getContainerName,
     findNewVersion,
+    shouldWatchDigestForContainer,
 } from './utils';
 import { parse as parseSemver, transform as transformTag } from '../../../tag';
 
@@ -476,15 +478,18 @@ export class Docker extends Watcher {
 
         // Reset previous results if so
         delete containerWithResult.result;
+        delete containerWithResult.updates;
         delete containerWithResult.error;
         logContainer.debug('Start watching');
 
         try {
-            containerWithResult.result = await findNewVersion(
+            const { result, updates } = await findNewVersion(
                 container,
                 this.dockerApi,
                 logContainer,
             );
+            containerWithResult.result = result;
+            containerWithResult.updates = updates;
         } catch (e) {
             logContainer.warn(`Error when processing (${e.message})`);
             logContainer.debug(e);
@@ -667,12 +672,13 @@ export class Docker extends Watcher {
         }
         const parsedTag = parseSemver(transformTag(transformTags, tagName));
         const isSemver = parsedTag !== null && parsedTag !== undefined;
-        const watchDigest =
-            !isSemver &&
-            registryProvider.shouldWatchDigest(
-                container.Labels[wudWatchDigest],
-                parsedImage.path,
-            );
+        const watchDigest = shouldWatchDigestForContainer(
+            registryProvider,
+            isSemver,
+            container.Labels[wudWatchDigest],
+            container.Labels[wudWatchDigestSemver],
+            parsedImage.path,
+        );
 
         return normalizeContainer({
             id: containerId,

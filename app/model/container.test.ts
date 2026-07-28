@@ -318,6 +318,321 @@ test('flatten should be flatten the nested properties with underscores when call
     });
 });
 
+const containerWithUpdates = (extra = {}) => ({
+    id: 'container-123456789',
+    name: 'test',
+    watcher: 'test',
+    image: {
+        id: 'image-123456789',
+        registry: {
+            name: 'hub',
+            url: 'https://hub',
+        },
+        name: 'organization/image',
+        tag: {
+            value: '1.0.0',
+            semver: true,
+        },
+        digest: {
+            watch: false,
+            repo: undefined,
+        },
+        architecture: 'arch',
+        os: 'os',
+        created: '2021-06-12T05:33:38.440Z',
+    },
+    result: {
+        tag: '2.0.0',
+    },
+    ...extra,
+});
+
+test('model should validate updates mixing object buckets, null buckets and absent keys', async () => {
+    const updates = {
+        major: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '2.0.0',
+            semverDiff: 'major',
+            link: 'https://release-2.0.0.acme.com',
+        },
+        minor: null,
+        patch: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '1.0.1',
+            semverDiff: 'patch',
+        },
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ updates }),
+    );
+
+    expect(containerValidated.updates).toStrictEqual(updates);
+    expect('major' in containerValidated.updates).toBe(true);
+    expect('minor' in containerValidated.updates).toBe(true);
+    expect('patch' in containerValidated.updates).toBe(true);
+    expect('digest' in containerValidated.updates).toBe(false);
+});
+
+test('model should validate a digest bucket with a created date', async () => {
+    const updates = {
+        digest: {
+            kind: 'digest',
+            localValue: 'sha256:123456789',
+            remoteValue: 'sha256:987654321',
+            created: '2021-06-15T05:33:38.440Z',
+        },
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ updates }),
+    );
+    expect(containerValidated.updates).toStrictEqual(updates);
+});
+
+test('model should not synthesise updates when the stored record has none', async () => {
+    const containerValidated = container.validate(containerWithUpdates());
+    expect('updates' in containerValidated).toBe(false);
+    expect(containerValidated.updates).toBeUndefined();
+});
+
+test('model should validate a selectedUpdate', async () => {
+    const selectedUpdate = {
+        kind: 'tag',
+        localValue: '1.0.0',
+        remoteValue: '1.0.1',
+        semverDiff: 'patch',
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ selectedUpdate }),
+    );
+    expect(containerValidated.selectedUpdate).toStrictEqual(selectedUpdate);
+});
+
+test('model should reject an update bucket without a kind', async () => {
+    expect(() => {
+        container.validate(
+            containerWithUpdates({
+                updates: { major: { localValue: '1.0.0' } },
+            }),
+        );
+    }).toThrow();
+});
+
+test('resultChanged should be true when only a non-winning bucket differs', async () => {
+    const base = {
+        major: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '2.0.0',
+            semverDiff: 'major',
+        },
+        patch: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '1.0.1',
+            semverDiff: 'patch',
+        },
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ updates: base }),
+    );
+    const containerOtherPatch = container.validate(
+        containerWithUpdates({
+            updates: {
+                ...base,
+                patch: { ...base.patch, remoteValue: '1.0.2' },
+            },
+        }),
+    );
+
+    expect(containerValidated.result).toStrictEqual(containerOtherPatch.result);
+    expect(containerValidated.resultChanged(containerOtherPatch)).toBe(true);
+});
+
+test('resultChanged should distinguish an absent bucket from a null bucket', async () => {
+    const containerWithNullBucket = container.validate(
+        containerWithUpdates({ updates: { major: null } }),
+    );
+    const containerWithoutBucket = container.validate(
+        containerWithUpdates({ updates: {} }),
+    );
+    expect(containerWithNullBucket.resultChanged(containerWithoutBucket)).toBe(
+        true,
+    );
+    expect(containerWithoutBucket.resultChanged(containerWithNullBucket)).toBe(
+        true,
+    );
+});
+
+test('resultChanged should be false when result and updates are identical', async () => {
+    const updates = {
+        major: {
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue: '2.0.0',
+            semverDiff: 'major',
+        },
+        minor: null,
+    };
+    const containerValidated = container.validate(
+        containerWithUpdates({ updates }),
+    );
+    const containerEquals = container.validate(
+        containerWithUpdates({ updates: { ...updates } }),
+    );
+    expect(containerValidated.resultChanged(containerEquals)).toBe(false);
+});
+
+test('resultChanged should be false for two legacy containers without updates', async () => {
+    const containerValidated = container.validate(containerWithUpdates());
+    const containerEquals = container.validate(containerWithUpdates());
+    expect('updates' in containerValidated).toBe(false);
+    expect('updates' in containerEquals).toBe(false);
+    expect(containerValidated.resultChanged(containerEquals)).toBe(false);
+});
+
+const nonSemverDigestContainer = (imageDigest, resultDigest) => ({
+    id: 'container-123456789',
+    name: 'test',
+    watcher: 'test',
+    image: {
+        id: 'image-123456789',
+        registry: { name: 'hub', url: 'https://hub' },
+        name: 'organization/image',
+        tag: { value: 'x', semver: false },
+        digest: { watch: true, repo: 'x', value: imageDigest },
+        architecture: 'arch',
+        os: 'os',
+    },
+    result: { tag: 'x', digest: resultDigest },
+});
+
+test('updateAvailable should stay true for a non semver container with a different digest', async () => {
+    const containerValidated = container.validate(
+        nonSemverDigestContainer('sha256:1', 'sha256:2'),
+    );
+    expect(containerValidated.updateAvailable).toBe(true);
+});
+
+test('updateAvailable should stay false for a non semver container with an equal digest', async () => {
+    const containerValidated = container.validate(
+        nonSemverDigestContainer('sha256:1', 'sha256:1'),
+    );
+    expect(containerValidated.updateAvailable).toBe(false);
+});
+
+test('updateAvailable should still compare tags for a semver container without digest watch', async () => {
+    expect(container.validate(containerWithUpdates()).updateAvailable).toBe(
+        true,
+    );
+    expect(
+        container.validate(containerWithUpdates({ result: { tag: '1.0.0' } }))
+            .updateAvailable,
+    ).toBe(false);
+});
+
+test('updateAvailable should be false when there is no result', async () => {
+    const withoutResult = containerWithUpdates();
+    delete withoutResult.result;
+    expect(container.validate(withoutResult).updateAvailable).toBe(false);
+});
+
+test('updateAvailable should be true for a semver container with an equal digest but a different tag', async () => {
+    const containerValidated = container.validate(
+        containerWithUpdates({
+            image: {
+                id: 'image-123456789',
+                registry: { name: 'hub', url: 'https://hub' },
+                name: 'organization/image',
+                tag: { value: '1.0.0', semver: true },
+                digest: { watch: true, repo: 'x', value: 'sha256:1' },
+                architecture: 'arch',
+                os: 'os',
+            },
+            result: { tag: '2.0.0', digest: 'sha256:1' },
+        }),
+    );
+    expect(containerValidated.updateAvailable).toBe(true);
+});
+
+test('updateAvailable should be false for a semver container with an equal digest, an equal tag and a different created date', async () => {
+    const containerValidated = container.validate(
+        containerWithUpdates({
+            image: {
+                id: 'image-123456789',
+                registry: { name: 'hub', url: 'https://hub' },
+                name: 'organization/image',
+                tag: { value: '1.0.0', semver: true },
+                digest: { watch: true, repo: 'x', value: 'sha256:1' },
+                architecture: 'arch',
+                os: 'os',
+                created: '2021-06-12T05:33:38.440Z',
+            },
+            result: {
+                tag: '1.0.0',
+                digest: 'sha256:1',
+                created: '2021-06-15T05:33:38.440Z',
+            },
+        }),
+    );
+    expect(containerValidated.updateAvailable).toBe(false);
+});
+
+test('updateAvailable should keep the created date fallback when the digest is unresolved', async () => {
+    const containerValidated = container.validate(
+        containerWithUpdates({
+            image: {
+                id: 'image-123456789',
+                registry: { name: 'hub', url: 'https://hub' },
+                name: 'organization/image',
+                tag: { value: '1.0.0', semver: true },
+                digest: { watch: true, repo: 'x' },
+                architecture: 'arch',
+                os: 'os',
+                created: '2021-06-12T05:33:38.440Z',
+            },
+            result: {
+                tag: '1.0.0',
+                created: '2021-06-15T05:33:38.440Z',
+            },
+        }),
+    );
+    expect(containerValidated.updateAvailable).toBe(true);
+});
+
+test('renderLink should render link templates for an arbitrary tag value', async () => {
+    expect(
+        container.renderLink(
+            {
+                linkTemplate:
+                    'https://test-${major}.${minor}.${patch}.acme.com',
+                image: {
+                    tag: {
+                        semver: true,
+                    },
+                },
+            },
+            '10.5.2',
+        ),
+    ).toEqual('https://test-10.5.2.acme.com');
+});
+
+test('renderLink should render undefined when template is missing', async () => {
+    expect(
+        container.renderLink(
+            {
+                image: {
+                    tag: {
+                        semver: true,
+                    },
+                },
+            },
+            '10.5.2',
+        ),
+    ).toBeUndefined();
+});
+
 test('fullName should build an id with watcher name & container name when called', async () => {
     expect(
         container.fullName({

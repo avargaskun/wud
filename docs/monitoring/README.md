@@ -82,6 +82,29 @@ wud_trigger_count{type="mock",name="example",status="success"} 1
 wud_watcher_total{type="docker",name="local"} 6
 ```
 
+#### Per update kind labels on `wud_containers`
+
+In addition to `result_tag`, `result_digest`, `update_available` and the `update_kind_*` labels — which all describe the **highest** available update — the `wud_containers` gauge exposes the detail of **every** available update, split by update kind.
+
+For each of the four update kinds (`major`, `minor`, `patch`, `digest`), six labels are exposed:
+
+| Label                            | Description                                                             |
+| -------------------------------- | ------------------------------------------------------------------------- |
+| `updates_{kind}_kind`            | `tag` or `digest`                                                          |
+| `updates_{kind}_local_value`     | The currently running tag (or digest)                                      |
+| `updates_{kind}_remote_value`    | The tag (or digest) to update to                                           |
+| `updates_{kind}_semver_diff`     | `major`, `minor`, `patch` or `prerelease`                                  |
+| `updates_{kind}_created`         | The creation date of the remote image (`digest` only)                      |
+| `updates_{kind}_link`            | The rendered `wud.link.template` for that version                          |
+
+```bash
+wud_containers{id="8a787a...",name="homeassistant",watcher="local",image_tag_value="2021.6.4",result_tag="2021.7.0",update_available="true",updates_major_kind="tag",updates_major_local_value="2021.6.4",updates_major_remote_value="2021.7.0",updates_major_semver_diff="major",updates_patch_kind="tag",updates_patch_local_value="2021.6.4",updates_patch_remote_value="2021.6.5",updates_patch_semver_diff="patch"} 1
+```
+
+?> Labels are only emitted for update kinds that are actually **available**. An update kind that applies to the container but has nothing newer, and an update kind that is impossible for the container (e.g. `patch` for a container running `:8`, or `digest` without digest watching), both emit no label at all.
+
+!> **Cardinality:** these labels change whenever any available update changes, on a gauge that is already keyed by mutable values such as `result_tag`. Expect more time series churn than before. This is documented rather than mitigated; use `sum by(...)` in your queries to project only the labels you care about.
+
 #### Standard process metrics
 ```bash
 # HELP process_cpu_user_seconds_total Total user CPU time spent in seconds.

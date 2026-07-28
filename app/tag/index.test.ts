@@ -154,6 +154,63 @@ describe('isGreater', () => {
             expect(semver.isGreater(v1, v2)).toBe(expected);
         },
     );
+
+    // Regression guard: isGreater is implemented with semver.gte, so it is true
+    // for equal versions. The bucket reduction relies on the strict compare instead.
+    test.each(['1.2.3', 'v1.2.3', '1.2.3-alpha1', '8'])(
+        'should return true for equal versions (gte semantics): %s',
+        (version) => {
+            expect(semver.isGreater(version, version)).toBe(true);
+        },
+    );
+});
+
+describe('compare', () => {
+    const compareTests = [
+        { v1: '1.0.0', v2: '2.0.0', expected: -1, desc: 'lower major' },
+        { v1: '2.0.0', v2: '1.0.0', expected: 1, desc: 'higher major' },
+        { v1: '1.0.0', v2: '1.0.0', expected: 0, desc: 'equal versions' },
+        { v1: '1.2.3', v2: '1.2.4', expected: -1, desc: 'lower patch' },
+        { v1: '1.3.0', v2: '1.2.9', expected: 1, desc: 'higher minor' },
+        {
+            v1: '1.2.3-alpha1',
+            v2: '1.2.3',
+            expected: -1,
+            desc: 'prerelease vs release',
+        },
+    ];
+
+    test.each(compareTests)(
+        'should compare $desc: compare($v1, $v2) = $expected',
+        ({ v1, v2, expected }) => {
+            const result = semver.compare(v1, v2);
+            if (expected === 0) {
+                expect(result).toBe(0);
+            } else if (expected < 0) {
+                expect(result).toBeLessThan(0);
+            } else {
+                expect(result).toBeGreaterThan(0);
+            }
+        },
+    );
+
+    const unparseableTests = [
+        { v1: 'latest', v2: '1.2.3', desc: 'invalid vs valid version' },
+        { v1: '1.2.3', v2: 'latest', desc: 'valid vs invalid version' },
+        { v1: 'latest', v2: 'stable', desc: 'both invalid versions' },
+    ];
+
+    test.each(unparseableTests)(
+        'should return null when $desc',
+        ({ v1, v2 }) => {
+            expect(semver.compare(v1, v2)).toBeNull();
+        },
+    );
+
+    test('should be consistent with isGreater for equal versions', async () => {
+        expect(semver.compare('1.2.3', '1.2.3')).toBe(0);
+        expect(semver.isGreater('1.2.3', '1.2.3')).toBe(true);
+    });
 });
 
 describe('diff', () => {

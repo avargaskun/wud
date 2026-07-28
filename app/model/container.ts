@@ -40,6 +40,21 @@ export interface ContainerUpdateKind {
     semverDiff?: 'major' | 'minor' | 'patch' | 'prerelease' | 'unknown';
 }
 
+export type UpdateBucketKey = 'major' | 'minor' | 'patch' | 'digest';
+
+export interface ContainerUpdate {
+    kind: 'tag' | 'digest';
+    localValue: string;
+    remoteValue: string;
+    semverDiff?: 'major' | 'minor' | 'patch' | 'prerelease';
+    created?: string;
+    link?: string;
+}
+
+export type ContainerUpdates = Partial<
+    Record<UpdateBucketKey, ContainerUpdate | null>
+>;
+
 export interface Container {
     id: string;
     name: string;
@@ -62,6 +77,8 @@ export interface Container {
     };
     updateAvailable: boolean;
     updateKind: ContainerUpdateKind;
+    updates?: ContainerUpdates; // persisted
+    selectedUpdate?: ContainerUpdate; // transient; only present on a trigger view
     labels?: Record<string, string>;
     resultChanged?: (otherContainer: Container | undefined) => boolean;
 }
@@ -70,6 +87,17 @@ export interface ContainerReport {
     container: Container;
     changed: boolean;
 }
+
+// Deliberately permissive: .allow() does not restrict the value set, mirroring updateKind.
+// A validation failure here would prevent the container from ever being stored.
+const updateSchema = joi.object({
+    kind: joi.string().allow('tag', 'digest').required(),
+    localValue: joi.string().allow(''),
+    remoteValue: joi.string().allow(''),
+    semverDiff: joi.string().allow('major', 'minor', 'patch', 'prerelease'),
+    created: joi.string().isoDate(),
+    link: joi.string(),
+});
 
 // Container data schema
 const schema = joi.object({
@@ -136,6 +164,13 @@ const schema = joi.object({
                 .allow('major', 'minor', 'patch', 'prerelease', 'unknown'),
         })
         .default({ kind: 'unknown' }),
+    updates: joi.object({
+        major: updateSchema.allow(null),
+        minor: updateSchema.allow(null),
+        patch: updateSchema.allow(null),
+        digest: updateSchema.allow(null),
+    }),
+    selectedUpdate: updateSchema,
     resultChanged: joi.function(),
     labels: joi.object(),
 });
@@ -145,7 +180,7 @@ const schema = joi.object({
  * @param container
  * @returns {undefined|*}
  */
-function getLink(container: Container, originalTagValue: string) {
+export function renderLink(container: Container, originalTagValue: string) {
     if (!container || !container.linkTemplate) {
         return undefined;
     }
@@ -197,12 +232,18 @@ function addUpdateAvailableProperty(container: Container) {
             }
 
             // Compare digests if we have them
+            let digestCompared = false;
             if (
                 this.image.digest.watch &&
                 this.image.digest.value !== undefined &&
                 this.result.digest !== undefined
             ) {
-                return this.image.digest.value !== this.result.digest;
+                const digestChanged =
+                    this.image.digest.value !== this.result.digest;
+                // Non-semver containers never have tag candidates: preserve the legacy early return.
+                if (!this.image.tag.semver) return digestChanged;
+                if (digestChanged) return true;
+                digestCompared = true;
             }
 
             // Compare tags otherwise
@@ -217,8 +258,10 @@ function addUpdateAvailableProperty(container: Container) {
             );
             updateAvailable = localTag !== remoteTag;
 
-            // Fallback to image created date (especially for legacy v1 manifests)
+            // Fallback to image created date (especially for legacy v1 manifests).
+            // Suppressed only when digests were actually compared and found equal.
             if (
+                !digestCompared &&
                 this.image.created !== undefined &&
                 this.result.created !== undefined
             ) {
@@ -245,7 +288,7 @@ function addLinkProperty(container: Container) {
         Object.defineProperty(container, 'link', {
             enumerable: true,
             get(this: Container) {
-                return getLink(container, container.image.tag.value);
+                return renderLink(container, container.image.tag.value);
             },
         });
 
@@ -253,7 +296,7 @@ function addLinkProperty(container: Container) {
             Object.defineProperty(container.result, 'link', {
                 enumerable: true,
                 get() {
-                    return getLink(container, container.result.tag ?? '');
+                    return renderLink(container, container.result.tag ?? '');
                 },
             });
         }
@@ -344,6 +387,23 @@ function addUpdateKindProperty(container: Container) {
 }
 
 /**
+ * Build a comparable signature of the update buckets.
+ * The `!` marker distinguishes an absent bucket from a present-but-null one,
+ * so a change in bucket applicability is itself a change.
+ * @param container
+ * @returns {string}
+ */
+function updatesSignature(container: Container | undefined): string {
+    const u = container?.updates;
+    if (!u) return '';
+    return (['major', 'minor', 'patch', 'digest'] as const)
+        .map((k) =>
+            k in u ? `${k}=${u[k] ? u[k]!.remoteValue : ''}` : `${k}!`,
+        )
+        .join('|');
+}
+
+/**
  * Computed function to check whether the result is different.
  * @param otherContainer
  * @returns {boolean}
@@ -356,7 +416,8 @@ function resultChangedFunction(
         otherContainer === undefined ||
         this.result?.tag !== otherContainer.result?.tag ||
         this.result?.digest !== otherContainer.result?.digest ||
-        this.result?.created !== otherContainer.result?.created
+        this.result?.created !== otherContainer.result?.created ||
+        updatesSignature(this) !== updatesSignature(otherContainer)
     );
 }
 
@@ -420,6 +481,6 @@ export function fullName(container: Container) {
 
 // The following exports are meant for testing only
 export {
-    getLink as testable_getLink,
+    renderLink as testable_getLink,
     addUpdateKindProperty as testable_addUpdateKindProperty,
 };

@@ -139,6 +139,47 @@ describe('AgentClient', () => {
         expect(event.emitContainerReport).toHaveBeenCalled();
     });
 
+    test('should log a warning when handleEvent rejects instead of leaking an unhandled rejection', async () => {
+        const mockStream = {
+            on: jest.fn(),
+        };
+        axios.mockResolvedValue({ data: mockStream });
+
+        await client.init();
+
+        jest.spyOn(client, 'handleEvent').mockRejectedValue(
+            new Error('ValidationError: "updates" is not allowed'),
+        );
+
+        const unhandledRejections = [];
+        const onUnhandledRejection = (reason) =>
+            unhandledRejections.push(reason);
+        process.on('unhandledRejection', onUnhandledRejection);
+
+        try {
+            const dataHandler = mockStream.on.mock.calls.find(
+                (call) => call[0] === 'data',
+            )[1];
+
+            dataHandler(
+                'data: {"type":"wud:container-updated","data":{"id":"abc123"}}\n\n',
+            );
+
+            // Two macrotask turns: microtasks drain, then node reports unhandled rejections
+            await new Promise((resolve) => setImmediate(resolve));
+            await new Promise((resolve) => setImmediate(resolve));
+        } finally {
+            process.off('unhandledRejection', onUnhandledRejection);
+        }
+
+        expect(unhandledRejections).toEqual([]);
+        expect(mockLog.warn).toHaveBeenCalledTimes(1);
+        const warning = mockLog.warn.mock.calls[0][0];
+        expect(warning).toContain('wud:container-updated');
+        expect(warning).toContain('abc123');
+        expect(warning).toContain('ValidationError: "updates" is not allowed');
+    });
+
     test('should reconnect on SSE stream error', async () => {
         jest.useFakeTimers();
         const mockStream = {

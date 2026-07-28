@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * Semver utils.
  */
@@ -10,7 +9,7 @@ import log from '../log';
  * @param rawVersion
  * @returns {*|SemVer}
  */
-export function parse(rawVersion) {
+export function parse(rawVersion: string): semver.SemVer | null {
     const rawVersionCleaned = semver.clean(rawVersion, { loose: true });
     const rawVersionSemver = semver.parse(
         rawVersionCleaned !== null ? rawVersionCleaned : rawVersion,
@@ -26,10 +25,11 @@ export function parse(rawVersion) {
 
 /**
  * Return true if version1 is semver greater than version2.
+ * Implemented with semver.gte: it also returns true for EQUAL versions.
  * @param version1
  * @param version2
  */
-export function isGreater(version1, version2) {
+export function isGreater(version1: string, version2: string): boolean {
     const version1Semver = parse(version1);
     const version2Semver = parse(version2);
 
@@ -46,7 +46,10 @@ export function isGreater(version1, version2) {
  * @param version2
  * @returns {*|string|null}
  */
-export function diff(version1, version2) {
+export function diff(
+    version1: string,
+    version2: string,
+): semver.ReleaseType | null {
     const version1Semver = parse(version1);
     const version2Semver = parse(version2);
 
@@ -63,7 +66,10 @@ export function diff(version1, version2) {
  * @param originalTag
  * @return {*}
  */
-export function transform(transformFormula, originalTag) {
+export function transform(
+    transformFormula: string | undefined,
+    originalTag: string,
+): string {
     // No formula ? return original tag value
     if (!transformFormula || transformFormula === '') {
         return originalTag;
@@ -94,4 +100,21 @@ export function transform(transformFormula, originalTag) {
         log.debug(e);
         return originalTag;
     }
+}
+
+/**
+ * Strict 3-way comparison between 2 versions.
+ * Returns a negative number when version1 < version2, 0 when equal,
+ * a positive number when version1 > version2, and null when either side
+ * cannot be parsed as a semver.
+ * @param version1
+ * @param version2
+ */
+export function compare(version1: string, version2: string): number | null {
+    const v1 = parse(version1);
+    const v2 = parse(version2);
+    if (v1 === null || v2 === null) {
+        return null;
+    }
+    return semver.compare(v1, v2);
 }

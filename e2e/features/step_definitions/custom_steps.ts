@@ -41,6 +41,47 @@ Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this
     assert.strictEqual(String(actualValue), String(expectedValue), `Expected ${expectedValue} at ${path}, but got ${actualValue}`);
 });
 
+// apickli's evaluatePathInResponseBody() collapses "no match" to null (evaluateJsonPath returns
+// null for an empty JSONPath result), so it cannot tell an absent key from a null value -- the
+// exact distinction the update buckets encode. Resolve the dot path against the parsed body
+// instead and report absence with a sentinel.
+const ABSENT = Symbol('absent');
+
+function resolveDotPath(apickli: any, path: string): any {
+    const body = apickli.getResponseObject().body;
+    let parsed;
+    try {
+        parsed = typeof body === 'string' ? JSON.parse(body) : body;
+    } catch (e) {
+        throw new Error(`Response body is not valid JSON: ${body}`);
+    }
+    const segments = path.replace(/^\$\.?/, '').split('.').filter((segment: string) => segment !== '');
+    let current = parsed;
+    for (const segment of segments) {
+        if (current === null || typeof current !== 'object' || !(segment in current)) {
+            return ABSENT;
+        }
+        current = current[segment];
+    }
+    return current;
+}
+
+function describeValue(value: any): string {
+    return value === ABSENT ? 'absent' : JSON.stringify(value);
+}
+
+// "must be" rather than "should be": apickli already owns /^response body path (.*) should be (.*)$/
+// and cucumber fails on an ambiguous match.
+Then(/^response body path (.*) must be absent$/, function (this: any, path: string) {
+    const actual = resolveDotPath(this.apickli, path);
+    assert.strictEqual(actual, ABSENT, `Expected ${path} to be absent, got ${describeValue(actual)}`);
+});
+
+Then(/^response body path (.*) must be exactly null$/, function (this: any, path: string) {
+    const actual = resolveDotPath(this.apickli, path);
+    assert.strictEqual(actual, null, `Expected ${path} to be null, got ${describeValue(actual)}`);
+});
+
 Given(/^I set variable "([^"]*)" to "([^"]*)"$/, function (this: any, varName: string, value: string) {
     const substitutedValue = substituteVariables(value, this.apickli);
     this.apickli.setGlobalVariable(varName, substitutedValue);

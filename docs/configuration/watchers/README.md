@@ -40,7 +40,7 @@ You just need to give them different names.
 
 !> Watching image digests causes an extensive usage of _Docker Registry Pull API_ which is restricted by [**Quotas on the Docker Hub**](https://docs.docker.com/docker-hub/download-rate-limit/). \
 By default, WUD enables it only for **non semver** image tags. \
-You can tune this behavior per container using the `wud.watch.digest` label. \
+You can tune this behavior per container using the `wud.watch.digest` label (**non semver** tags) or the `wud.watch.digest.semver` label (**semver** tags). \
 If you face [quota related errors](https://docs.docker.com/docker-hub/download-rate-limit/#how-do-i-know-my-pull-requests-are-being-limited), consider slowing down the watcher rate by adjusting the `WUD_WATCHER_{watcher_name}_CRON` variable.
 
 ## Variable examples
@@ -210,7 +210,8 @@ To fine-tune the behaviour of WUD _per container_, you can add labels on them.
 | `wud.tag.transform`   | :white_circle: | Transform function to apply to the tag             | `$valid_regex => $valid_string_with_placeholders` (see below)                                                                                                               |                                                                                       |
 | `wud.trigger.exclude` | :white_circle: | Optional list of triggers to exclude               | `$trigger_1_id,$trigger_2_id:$threshold`                                                                                                                                    |                                                                                       |
 | `wud.trigger.include` | :white_circle: | Optional list of triggers to include               | `$trigger_1_id,$trigger_2_id:$threshold`                                                                                                                                    |                                                                                       |
-| `wud.watch.digest`    | :white_circle: | Watch this container digest                        | Valid Boolean                                                                                                                                                               | `false`                                                                               |
+| `wud.watch.digest`    | :white_circle: | Watch this container digest (**non semver** tags only) | Valid Boolean                                                                                                                                                           | `false`                                                                               |
+| `wud.watch.digest.semver` | :white_circle: | Watch this container digest when its tag **is** a semver tag | Valid Boolean                                                                                                                                                | `false`                                                                               |
 | `wud.watch`           | :white_circle: | Watch this container                               | Valid Boolean                                                                                                                                                               | `true` when `WUD_WATCHER_{watcher_name}_WATCHBYDEFAULT` is `true` (`false` otherwise) |
 
 ## Label examples
@@ -397,6 +398,39 @@ docker run -d --name mariadb --label 'wud.tag.include=^\d+$' --label wud.watch.d
 ```
 
 <!-- tabs:end -->
+
+### Enable digest watching on a semver tagged container
+
+`wud.watch.digest` only applies to containers running a **non semver** tag. \
+To also watch the digest of a container running a **semver** tag, use the dedicated `wud.watch.digest.semver` label.
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  radarr:
+    image: radarr:5.2.1
+    labels:
+      - wud.watch.digest.semver=true
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name radarr --label wud.watch.digest.semver=true radarr:5.2.1
+```
+
+<!-- tabs:end -->
+
+The digest is always compared against the digest currently published for the **tag the container is running** (`5.2.1` above), never against the digest of a newer candidate tag. A digest update therefore always means _"the image behind the tag I am running has been rebuilt"_, and it is reported independently of any newer tag that may also be available.
+
+!> The digest is reported through the `digest` entry of the container `updates` field, and a `digest` update is eligible at **every** trigger threshold.
+
+!> Opting in costs **two additional registry calls per watch cycle** for each container carrying the label (a `GET` then a `HEAD` on the image manifest). Keep an eye on the [Docker Hub quotas](https://docs.docker.com/docker-hub/download-rate-limit/) if you enable it widely.
+
+?> **Why a separate label rather than `wud.watch.digest`?** On a semver tagged container `wud.watch.digest` has always done nothing, so an unknown number of deployments already carry it. Honouring it would have switched digest watching on at upgrade time with no user action — and because a digest update is eligible at every threshold and triggers are automatic by default, the first watch cycle could have stopped, removed and recreated those running containers unprompted. `wud.watch.digest` therefore stays inert on semver tags, and `wud.watch.digest.semver` makes the new behaviour strictly opt-in.
 
 ### Associate a link to the container version
 

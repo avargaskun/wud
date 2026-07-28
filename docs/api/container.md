@@ -1,6 +1,88 @@
 # Container API
 This API allows to query the state of the watched containers.
 
+## Update related fields
+
+Every container returned by this API exposes the outcome of the last watch cycle through
+four related fields.
+
+| Field             | Description                                                                                          |
+| ----------------- | ---------------------------------------------------------------------------------------------------- |
+| `updateAvailable` | `true` when at least one update was found for the container                                          |
+| `result`          | The **highest** available update (`tag`, `digest`, `created`, `link`)                                  |
+| `updateKind`      | A description of that **same highest** update                                                         |
+| `updates`         | The detail of every available update, split by kind (`major`, `minor`, `patch`, `digest`)             |
+
+?> `result`, `updateAvailable` and `updateKind` continue to describe the **single highest** available update. They are unchanged and remain the fields to read when you only care about "is there something newer?".
+
+### `updateKind`
+
+```json
+"updateKind": {
+  "kind": "tag",
+  "localValue": "1.2.3",
+  "remoteValue": "2.0.0",
+  "semverDiff": "major"
+}
+```
+
+| Field        | Description                                                                                                   |
+| ------------ | ------------------------------------------------------------------------------------------------------------- |
+| `kind`       | `tag` when a newer tag was found, `digest` when the digest behind the current tag changed, `unknown` otherwise |
+| `localValue` | The currently running tag (or digest when `kind` is `digest`)                                                  |
+| `remoteValue`| The tag (or digest) of the highest available update                                                            |
+| `semverDiff` | `major`, `minor`, `patch`, `prerelease` or `unknown`                                                            |
+
+### `updates`
+
+`updates` reports **every** available update, one entry per update kind, instead of only the
+highest one. It is a map keyed by `major`, `minor`, `patch` and `digest`.
+
+```json
+"updates": {
+  "major": {
+    "kind": "tag",
+    "localValue": "1.2.3",
+    "remoteValue": "2.0.0",
+    "semverDiff": "major",
+    "link": "https://github.com/acme/app/releases/tag/2.0.0"
+  },
+  "minor": null,
+  "patch": {
+    "kind": "tag",
+    "localValue": "1.2.3",
+    "remoteValue": "1.2.4",
+    "semverDiff": "patch",
+    "link": "https://github.com/acme/app/releases/tag/1.2.4"
+  }
+}
+```
+
+Each key has **three** possible states, and the difference matters:
+
+| State                    | Meaning                                                                                                                        |
+| ------------------------ | ------------------------------------------------------------------------------------------------------------------------------ |
+| Key **absent**           | The update kind is structurally impossible for this container (e.g. no `patch` for a container running `:8`; no `digest` unless digest watching is enabled) |
+| Key present, **`null`**  | The update kind applies to this container, but nothing newer is available                                                       |
+| Key present, **object**  | An update of that kind is available                                                                                             |
+
+?> `updates` itself being absent means the container has not been watched yet since WUD was upgraded.
+
+Each populated entry is an object with the following fields.
+
+| Field         | Description                                                                                                  |
+| ------------- | ------------------------------------------------------------------------------------------------------------ |
+| `kind`        | `tag` for the `major` / `minor` / `patch` entries, `digest` for the `digest` entry                            |
+| `localValue`  | The currently running tag (the currently running digest for the `digest` entry)                               |
+| `remoteValue` | The tag to update to (the new digest for the `digest` entry)                                                  |
+| `semverDiff`  | `major`, `minor`, `patch` or `prerelease` (absent for the `digest` entry)                                     |
+| `created`     | The creation date of the remote image (only populated for the `digest` entry)                                 |
+| `link`        | The `wud.link.template` rendered for the tag this entry would deploy — `remoteValue` for the tag entries, the **currently running** tag for the `digest` entry (absent when no link template is configured) |
+
+!> A `prerelease` update is reported in the **`patch`** entry, with `semverDiff` set to `prerelease`.
+
+?> The `digest` entry always compares the digest of the **currently running** tag; it never mixes with the tag entries. See the `wud.watch.digest.semver` label in the [Watchers](/configuration/watchers/) documentation.
+
 ## Get all containers
 This operation lets you get all the watched cainers.
 

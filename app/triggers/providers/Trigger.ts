@@ -1,7 +1,13 @@
 import Component, { ComponentConfiguration } from '../../registry/Component';
 import * as event from '../../event';
 import { getTriggerCounter } from '../../prometheus/trigger';
-import { fullName, Container, ContainerReport } from '../../model/container';
+import {
+    fullName,
+    Container,
+    ContainerReport,
+    ContainerUpdate,
+    UpdateBucketKey,
+} from '../../model/container';
 import { ObjectSchema } from 'joi';
 
 export interface TriggerConfiguration extends ComponentConfiguration {
@@ -13,6 +19,14 @@ export interface TriggerConfiguration extends ComponentConfiguration {
     simplebody?: string;
     batchtitle?: string;
     includebydefault?: boolean;
+}
+
+export interface ParsedIncludeOrExcludeTrigger {
+    id: string;
+    threshold: string;
+    thresholdInvalid: boolean;
+    thresholdPresent: boolean;
+    thresholdToken?: string;
 }
 
 /**
@@ -112,38 +126,169 @@ class Trigger extends Component {
     }
 
     /**
+     * Return the update buckets a threshold allows to be installed.
+     * The threshold is a ceiling on eligible buckets, not a filter on the highest one.
+     * digest is eligible at every threshold, preserving today's behaviour where
+     * isThresholdReached only applies its switch when updateKind.kind === 'tag'.
+     * @param threshold
+     * @returns {UpdateBucketKey[]}
+     */
+    static getEligibleBuckets(threshold: string): UpdateBucketKey[] {
+        switch (threshold) {
+            case 'minor':
+                return ['minor', 'patch', 'digest'];
+            case 'patch':
+                return ['patch', 'digest'];
+            case 'major-only':
+                return ['major', 'digest'];
+            case 'minor-only':
+                return ['minor', 'digest'];
+            case 'all':
+            case 'major':
+            default:
+                return ['major', 'minor', 'patch', 'digest'];
+        }
+    }
+
+    /**
+     * Describe an update that could not be bucketed, from the legacy result/updateKind fields.
+     * kind 'unknown' is mapped to 'digest' (target = the current tag) because the legacy path
+     * would otherwise produce getImageFullName(image, undefined).
+     * @param container
+     * @returns {ContainerUpdate}
+     */
+    static legacyUpdate(container: Container): ContainerUpdate {
+        const uk = container.updateKind;
+        const isTag = uk?.kind === 'tag';
+        return {
+            kind: isTag ? 'tag' : 'digest',
+            localValue:
+                (isTag ? uk?.localValue : container.image?.digest?.value) ?? '',
+            remoteValue:
+                (isTag ? uk?.remoteValue : container.result?.digest) ?? '',
+            semverDiff:
+                uk?.semverDiff === 'unknown' ? undefined : uk?.semverDiff,
+            created: container.result?.created,
+            link: container.result?.link,
+        };
+    }
+
+    /**
+     * Return the highest update the threshold permits to be installed, if any.
+     * Precedence is major -> minor -> patch -> digest.
+     * @param container
+     * @param threshold
+     * @returns {ContainerUpdate|undefined}
+     */
+    static selectUpdate(
+        container: Container,
+        threshold: string,
+    ): ContainerUpdate | undefined {
+        const eligible = Trigger.getEligibleBuckets(threshold);
+        const updates = container.updates;
+        if (updates) {
+            for (const key of ['major', 'minor', 'patch'] as const) {
+                if (eligible.includes(key) && updates[key]) return updates[key];
+            }
+            if (eligible.includes('digest') && updates.digest)
+                return updates.digest;
+        }
+        // Legacy fallback: updates that cannot be bucketed at all
+        if (
+            container.updateAvailable &&
+            Trigger.isThresholdReached(container, threshold)
+        ) {
+            return Trigger.legacyUpdate(container);
+        }
+        return undefined;
+    }
+
+    /**
+     * Build the shallow container view describing the selected update.
+     * The spread evaluates the computed getters into plain values before they are overwritten.
+     * @param container
+     * @param update
+     * @returns {Container}
+     */
+    static buildTriggerView(
+        container: Container,
+        update: ContainerUpdate,
+    ): Container {
+        const view: any = { ...container };
+        view.result = {
+            ...container.result,
+            tag:
+                update.kind === 'tag'
+                    ? update.remoteValue
+                    : container.image.tag.value,
+            digest:
+                update.kind === 'digest'
+                    ? update.remoteValue
+                    : container.result?.digest,
+            created: update.created ?? container.result?.created,
+            link: update.link ?? container.result?.link,
+        };
+        view.updateKind = {
+            kind: update.kind,
+            localValue: update.localValue,
+            remoteValue: update.remoteValue,
+            semverDiff:
+                update.semverDiff ??
+                (update.kind === 'tag' ? 'unknown' : undefined),
+        };
+        view.updateAvailable = true;
+        view.selectedUpdate = update;
+        return view;
+    }
+
+    /**
      * Parse $name:$threshold string.
      * @param {*} includeOrExcludeTriggerString
      * @returns
      */
     static parseIncludeOrIncludeTriggerString(
         includeOrExcludeTriggerString: string,
-    ) {
+    ): ParsedIncludeOrExcludeTrigger {
         const includeOrExcludeTriggerSplit =
             includeOrExcludeTriggerString.split(/\s*:\s*/);
-        const includeOrExcludeTrigger = {
+        const includeOrExcludeTrigger: ParsedIncludeOrExcludeTrigger = {
             id: includeOrExcludeTriggerSplit[0],
             threshold: 'all',
+            thresholdInvalid: false,
+            thresholdPresent: includeOrExcludeTriggerSplit.length >= 2,
         };
-        if (includeOrExcludeTriggerSplit.length === 2) {
-            switch (includeOrExcludeTriggerSplit[1]) {
+        if (includeOrExcludeTrigger.thresholdPresent) {
+            // Everything after the FIRST colon is the token. A well-formed entry has
+            // exactly one colon; `a:b:c` is malformed and must fail closed rather than
+            // silently fall back to the most permissive threshold ('all') — that is the
+            // very footgun this validation exists to remove. Joining the remainder makes
+            // the token unmatchable, so the switch below flags it invalid on its own, and
+            // the warning can quote it. Note the split regex consumes whitespace around
+            // the separators, so the quoted token is the remainder with whitespace around
+            // colons normalized away -- not a verbatim copy of what the user typed.
+            const thresholdToken = includeOrExcludeTriggerSplit
+                .slice(1)
+                .join(':');
+            includeOrExcludeTrigger.thresholdToken = thresholdToken;
+            // Matched case-insensitively to stay consistent with the rest of this
+            // vocabulary: validateConfiguration uses joi .insensitive() and both
+            // handlers lowercase the threshold before selectUpdate. The raw token is
+            // kept in thresholdToken so the warning can quote what the user typed.
+            const thresholdNormalized = thresholdToken.toLowerCase();
+            switch (thresholdNormalized) {
                 case 'major-only':
-                    includeOrExcludeTrigger.threshold = 'major-only';
-                    break;
                 case 'minor-only':
-                    includeOrExcludeTrigger.threshold = 'minor-only';
-                    break;
                 case 'major':
-                    includeOrExcludeTrigger.threshold = 'major';
-                    break;
                 case 'minor':
-                    includeOrExcludeTrigger.threshold = 'minor';
-                    break;
                 case 'patch':
-                    includeOrExcludeTrigger.threshold = 'patch';
+                case 'all':
+                    includeOrExcludeTrigger.threshold = thresholdNormalized;
                     break;
                 default:
+                    // Threshold stays 'all' so existing consumers are unaffected;
+                    // apply() is what fails closed on the invalid flag.
                     includeOrExcludeTrigger.threshold = 'all';
+                    includeOrExcludeTrigger.thresholdInvalid = true;
             }
         }
         return includeOrExcludeTrigger;
@@ -195,21 +340,33 @@ class Trigger extends Component {
             const includedTrigger = includedTriggers.find(
                 (tr) => tr.id === triggerId,
             );
-            if (includedTrigger) {
+            if (!includedTrigger) {
+                isIncluded = false;
+            } else if (includedTrigger.thresholdInvalid) {
+                // Fail closed: degrading an unrecognised token to 'all' would authorise
+                // every major update on an auto-updating trigger because of a typo.
+                this.log.warn(
+                    `Invalid threshold [${includedTrigger.thresholdToken}] in trigger include [${triggerId}] of container [${fullName(container)}] => trigger ignored for this container`,
+                );
+                isIncluded = false;
+            } else {
                 isIncluded = true;
                 configuration.threshold = includedTrigger.threshold;
-            } else {
-                isIncluded = false;
             }
         }
 
-        if (
-            excludedTriggers &&
-            excludedTriggers
-                .map((excludedTrigger) => excludedTrigger.id)
-                .includes(triggerId)
-        ) {
-            isIncluded = false;
+        if (excludedTriggers) {
+            const excludedTrigger = excludedTriggers.find(
+                (tr) => tr.id === triggerId,
+            );
+            if (excludedTrigger) {
+                if (excludedTrigger.thresholdPresent) {
+                    this.log.warn(
+                        `Threshold [${excludedTrigger.thresholdToken}] is meaningless in trigger exclude [${triggerId}] of container [${fullName(container)}] => container excluded anyway`,
+                    );
+                }
+                isIncluded = false;
+            }
         }
 
         if (isIncluded) {
@@ -261,18 +418,26 @@ class Trigger extends Component {
                 );
                 if (!effectiveConfiguration) {
                     logContainer.debug('Trigger conditions not met => ignore');
-                } else if (
-                    !Trigger.isThresholdReached(
+                } else {
+                    const update = Trigger.selectUpdate(
                         containerReport.container,
                         (
                             effectiveConfiguration.threshold || 'all'
                         ).toLowerCase(),
-                    )
-                ) {
-                    logContainer.debug('Threshold not reached => ignore');
-                } else {
-                    logContainer.debug('Run');
-                    await this.trigger(containerReport.container);
+                    );
+                    if (!update) {
+                        logContainer.debug(
+                            'No eligible update for threshold => ignore',
+                        );
+                    } else {
+                        logContainer.debug('Run');
+                        await this.trigger(
+                            Trigger.buildTriggerView(
+                                containerReport.container,
+                                update,
+                            ),
+                        );
+                    }
                 }
                 status = 'success';
             } catch (e: any) {
@@ -320,16 +485,21 @@ class Trigger extends Component {
                         const effectiveConfiguration = this.apply(
                             containerReport.container,
                         );
-                        if (
-                            effectiveConfiguration &&
-                            Trigger.isThresholdReached(
+                        if (effectiveConfiguration) {
+                            const update = Trigger.selectUpdate(
                                 containerReport.container,
                                 (
                                     effectiveConfiguration.threshold || 'all'
                                 ).toLowerCase(),
-                            )
-                        ) {
-                            containersFiltered.push(containerReport.container);
+                            );
+                            if (update) {
+                                containersFiltered.push(
+                                    Trigger.buildTriggerView(
+                                        containerReport.container,
+                                        update,
+                                    ),
+                                );
+                            }
                         }
                     }
                 }
@@ -343,62 +513,6 @@ class Trigger extends Component {
             this.log.warn(`Error (${e.message})`);
             this.log.debug(e);
         }
-    }
-
-    isTriggerIncludedOrExcluded(containerResult: Container, trigger: string) {
-        const triggers = trigger
-            .split(/\s*,\s*/)
-            .map((triggerToMatch) =>
-                Trigger.parseIncludeOrIncludeTriggerString(triggerToMatch),
-            );
-        const triggerMatched = triggers.find(
-            (triggerToMatch) =>
-                triggerToMatch.id.toLowerCase() === this.getId(),
-        );
-        if (!triggerMatched) {
-            return false;
-        }
-        return Trigger.isThresholdReached(
-            containerResult,
-            triggerMatched.threshold.toLowerCase(),
-        );
-    }
-
-    isTriggerIncluded(
-        containerResult: Container,
-        triggerInclude: string | undefined,
-    ) {
-        if (!triggerInclude) {
-            return this.configuration.includebydefault !== false;
-        }
-        return this.isTriggerIncludedOrExcluded(
-            containerResult,
-            triggerInclude,
-        );
-    }
-
-    isTriggerExcluded(
-        containerResult: Container,
-        triggerExclude: string | undefined,
-    ) {
-        if (!triggerExclude) {
-            return false;
-        }
-        return this.isTriggerIncludedOrExcluded(
-            containerResult,
-            triggerExclude,
-        );
-    }
-
-    /**
-     * Return true if must trigger on this container.
-     */
-    mustTrigger(containerResult: Container) {
-        const { triggerInclude, triggerExclude } = containerResult;
-        return (
-            this.isTriggerIncluded(containerResult, triggerInclude) &&
-            !this.isTriggerExcluded(containerResult, triggerExclude)
-        );
     }
 
     /**

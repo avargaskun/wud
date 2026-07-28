@@ -161,6 +161,347 @@ describe('Docker Watcher Utils', () => {
             expect(result).toContain('app-1.1.0');
             expect(result).not.toContain('other-1.1.0');
         });
+
+        describe('sort determinism with semver-equal candidates', () => {
+            const actualTag = jest.requireActual('../../../tag');
+
+            beforeEach(() => {
+                tag.parse.mockImplementation(actualTag.parse);
+                tag.isGreater.mockImplementation(actualTag.isGreater);
+                tag.transform.mockImplementation(actualTag.transform);
+                tag.diff.mockImplementation(actualTag.diff);
+                tag.compare.mockImplementation(actualTag.compare);
+            });
+
+            test('should sort deterministically and agree with the bucket reduction', () => {
+                const container = {
+                    image: {
+                        tag: { value: '1.2.0', semver: true },
+                        digest: { watch: false },
+                    },
+                    transformTags: undefined,
+                };
+                // '1.2.3' and '1.2.3+build' are DISTINCT raw tags with the SAME semver value
+                const tags = ['1.2.3', '1.2.3+build', '1.2.5'];
+
+                const runs = [
+                    utils.getTagCandidates(
+                        container,
+                        [...tags],
+                        mockLogContainer,
+                    ),
+                    utils.getTagCandidates(
+                        container,
+                        [...tags],
+                        mockLogContainer,
+                    ),
+                    utils.getTagCandidates(
+                        container,
+                        [...tags],
+                        mockLogContainer,
+                    ),
+                ];
+
+                // Deterministic across repeated runs
+                expect(runs[1]).toEqual(runs[0]);
+                expect(runs[2]).toEqual(runs[0]);
+
+                // [0] is a true maximum and matches what the bucket reduction picks
+                const candidates = runs[0];
+                expect(candidates[0]).toEqual('1.2.5');
+                const updates = utils.computeUpdateBuckets(
+                    container,
+                    candidates,
+                    { tag: candidates[0] },
+                );
+                expect(updates.patch.remoteValue).toEqual(candidates[0]);
+            });
+        });
+    });
+
+    describe('update buckets', () => {
+        const actualTag = jest.requireActual('../../../tag');
+
+        const buildContainer = (overrides = {}) => ({
+            image: {
+                tag: { value: '1.2.3', semver: true },
+                digest: { watch: false },
+                ...(overrides.image || {}),
+            },
+            transformTags: overrides.transformTags,
+        });
+
+        beforeEach(() => {
+            tag.parse.mockImplementation(actualTag.parse);
+            tag.isGreater.mockImplementation(actualTag.isGreater);
+            tag.transform.mockImplementation(actualTag.transform);
+            tag.diff.mockImplementation(actualTag.diff);
+            tag.compare.mockImplementation(actualTag.compare);
+            containerModel.renderLink.mockImplementation(
+                (c, tagValue) => `https://example.com/${tagValue}`,
+            );
+        });
+
+        describe('mapDiffToBucket', () => {
+            test.each([
+                ['major', 'major'],
+                ['premajor', 'major'],
+                ['minor', 'minor'],
+                ['preminor', 'minor'],
+                ['patch', 'patch'],
+                ['prepatch', 'patch'],
+                ['prerelease', 'patch'],
+            ])('should map %s to the %s bucket', (rawDiff, expected) => {
+                expect(utils.mapDiffToBucket(rawDiff)).toEqual(expected);
+            });
+
+            test.each([[null], ['unknown'], [undefined]])(
+                'should return undefined for %s',
+                (rawDiff) => {
+                    expect(utils.mapDiffToBucket(rawDiff)).toBeUndefined();
+                },
+            );
+        });
+
+        describe('mapDiffToSemverDiff', () => {
+            test.each([
+                ['major', 'major'],
+                ['premajor', 'major'],
+                ['minor', 'minor'],
+                ['preminor', 'minor'],
+                ['patch', 'patch'],
+                ['prepatch', 'patch'],
+                ['prerelease', 'prerelease'],
+            ])('should map %s to semverDiff %s', (rawDiff, expected) => {
+                expect(utils.mapDiffToSemverDiff(rawDiff)).toEqual(expected);
+            });
+
+            test.each([[null], ['unknown'], [undefined]])(
+                'should return undefined for %s',
+                (rawDiff) => {
+                    expect(utils.mapDiffToSemverDiff(rawDiff)).toBeUndefined();
+                },
+            );
+        });
+
+        describe('getApplicableBuckets', () => {
+            test('should return major, minor and patch for a 3-segment tag', () => {
+                expect(utils.getApplicableBuckets(buildContainer())).toEqual([
+                    'major',
+                    'minor',
+                    'patch',
+                ]);
+            });
+
+            test('should return major and minor for a 2-segment tag', () => {
+                const container = buildContainer({
+                    image: { tag: { value: '1.2', semver: true } },
+                });
+                expect(utils.getApplicableBuckets(container)).toEqual([
+                    'major',
+                    'minor',
+                ]);
+            });
+
+            test('should return major only for a 1-segment tag', () => {
+                const container = buildContainer({
+                    image: { tag: { value: '8', semver: true } },
+                });
+                expect(utils.getApplicableBuckets(container)).toEqual([
+                    'major',
+                ]);
+            });
+
+            test('should return no tag buckets for a non semver tag', () => {
+                const container = buildContainer({
+                    image: { tag: { value: 'latest', semver: false } },
+                });
+                expect(utils.getApplicableBuckets(container)).toEqual([]);
+            });
+
+            test('should append digest when digest watching is enabled', () => {
+                const container = buildContainer({
+                    image: {
+                        tag: { value: '1.2.3', semver: true },
+                        digest: { watch: true },
+                    },
+                });
+                expect(utils.getApplicableBuckets(container)).toEqual([
+                    'major',
+                    'minor',
+                    'patch',
+                    'digest',
+                ]);
+            });
+
+            test('should return digest only for a non semver tag watching digest', () => {
+                const container = buildContainer({
+                    image: {
+                        tag: { value: 'latest', semver: false },
+                        digest: { watch: true },
+                    },
+                });
+                expect(utils.getApplicableBuckets(container)).toEqual([
+                    'digest',
+                ]);
+            });
+
+            test('should measure the TRANSFORMED tag', () => {
+                const container = buildContainer({
+                    transformTags: '^(\\d+)\\.(\\d+)\\.(\\d+)$ => $1.$2',
+                });
+                // '1.2.3' transforms to '1.2' -> only 2 segments are reachable
+                expect(utils.getApplicableBuckets(container)).toEqual([
+                    'major',
+                    'minor',
+                ]);
+            });
+        });
+
+        describe('computeUpdateBuckets', () => {
+            test('should populate every applicable bucket', () => {
+                const container = buildContainer();
+                const updates = utils.computeUpdateBuckets(
+                    container,
+                    ['2.0.0', '1.9.0', '1.2.9'],
+                    { tag: '2.0.0' },
+                );
+                expect(updates.major).toEqual({
+                    kind: 'tag',
+                    localValue: '1.2.3',
+                    remoteValue: '2.0.0',
+                    semverDiff: 'major',
+                    link: 'https://example.com/2.0.0',
+                });
+                expect(updates.minor.remoteValue).toEqual('1.9.0');
+                expect(updates.minor.semverDiff).toEqual('minor');
+                expect(updates.patch.remoteValue).toEqual('1.2.9');
+                expect(updates.patch.semverDiff).toEqual('patch');
+            });
+
+            test('should keep the highest candidate per bucket regardless of input order', () => {
+                const container = buildContainer();
+                const updates = utils.computeUpdateBuckets(
+                    container,
+                    ['1.2.5', '1.2.9'],
+                    { tag: '1.2.9' },
+                );
+                expect(updates.patch.remoteValue).toEqual('1.2.9');
+            });
+
+            test('should skip a candidate equal to the running tag', () => {
+                const container = buildContainer();
+                const updates = utils.computeUpdateBuckets(
+                    container,
+                    ['1.2.3'],
+                    { tag: '1.2.3' },
+                );
+                expect(updates.major).toBeNull();
+                expect(updates.minor).toBeNull();
+                expect(updates.patch).toBeNull();
+            });
+
+            test('should put a prerelease diff in the patch bucket', () => {
+                const container = buildContainer({
+                    image: { tag: { value: '1.2.3-rc.1', semver: true } },
+                });
+                const updates = utils.computeUpdateBuckets(
+                    container,
+                    ['1.2.3-rc.2'],
+                    { tag: '1.2.3-rc.2' },
+                );
+                expect(updates.patch).toEqual({
+                    kind: 'tag',
+                    localValue: '1.2.3-rc.1',
+                    remoteValue: '1.2.3-rc.2',
+                    semverDiff: 'prerelease',
+                    link: 'https://example.com/1.2.3-rc.2',
+                });
+            });
+
+            test('should leave applicable buckets null and inapplicable buckets absent', () => {
+                const container = buildContainer({
+                    image: { tag: { value: '1.2', semver: true } },
+                });
+                const updates = utils.computeUpdateBuckets(container, [], {
+                    tag: '1.2',
+                });
+                expect(updates.major).toBeNull();
+                expect(updates.minor).toBeNull();
+                expect('patch' in updates).toBe(false);
+                expect('digest' in updates).toBe(false);
+            });
+
+            test('should populate the digest bucket against the current tag', () => {
+                const container = buildContainer({
+                    image: {
+                        tag: { value: '1.2.3', semver: true },
+                        digest: { watch: true, value: 'sha256:local' },
+                    },
+                });
+                const updates = utils.computeUpdateBuckets(container, [], {
+                    tag: '1.2.3',
+                    digest: 'sha256:remote',
+                    created: '2024-01-01T00:00:00.000Z',
+                });
+                expect(updates.digest).toEqual({
+                    kind: 'digest',
+                    localValue: 'sha256:local',
+                    remoteValue: 'sha256:remote',
+                    created: '2024-01-01T00:00:00.000Z',
+                    link: 'https://example.com/1.2.3',
+                });
+            });
+
+            test('should leave the digest bucket null when digests are equal', () => {
+                const container = buildContainer({
+                    image: {
+                        tag: { value: '1.2.3', semver: true },
+                        digest: { watch: true, value: 'sha256:same' },
+                    },
+                });
+                const updates = utils.computeUpdateBuckets(container, [], {
+                    tag: '1.2.3',
+                    digest: 'sha256:same',
+                });
+                expect(updates.digest).toBeNull();
+            });
+
+            test('should leave the digest bucket null when the remote digest is unknown', () => {
+                const container = buildContainer({
+                    image: {
+                        tag: { value: '1.2.3', semver: true },
+                        digest: { watch: true, value: 'sha256:local' },
+                    },
+                });
+                const updates = utils.computeUpdateBuckets(container, [], {
+                    tag: '1.2.3',
+                });
+                expect(updates.digest).toBeNull();
+            });
+
+            test('should not throw when the link template throws', () => {
+                containerModel.renderLink.mockImplementation(() => {
+                    throw new Error('bad template');
+                });
+                const container = buildContainer({
+                    image: {
+                        tag: { value: '1.2.3', semver: true },
+                        digest: { watch: true, value: 'sha256:local' },
+                    },
+                });
+                let updates;
+                expect(() => {
+                    updates = utils.computeUpdateBuckets(container, ['2.0.0'], {
+                        tag: '2.0.0',
+                        digest: 'sha256:remote',
+                    });
+                }).not.toThrow();
+                expect(updates.major.remoteValue).toEqual('2.0.0');
+                expect(updates.major.link).toBeUndefined();
+                expect(updates.digest.link).toBeUndefined();
+            });
+        });
     });
 
     describe('normalizeContainer', () => {
@@ -233,6 +574,106 @@ describe('Docker Watcher Utils', () => {
         });
     });
 
+    describe('shouldWatchDigestForContainer', () => {
+        let mockRegistryProvider;
+
+        beforeEach(() => {
+            mockRegistryProvider = {
+                shouldWatchDigest: jest.fn().mockReturnValue(true),
+            };
+        });
+
+        test('should watch digest of a semver container opting in with the dedicated label', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    undefined,
+                    'true',
+                    'library/nginx',
+                ),
+            ).toBe(true);
+        });
+
+        test('should not watch digest of a semver container without the dedicated label, even when the provider says yes', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    undefined,
+                    undefined,
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(
+                mockRegistryProvider.shouldWatchDigest,
+            ).not.toHaveBeenCalled();
+        });
+
+        test('should not watch digest of a semver container when the dedicated label is false', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    undefined,
+                    'false',
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(
+                mockRegistryProvider.shouldWatchDigest,
+            ).not.toHaveBeenCalled();
+        });
+
+        test('should not watch digest of a semver container carrying only the legacy wud.watch.digest label', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    true,
+                    'true',
+                    undefined,
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(
+                mockRegistryProvider.shouldWatchDigest,
+            ).not.toHaveBeenCalled();
+        });
+
+        test('should delegate to the registry provider with the legacy label for a non semver container', () => {
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    false,
+                    'true',
+                    undefined,
+                    'library/nginx',
+                ),
+            ).toBe(true);
+            expect(mockRegistryProvider.shouldWatchDigest).toHaveBeenCalledWith(
+                'true',
+                'library/nginx',
+            );
+        });
+
+        test('should delegate to the registry provider even when the semver label is set on a non semver container', () => {
+            mockRegistryProvider.shouldWatchDigest.mockReturnValue(false);
+            expect(
+                utils.shouldWatchDigestForContainer(
+                    mockRegistryProvider,
+                    false,
+                    undefined,
+                    'true',
+                    'library/nginx',
+                ),
+            ).toBe(false);
+            expect(mockRegistryProvider.shouldWatchDigest).toHaveBeenCalledWith(
+                undefined,
+                'library/nginx',
+            );
+        });
+    });
+
     describe('findNewVersion', () => {
         test('should throw error if no registry', async () => {
             registry.getState.mockReturnValue({ registry: {} });
@@ -270,12 +711,51 @@ describe('Docker Watcher Utils', () => {
                 transformTags: undefined,
             };
 
-            const result = await utils.findNewVersion(
+            const { result } = await utils.findNewVersion(
                 container,
                 null,
                 mockLogContainer,
             );
             expect(result.tag).toBe('1.0.1');
+        });
+
+        test('should return the update buckets alongside the result', async () => {
+            const actualTag = jest.requireActual('../../../tag');
+            tag.parse.mockImplementation(actualTag.parse);
+            tag.isGreater.mockImplementation(actualTag.isGreater);
+            tag.transform.mockImplementation(actualTag.transform);
+            tag.diff.mockImplementation(actualTag.diff);
+            tag.compare.mockImplementation(actualTag.compare);
+
+            const mockProvider = {
+                getTags: jest
+                    .fn()
+                    .mockResolvedValue(['1.0.0', '1.0.1', '1.1.0', '2.0.0']),
+            };
+            registry.getState.mockReturnValue({
+                registry: { docker: mockProvider },
+            });
+
+            const container = {
+                image: {
+                    registry: { name: 'docker' },
+                    tag: { value: '1.0.0', semver: true },
+                    digest: { watch: false },
+                },
+                transformTags: undefined,
+            };
+
+            const { result, updates } = await utils.findNewVersion(
+                container,
+                null,
+                mockLogContainer,
+            );
+
+            expect(result.tag).toBe('2.0.0');
+            expect(updates.major.remoteValue).toBe('2.0.0');
+            expect(updates.minor.remoteValue).toBe('1.1.0');
+            expect(updates.patch.remoteValue).toBe('1.0.1');
+            expect('digest' in updates).toBe(false);
         });
 
         test('should handle digest watching with v2 manifest when registry allows digest watching', async () => {
@@ -306,7 +786,7 @@ describe('Docker Watcher Utils', () => {
                 registry: { hub: mockRegistry },
             });
 
-            const result = await utils.findNewVersion(
+            const { result } = await utils.findNewVersion(
                 container,
                 null,
                 mockLogContainer,
@@ -318,6 +798,67 @@ describe('Docker Watcher Utils', () => {
             );
             expect(result.digest).toBe('sha256:def456');
             expect(container.image.digest.value).toBe('sha256:manifest123');
+        });
+
+        test('should resolve the digest against the running tag, not a tag candidate', async () => {
+            const actualTag = jest.requireActual('../../../tag');
+            tag.parse.mockImplementation(actualTag.parse);
+            tag.isGreater.mockImplementation(actualTag.isGreater);
+            tag.transform.mockImplementation(actualTag.transform);
+            tag.diff.mockImplementation(actualTag.diff);
+            tag.compare.mockImplementation(actualTag.compare);
+
+            const container = {
+                image: {
+                    id: 'image123',
+                    registry: { name: 'hub' },
+                    name: 'library/nginx',
+                    tag: { value: '1.0.0', semver: true },
+                    digest: { watch: true, repo: 'sha256:abc123' },
+                },
+                labels: { 'wud.watch.digest.semver': 'true' },
+                transformTags: undefined,
+            };
+            const mockRegistry = {
+                getTags: jest.fn().mockResolvedValue(['1.0.0', '1.0.1']),
+                shouldWatchDigest: jest.fn().mockReturnValue(true),
+                getImageManifestDigest: jest
+                    .fn()
+                    .mockResolvedValueOnce({
+                        digest: 'sha256:def456',
+                        created: '2023-01-01',
+                        version: 2,
+                    })
+                    .mockResolvedValueOnce({
+                        digest: 'sha256:manifest123',
+                    }),
+            };
+            registry.getState.mockReturnValue({
+                registry: { hub: mockRegistry },
+            });
+
+            const { result, updates } = await utils.findNewVersion(
+                container,
+                null,
+                mockLogContainer,
+            );
+
+            // The tag candidate 1.0.1 must NOT be the image the digest is read from
+            expect(result.tag).toBe('1.0.1');
+            expect(
+                mockRegistry.getImageManifestDigest.mock.calls[0][0].tag.value,
+            ).toBe('1.0.0');
+            expect(
+                mockRegistry.getImageManifestDigest.mock.calls[1][0].tag.value,
+            ).toBe('1.0.0');
+            expect(updates.patch.remoteValue).toBe('1.0.1');
+            expect(updates.digest).toEqual(
+                expect.objectContaining({
+                    kind: 'digest',
+                    localValue: 'sha256:manifest123',
+                    remoteValue: 'sha256:def456',
+                }),
+            );
         });
 
         test('should warn and skip digest check for non-semver image when registry disables digest watching', async () => {
@@ -462,7 +1003,7 @@ describe('Docker Watcher Utils', () => {
                 registry: { ghcr: ghcrRegistry },
             });
 
-            const result = await utils.findNewVersion(
+            const { result } = await utils.findNewVersion(
                 container,
                 null,
                 mockLogContainer,

@@ -19,6 +19,8 @@ docker rm -f \
     quay_prometheus \
     zz_batch_local_1 \
     zz_batch_local_2 \
+    zz_mv_buckets \
+    zz_mv_semver_digest \
     wud \
     wud-agent \
     wud-controller \

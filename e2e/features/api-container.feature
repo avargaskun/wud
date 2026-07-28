@@ -4,7 +4,7 @@ Feature: WUD Container API Exposure
     When I GET /api/containers
     Then response code should be 200
     And response body should be valid json
-    And response body path $ should be of type array with length 17
+    And response body path $ should be of type array with length 19
 
   # Test one representative container per registry type + update pattern
   Scenario Outline: WUD must handle different registry types and update patterns
@@ -105,3 +105,59 @@ Feature: WUD Container API Exposure
     Then response code should be 200
     And response body should be valid json
     And response body path $[?(@.type=="mock")].auto should be false
+
+  # Test per-kind update buckets (multi-version support).
+  # zz_mv_buckets runs podinfo 6.0.0 restricted to ^6\.\d+\.\d+$, so a patch (6.0.z) and a minor
+  # (6.y.z) are both available while no 7.x exists => major is applicable but empty.
+  Scenario: WUD must expose per-kind update buckets
+    When I find the container with name "zz_mv_buckets" and save its ID as "MVID", version as "MVV", and name as "MVN"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.0\.\d+$" and value "" as "EXPECTED_PATCH_TAG"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.[1-9]\d*\.\d+$" and value "" as "EXPECTED_MINOR_TAG"
+    And I GET /api/containers/`MVID`
+    Then response code should be 200
+    And response body should be valid json
+    And response body path $.name should be zz_mv_buckets
+    And response body path $.image.tag.value should be 6.0.0
+    And response body path $.updates.patch.kind should be tag
+    And response body path $.updates.patch.semverDiff should be patch
+    And response body path $.updates.patch.localValue should be 6.0.0
+    And response body path $.updates.patch.remoteValue should equal variable "EXPECTED_PATCH_TAG"
+    And response body path $.updates.minor.kind should be tag
+    And response body path $.updates.minor.semverDiff should be minor
+    And response body path $.updates.minor.localValue should be 6.0.0
+    And response body path $.updates.minor.remoteValue should equal variable "EXPECTED_MINOR_TAG"
+    And response body path $.updates.major must be exactly null
+    And response body path $.updates.digest must be absent
+    And response body path $.updateAvailable should be true
+
+  # result / updateKind keep describing the single highest available update (backward compat).
+  # The highest is the minor bucket because no 7.x tag exists for podinfo.
+  Scenario: WUD must keep result and updateKind describing the highest available update
+    When I find the container with name "zz_mv_buckets" and save its ID as "MVID2", version as "MVV2", and name as "MVN2"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.[1-9]\d*\.\d+$" and value "" as "EXPECTED_HIGHEST_TAG"
+    And I GET /api/containers/`MVID2`
+    Then response code should be 200
+    And response body should be valid json
+    And response body path $.updateKind.kind should be tag
+    And response body path $.updateKind.semverDiff should be minor
+    And response body path $.updateKind.localValue should be 6.0.0
+    And response body path $.updateKind.remoteValue should equal variable "EXPECTED_HIGHEST_TAG"
+    And response body path $.result.tag should equal variable "EXPECTED_HIGHEST_TAG"
+
+  # zz_mv_semver_digest is the digest opt-in regression fixture: a semver tag with
+  # wud.watch.digest.semver=true and an include regex matching nothing, so all four buckets are
+  # applicable and empty, and the digest key proves the opt-in took effect.
+  Scenario: WUD must honour wud.watch.digest.semver on a semver-tagged container
+    When I find the container with name "zz_mv_semver_digest" and save its ID as "MVDID", version as "MVDV", and name as "MVDN"
+    And I GET /api/containers/`MVDID`
+    Then response code should be 200
+    And response body should be valid json
+    And response body path $.name should be zz_mv_semver_digest
+    And response body path $.image.tag.semver should be true
+    And response body path $.image.digest.watch should be true
+    And response body path $.updates.digest must be exactly null
+    And response body path $.updates.patch must be exactly null
+    And response body path $.updates.minor must be exactly null
+    And response body path $.updates.major must be exactly null
+    And response body path $.result.tag should be 6.0.0
+    And response body path $.updateAvailable should be false
