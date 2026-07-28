@@ -255,10 +255,18 @@ class Trigger extends Component {
             id: includeOrExcludeTriggerSplit[0],
             threshold: 'all',
             thresholdInvalid: false,
-            thresholdPresent: includeOrExcludeTriggerSplit.length === 2,
+            thresholdPresent: includeOrExcludeTriggerSplit.length >= 2,
         };
         if (includeOrExcludeTrigger.thresholdPresent) {
-            const thresholdToken = includeOrExcludeTriggerSplit[1];
+            // Everything after the FIRST colon is the token. A well-formed entry has
+            // exactly one colon; `a:b:c` is malformed and must fail closed rather than
+            // silently fall back to the most permissive threshold ('all') — that is the
+            // very footgun this validation exists to remove. Joining the remainder makes
+            // the token unmatchable, so the switch below flags it invalid on its own, and
+            // the warning quotes what the user actually typed.
+            const thresholdToken = includeOrExcludeTriggerSplit
+                .slice(1)
+                .join(':');
             includeOrExcludeTrigger.thresholdToken = thresholdToken;
             // Matched case-insensitively to stay consistent with the rest of this
             // vocabulary: validateConfiguration uses joi .insensitive() and both

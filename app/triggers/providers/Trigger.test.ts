@@ -1449,6 +1449,33 @@ describe('threshold label validation', () => {
         },
     );
 
+    test.each([
+        'docker.t1:pacth:x',
+        'docker.t1:patch:minor',
+        'docker.t1:a:b:c',
+    ])(
+        'parseIncludeOrIncludeTriggerString should fail closed on the malformed entry %s',
+        (entry) => {
+            const parsed = Trigger.parseIncludeOrIncludeTriggerString(entry);
+            // More than one colon is malformed. It must NOT silently fall back to the
+            // most permissive threshold — that is the fail-open this validation removes.
+            expect(parsed.id).toEqual('docker.t1');
+            expect(parsed.thresholdPresent).toBe(true);
+            expect(parsed.thresholdInvalid).toBe(true);
+            // The token quoted in the warning is everything after the first colon.
+            expect(parsed.thresholdToken).toEqual(
+                entry.substring('docker.t1:'.length),
+            );
+        },
+    );
+
+    test('apply should fail closed on a multi-colon include entry', () => {
+        const container = containerNamed({
+            triggerInclude: 'docker.t1:patch:minor',
+        });
+        expect(trigger.apply(container)).toBeUndefined();
+    });
+
     test('apply should not fail closed on a differently-cased threshold', () => {
         const container = containerNamed({ triggerInclude: 'docker.t1:Patch' });
         expect(trigger.apply(container)).toBeDefined();

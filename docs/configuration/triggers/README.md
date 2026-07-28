@@ -74,6 +74,10 @@ The threshold can be overridden per container with the `wud.trigger.include` lab
 
 !> A threshold on `wud.trigger.exclude` has always been meaningless (an exclusion is unconditional) and now emits a `warn` log. The container is excluded either way.
 
+!> **A malformed entry with more than one colon also fails closed.** `wud.trigger.include=docker.update:patch:minor` is rejected exactly like a typo — everything after the first colon is treated as the threshold token, which then matches nothing. Only one threshold per entry is supported; list multiple triggers by separating them with commas instead, e.g. `wud.trigger.include=docker.update:patch,smtp.gmail:minor`.
+
+?> **Where these warnings appear.** They are emitted from the trigger's `apply()` check, which runs both on every watch cycle *and* whenever the container's triggers are read through the API — which the Web UI does each time you expand a container card. Expect the same warning to recur rather than appear once; that is deliberate, since the log is the only place a rejected threshold is reported.
+
 ### Examples
 
 <!-- tabs:start -->
