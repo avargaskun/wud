@@ -72,6 +72,8 @@ The threshold can be overridden per container with the `wud.trigger.include` lab
 
 !> **An invalid threshold in `wud.trigger.include` is now rejected and the entry fails closed.** `wud.trigger.include=docker.update:pacth` no longer silently degrades to `all` — the trigger is simply **not** associated with that container and a `warn` log is emitted. Failing open was dangerous: a typo on an auto-updating trigger authorised every `major` update.
 
+?> The threshold token is matched **case-insensitively**, so `docker.update:Patch` and `docker.update:patch` are equivalent. The trigger **id** before the colon is still matched case-sensitively and must match the trigger's `type.name` exactly.
+
 !> A threshold on `wud.trigger.exclude` has always been meaningless (an exclusion is unconditional) and now emits a `warn` log. The container is excluded either way.
 
 !> **A malformed entry with more than one colon also fails closed.** `wud.trigger.include=docker.update:patch:minor` is rejected exactly like a typo — everything after the first colon is treated as the threshold token, which then matches nothing. Only one threshold per entry is supported; list multiple triggers by separating them with commas instead, e.g. `wud.trigger.include=docker.update:patch,smtp.gmail:minor`.

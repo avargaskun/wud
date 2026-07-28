@@ -263,7 +263,9 @@ class Trigger extends Component {
             // silently fall back to the most permissive threshold ('all') — that is the
             // very footgun this validation exists to remove. Joining the remainder makes
             // the token unmatchable, so the switch below flags it invalid on its own, and
-            // the warning quotes what the user actually typed.
+            // the warning can quote it. Note the split regex consumes whitespace around
+            // the separators, so the quoted token is the remainder with whitespace around
+            // colons normalized away -- not a verbatim copy of what the user typed.
             const thresholdToken = includeOrExcludeTriggerSplit
                 .slice(1)
                 .join(':');

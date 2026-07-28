@@ -1450,6 +1450,23 @@ describe('threshold label validation', () => {
     );
 
     test.each([
+        ['docker.t1:', ''],
+        ['docker.t1::patch', ':patch'],
+    ])(
+        'parseIncludeOrIncludeTriggerString should fail closed on the degenerate entry %s',
+        (entry, expectedToken) => {
+            const parsed = Trigger.parseIncludeOrIncludeTriggerString(entry);
+            // A trailing colon is a threshold that was started and not finished. It must
+            // NOT be read as "no threshold given", which would silently mean 'all' — the
+            // most likely way a future refactor reintroduces the fail-open.
+            expect(parsed.id).toEqual('docker.t1');
+            expect(parsed.thresholdPresent).toBe(true);
+            expect(parsed.thresholdInvalid).toBe(true);
+            expect(parsed.thresholdToken).toEqual(expectedToken);
+        },
+    );
+
+    test.each([
         'docker.t1:pacth:x',
         'docker.t1:patch:minor',
         'docker.t1:a:b:c',
