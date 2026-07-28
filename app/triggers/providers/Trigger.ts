@@ -515,62 +515,6 @@ class Trigger extends Component {
         }
     }
 
-    isTriggerIncludedOrExcluded(containerResult: Container, trigger: string) {
-        const triggers = trigger
-            .split(/\s*,\s*/)
-            .map((triggerToMatch) =>
-                Trigger.parseIncludeOrIncludeTriggerString(triggerToMatch),
-            );
-        const triggerMatched = triggers.find(
-            (triggerToMatch) =>
-                triggerToMatch.id.toLowerCase() === this.getId(),
-        );
-        if (!triggerMatched) {
-            return false;
-        }
-        return Trigger.isThresholdReached(
-            containerResult,
-            triggerMatched.threshold.toLowerCase(),
-        );
-    }
-
-    isTriggerIncluded(
-        containerResult: Container,
-        triggerInclude: string | undefined,
-    ) {
-        if (!triggerInclude) {
-            return this.configuration.includebydefault !== false;
-        }
-        return this.isTriggerIncludedOrExcluded(
-            containerResult,
-            triggerInclude,
-        );
-    }
-
-    isTriggerExcluded(
-        containerResult: Container,
-        triggerExclude: string | undefined,
-    ) {
-        if (!triggerExclude) {
-            return false;
-        }
-        return this.isTriggerIncludedOrExcluded(
-            containerResult,
-            triggerExclude,
-        );
-    }
-
-    /**
-     * Return true if must trigger on this container.
-     */
-    mustTrigger(containerResult: Container) {
-        const { triggerInclude, triggerExclude } = containerResult;
-        return (
-            this.isTriggerIncluded(containerResult, triggerInclude) &&
-            !this.isTriggerExcluded(containerResult, triggerExclude)
-        );
-    }
-
     /**
      * Init the Trigger.
      */
