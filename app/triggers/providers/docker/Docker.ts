@@ -6,7 +6,7 @@ import { Container, ContainerImage, fullName } from '../../../model/container';
 import type DockerWatcher from '../../../watchers/providers/docker/Docker';
 import type Registry from '../../../registries/Registry';
 import Logger from 'bunyan';
-import type { ContainerUpdateContext } from './types';
+import type { ContainerUpdateContext, SwapOutcome } from './types';
 
 /**
  * Replace a Docker container with an updated one.
@@ -22,6 +22,11 @@ class Docker extends Trigger {
             prune: this.joi.boolean().default(false),
             dryrun: this.joi.boolean().default(false),
             autoremovetimeout: this.joi.number().default(10_000),
+            postupdatetimeout: this.joi
+                .number()
+                .integer()
+                .min(0)
+                .default(300_000),
             multinetworkfallback: this.joi.boolean().default(true),
         });
     }
@@ -636,12 +641,12 @@ class Docker extends Trigger {
      * Swap phase: stop/remove the current container and recreate it on the new image.
      * @param container the container
      * @param ctx the context returned by pullContainer
-     * @returns {Promise<void>}
+     * @returns {Promise<SwapOutcome>}
      */
     async swapContainer(
         container: Container,
         ctx: ContainerUpdateContext,
-    ): Promise<void> {
+    ): Promise<SwapOutcome> {
         // Child logger for the container to process
         const logContainer = this.log.child({ container: fullName(container) });
 
@@ -721,6 +726,14 @@ class Docker extends Trigger {
             );
             await this.removeImage(dockerApi, oldImage, logContainer);
         }
+
+        return {
+            container,
+            success: true,
+            newContainerId: newContainer.id,
+            startedAfterSwap: state.Running,
+            oldContainerId: currentContainerSpec.Id,
+        };
     }
 
     /**

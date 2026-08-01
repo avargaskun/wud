@@ -9,6 +9,7 @@ import {
     UpdateBucketKey,
 } from '../../model/container';
 import { ObjectSchema } from 'joi';
+import type { TriggerRunResult } from './docker/types';
 
 export interface TriggerConfiguration extends ComponentConfiguration {
     auto?: boolean;
@@ -604,7 +605,9 @@ class Trigger extends Component {
     /**
      * Trigger method. Must be overridden in trigger implementation class.
      */
-    async trigger(_containerWithResult: Container) {
+    async trigger(
+        _containerWithResult: Container,
+    ): Promise<TriggerRunResult | void> {
         // do nothing by default
         this.log.warn(
             'Cannot trigger container result; this trigger does not implement "simple" mode',
@@ -614,7 +617,9 @@ class Trigger extends Component {
     /**
      * Trigger batch method. Must be overridden in trigger implementation class.
      */
-    async triggerBatch(_containersWithResult: Container[]) {
+    async triggerBatch(
+        _containersWithResult: Container[],
+    ): Promise<TriggerRunResult | void> {
         // do nothing by default
         this.log.warn(
             'Cannot trigger container results; this trigger does not implement "batch" mode',

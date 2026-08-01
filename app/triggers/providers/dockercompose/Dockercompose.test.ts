@@ -244,9 +244,18 @@ test('triggerBatch should pull all, then rewrite, then swap (ordering)', async (
             order.push('write');
         },
     );
-    jest.spyOn(dockercompose, 'swapContainer').mockImplementation(async () => {
-        order.push('swap');
-    });
+    jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
+        async (container) => {
+            order.push('swap');
+            return {
+                container,
+                success: true,
+                newContainerId: `new-${container.id}`,
+                startedAfterSwap: true,
+                oldContainerId: container.id,
+            };
+        },
+    );
     await dockercompose.triggerBatch([c1, c2]);
     expect(order).toEqual(['pull', 'pull', 'write', 'swap', 'swap']);
 });

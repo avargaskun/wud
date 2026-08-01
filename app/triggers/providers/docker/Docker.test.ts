@@ -12,6 +12,7 @@ const configurationValid = {
     once: true,
     auto: true,
     autoremovetimeout: 10000,
+    postupdatetimeout: 300000,
     simpletitle:
         'New ${container.updateKind.kind} found for container ${container.name}',
     simplebody:
@@ -122,6 +123,16 @@ test('validateConfiguration should return validated configuration when valid', a
     const validatedConfiguration =
         docker.validateConfiguration(configurationValid);
     expect(validatedConfiguration).toStrictEqual(configurationValid);
+});
+
+test('validateConfiguration should default postupdatetimeout to 300000', async () => {
+    const { postupdatetimeout, ...withoutPostupdateTimeout } =
+        configurationValid;
+    expect(postupdatetimeout).toEqual(300000);
+    expect(
+        docker.validateConfiguration(withoutPostupdateTimeout)
+            .postupdatetimeout,
+    ).toEqual(300000);
 });
 
 test('validateConfiguration should throw error when invalid', async () => {
@@ -499,7 +510,9 @@ test('swapContainer should run stop, remove, create and start on the happy path'
     const wait = jest.fn().mockResolvedValue(undefined);
     const newStart = jest.fn().mockResolvedValue(undefined);
     const dockerApi = {
-        createContainer: jest.fn().mockResolvedValue({ start: newStart }),
+        createContainer: jest
+            .fn()
+            .mockResolvedValue({ id: 'new-container-id', start: newStart }),
     };
     const ctx = {
         dockerApi,
@@ -518,9 +531,14 @@ test('swapContainer should run stop, remove, create and start on the happy path'
         },
         state: { Running: true },
     };
-    await expect(
-        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
-    ).resolves.toBeUndefined();
+    const container = { name: 'container-name', id: '123456789' };
+    await expect(docker.swapContainer(container, ctx)).resolves.toEqual({
+        container,
+        success: true,
+        newContainerId: 'new-container-id',
+        startedAfterSwap: true,
+        oldContainerId: '123456789',
+    });
     expect(stop).toHaveBeenCalled();
     expect(remove).toHaveBeenCalled();
     expect(wait).not.toHaveBeenCalled();
@@ -555,7 +573,11 @@ test('swapContainer should wait for auto-removal when HostConfig.AutoRemove is t
     };
     await expect(
         docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+        success: true,
+        startedAfterSwap: true,
+        oldContainerId: '123456789',
+    });
     expect(stop).toHaveBeenCalled();
     expect(wait).toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
@@ -664,7 +686,11 @@ test('swapContainer should skip stop and start when the container is not running
     };
     await expect(
         docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+        success: true,
+        startedAfterSwap: false,
+        oldContainerId: '123456789',
+    });
     expect(stop).not.toHaveBeenCalled();
     expect(remove).toHaveBeenCalled();
     expect(dockerApi.createContainer).toHaveBeenCalled();
@@ -706,7 +732,10 @@ test('swapContainer should remove the previous image when prune is enabled', asy
         image: { name: 'test/test', tag: { value: '1.2.3' } },
         updateKind: { kind: 'tag' },
     };
-    await expect(docker.swapContainer(container, ctx)).resolves.toBeUndefined();
+    await expect(docker.swapContainer(container, ctx)).resolves.toMatchObject({
+        success: true,
+        startedAfterSwap: true,
+    });
     expect(dockerApi.getImage).toHaveBeenCalledWith(
         'my-registry/test/test:1.2.3',
     );

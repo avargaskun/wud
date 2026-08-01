@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * WUD supported Docker labels.
  */
@@ -59,3 +58,8 @@ export const wudTriggerInclude = 'wud.trigger.include';
  * Optional list of triggers to exclude
  */
 export const wudTriggerExclude = 'wud.trigger.exclude';
+
+/**
+ * Optional comma-separated list of dependent containers to bounce after this container is updated.
+ */
+export const wudPostupdateRestart = 'wud.postupdate.restart';
