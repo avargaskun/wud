@@ -708,5 +708,136 @@ describe('Container API', () => {
                 }),
             );
         });
+
+        const patchUpdate = (remoteValue: string) => ({
+            kind: 'tag',
+            localValue: '1.0.0',
+            remoteValue,
+            semverDiff: 'patch',
+        });
+
+        const wireRealBuildTriggerView = () => {
+            const RealTrigger = jest.requireActual(
+                '../triggers/providers/Trigger',
+            ).default;
+            (Trigger.buildTriggerView as jest.Mock).mockImplementation(
+                RealTrigger.buildTriggerView,
+            );
+        };
+
+        test('should return 400 for an invalid bucket value before container resolution', async () => {
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c2'], bucket: 'nonsense' },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith({
+                error: 'bucket must be one of major, minor, patch, digest',
+            });
+            expect(storeContainer.getContainer).not.toHaveBeenCalled();
+            expect(mockTriggerBatch).not.toHaveBeenCalled();
+        });
+
+        test('should return 400 listing members with an absent or null bucket', async () => {
+            const c1 = buildContainer({
+                id: 'c1',
+                updates: { patch: patchUpdate('1.0.1') },
+            });
+            const c2 = buildContainer({ id: 'c2' });
+            const c3 = buildContainer({ id: 'c3', updates: { patch: null } });
+            (storeContainer.getContainer as jest.Mock).mockImplementation(
+                (id) => ({ c1, c2, c3 })[id],
+            );
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c2', 'c3'], bucket: 'patch' },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith({
+                error: "All containers must have a populated 'patch' update",
+                containers: ['c2', 'c3'],
+            });
+            expect(mockGetUnbatchable).not.toHaveBeenCalled();
+            expect(mockTriggerBatch).not.toHaveBeenCalled();
+        });
+
+        test('should call triggerBatch once with bucket views when all members are populated', async () => {
+            wireRealBuildTriggerView();
+            const c1 = buildContainer({
+                id: 'c1',
+                updates: { patch: patchUpdate('1.0.1') },
+            }) as unknown as Container;
+            const c2 = buildContainer({
+                id: 'c2',
+                updates: { patch: patchUpdate('1.0.2') },
+            }) as unknown as Container;
+            (storeContainer.getContainer as jest.Mock).mockImplementation(
+                (id) => (id === 'c1' ? c1 : c2),
+            );
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c2'], bucket: 'patch' },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockTriggerBatch).toHaveBeenCalledTimes(1);
+            const views = mockTriggerBatch.mock.calls[0][0];
+            expect(views).toHaveLength(2);
+            expect(views[0]).not.toBe(c1);
+            expect(views[1]).not.toBe(c2);
+            expect(views[0].selectedUpdate).toBe(c1.updates.patch);
+            expect(views[1].selectedUpdate).toBe(c2.updates.patch);
+            expect(views[0].updateKind.remoteValue).toBe('1.0.1');
+            expect(views[1].updateKind.remoteValue).toBe('1.0.2');
+        });
+
+        test('should pass the same array instance to getUnbatchableContainers and triggerBatch', async () => {
+            wireRealBuildTriggerView();
+            const c1 = buildContainer({
+                id: 'c1',
+                updates: { patch: patchUpdate('1.0.1') },
+            });
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(c1);
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1'], bucket: 'patch' },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockGetUnbatchable.mock.calls[0][0]).toBe(
+                mockTriggerBatch.mock.calls[0][0],
+            );
+        });
+
+        test('should pass the raw store containers to triggerBatch when bucket is omitted', async () => {
+            const c1 = buildContainer({
+                id: 'c1',
+                updates: { patch: patchUpdate('1.0.1') },
+            });
+            const c2 = buildContainer({
+                id: 'c2',
+                updates: { patch: patchUpdate('1.0.2') },
+            });
+            (storeContainer.getContainer as jest.Mock).mockImplementation(
+                (id) => (id === 'c1' ? c1 : c2),
+            );
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c2'] },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(Trigger.buildTriggerView).not.toHaveBeenCalled();
+            const passed = mockTriggerBatch.mock.calls[0][0];
+            expect(passed[0]).toBe(c1);
+            expect(passed[1]).toBe(c2);
+            expect(mockGetUnbatchable.mock.calls[0][0]).toBe(passed);
+        });
     });
 });

@@ -259,6 +259,12 @@ export async function runTriggerBatch(
         return;
     }
 
+    const { bucket, error: bucketError } = parseBucket(req.body);
+    if (bucketError) {
+        res.status(400).json({ error: bucketError });
+        return;
+    }
+
     // 1b. Reject duplicate ids (a duplicate would otherwise swap the same container twice)
     const duplicates = [
         ...new Set(
@@ -333,12 +339,29 @@ export async function runTriggerBatch(
         return;
     }
 
+    // 5b. When a bucket is requested, every member must have it populated
+    if (bucket) {
+        const missingBucket = containers.filter((c) => !c.updates?.[bucket]);
+        if (missingBucket.length > 0) {
+            res.status(400).json({
+                error: `All containers must have a populated '${bucket}' update`,
+                containers: missingBucket.map((c) => c.id),
+            });
+            return;
+        }
+    }
+
     // 6. Reject containers this trigger cannot handle as a batch (e.g. a
     //    docker-compose container that does not belong to a managed compose file),
     //    then run — all in one try so grouping errors surface as 500, not a hang.
     try {
+        const containersToRun = bucket
+            ? containers.map((c) =>
+                  Trigger.buildTriggerView(c, c.updates![bucket]!),
+              )
+            : containers;
         const unbatchable =
-            await triggerToRun.getUnbatchableContainers(containers);
+            await triggerToRun.getUnbatchableContainers(containersToRun);
         if (unbatchable.length > 0) {
             res.status(400).json({
                 error: 'All containers must be updatable by this trigger as a batch',
@@ -347,7 +370,7 @@ export async function runTriggerBatch(
             return;
         }
 
-        await triggerToRun.triggerBatch(containers);
+        await triggerToRun.triggerBatch(containersToRun);
         log.info(
             `Batch trigger executed with success (trigger=${triggerId}, containers=${containers.length})`,
         );
