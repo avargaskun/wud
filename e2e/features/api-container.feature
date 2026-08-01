@@ -4,7 +4,7 @@ Feature: WUD Container API Exposure
     When I GET /api/containers
     Then response code should be 200
     And response body should be valid json
-    And response body path $ should be of type array with length 22
+    And response body path $ should be of type array with length 26
 
   # Test one representative container per registry type + update pattern
   Scenario Outline: WUD must handle different registry types and update patterns

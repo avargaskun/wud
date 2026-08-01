@@ -24,6 +24,10 @@ docker rm -f \
     zz_bucket_single \
     zz_mv_buckets \
     zz_mv_semver_digest \
+    zz_postupdate_sidecar \
+    zz_postupdate_main \
+    zz_postupdate_batch_a \
+    zz_postupdate_batch_b \
     wud \
     wud-agent \
     wud-controller \
