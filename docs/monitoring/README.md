@@ -118,7 +118,7 @@ Counts the dependent containers bounced after an update by the `docker` / `docke
 | -------- | ----------------------------------------------------------------------------- |
 | `type`   | The trigger type (`docker`, `dockercompose`)                                |
 | `name`   | The trigger name                                                            |
-| `status` | `bounced` (restarted or recreated), `skipped` (nothing to do) or `failed`   |
+| `status` | `bounced` (restarted or recreated), `skipped` (not applicable or deliberately not bounced — e.g. unresolved name, batch member, health-gate failure; see the `reason` in the trigger API response) or `failed`   |
 
 ?> Bounces performed by an [Agent](/configuration/agents/) are counted on the **Controller**, from the outcomes the Agent reports back — Prometheus is not exposed in Agent mode.
 

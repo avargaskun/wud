@@ -29,7 +29,7 @@ If the gate fails or times out (`POSTUPDATETIMEOUT`, in milliseconds), all the d
 - **recreate** when its `NetworkMode` references the updated container (by full ID, short ID, or name). The container is recreated from its live configuration with `NetworkMode` re-pointed at the **new** container ID — a plain restart cannot work in this case (`cannot join network of a non running container`). The dependent gets a new ID.
 - **restart** otherwise.
 
-**Stopped dependents.** A stopped dependent that does *not* reference the updated container is reported `skipped` (`not running`) — WUD does not start containers you stopped. A stopped dependent that references it **by ID** is recreated but left stopped, otherwise it could never be started again.
+**Stopped dependents.** A stopped dependent that does *not* reference the updated container is reported `skipped` (`not running`) — WUD does not start containers you stopped. A stopped dependent whose `network_mode` references the updated container (by ID, short ID or name) is recreated but left stopped — an ID-referencing one could otherwise never be started again.
 
 **Single hop.** The dependents' own `wud.postupdate.restart` labels are not followed. Dependents need not be watched by WUD, but must live on the same Docker host as the updated container. A name that does not resolve is reported `skipped` (`unresolved`).
 
