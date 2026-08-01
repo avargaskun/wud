@@ -42,6 +42,13 @@ export interface ContainerUpdateKind {
 
 export type UpdateBucketKey = 'major' | 'minor' | 'patch' | 'digest';
 
+export const UPDATE_BUCKET_KEYS = [
+    'major',
+    'minor',
+    'patch',
+    'digest',
+] as const satisfies readonly UpdateBucketKey[];
+
 export interface ContainerUpdate {
     kind: 'tag' | 'digest';
     localValue: string;

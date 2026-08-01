@@ -5,10 +5,29 @@ import * as registry from '../registry';
 import { getServerConfiguration } from '../configuration';
 import logger from '../log';
 import { getAgent } from '../agent/manager';
-import { Container } from '../model/container';
-import { BatchTriggerRequestBody } from './types';
+import {
+    Container,
+    UpdateBucketKey,
+    UPDATE_BUCKET_KEYS,
+} from '../model/container';
+import Trigger from '../triggers/providers/Trigger';
+import { BatchTriggerRequestBody, TriggerRequestBody } from './types';
 
 const log = logger.child({ component: 'container' });
+
+function parseBucket(body: unknown): {
+    bucket?: UpdateBucketKey;
+    error?: string;
+} {
+    const { bucket } = (body || {}) as Partial<TriggerRequestBody>;
+    if (bucket === undefined) return {};
+    if (!(UPDATE_BUCKET_KEYS as readonly string[]).includes(bucket)) {
+        return {
+            error: `bucket must be one of ${UPDATE_BUCKET_KEYS.join(', ')}`,
+        };
+    }
+    return { bucket };
+}
 
 /**
  * Return registered watchers.
@@ -163,38 +182,59 @@ export async function getContainerTriggers(req, res) {
  * @param {*} req
  * @param {*} res
  */
-export async function runTrigger(req, res) {
+export async function runTrigger(req: Request, res: Response): Promise<void> {
     const { id, triggerAgent, triggerType, triggerName } = req.params;
 
+    const { bucket, error: bucketError } = parseBucket(req.body);
+    if (bucketError) {
+        res.status(400).json({ error: bucketError });
+        return;
+    }
+
     const containerToTrigger = storeContainer.getContainer(id);
+    if (!containerToTrigger) {
+        res.status(404).json({
+            error: 'Container not found',
+        });
+        return;
+    }
+
     const triggerId = triggerAgent
         ? `${triggerAgent}.${triggerType}.${triggerName}`
         : `${triggerType}.${triggerName}`;
-    if (containerToTrigger) {
-        const triggerToRun = getTriggers()[triggerId];
-        if (triggerToRun) {
-            try {
-                await triggerToRun.trigger(containerToTrigger);
-                log.info(
-                    `Trigger executed with success (type=${triggerType}, name=${triggerName}, container=${JSON.stringify(containerToTrigger)})`,
-                );
-                res.status(200).json({});
-            } catch (e) {
-                log.warn(
-                    `Error when running trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
-                );
-                res.status(500).json({
-                    error: `Error when running trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
-                });
-            }
-        } else {
-            res.status(404).json({
-                error: 'Trigger not found',
-            });
-        }
-    } else {
+    const triggerToRun = getTriggers()[triggerId];
+    if (!triggerToRun) {
         res.status(404).json({
-            error: 'Container not found',
+            error: 'Trigger not found',
+        });
+        return;
+    }
+
+    try {
+        if (bucket) {
+            const update = containerToTrigger.updates?.[bucket];
+            if (!update) {
+                res.status(400).json({
+                    error: `Container has no populated '${bucket}' update`,
+                });
+                return;
+            }
+            await triggerToRun.trigger(
+                Trigger.buildTriggerView(containerToTrigger, update),
+            );
+        } else {
+            await triggerToRun.trigger(containerToTrigger);
+        }
+        log.info(
+            `Trigger executed with success (type=${triggerType}, name=${triggerName}, container=${JSON.stringify(containerToTrigger)})`,
+        );
+        res.status(200).json({});
+    } catch (e) {
+        log.warn(
+            `Error when running trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
+        );
+        res.status(500).json({
+            error: `Error when running trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
         });
     }
 }
