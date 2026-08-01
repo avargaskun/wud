@@ -61,6 +61,11 @@ wud_containers{id="387ef114a1096a16e643058793ce86cee3e062586907bc5b9f8b1d62b1aad
 wud_containers{id="ee084217c982f67255e438020128312be1f41ccad5af5c572d8c913cd10e1f66",name="pyload",watcher="local",include_tags="^latest$",exclude_tags="undefined",image_id="sha256:dd54794e01d18d33f8efb3eef99774d915e307e1508987bb999fdb0f8d33019e",image_registry_url="https://registry-1.docker.io/v2",image_registry_name="hub",image_name="writl/pyload",image_tag_value="latest",image_tag_semver="false",image_digest_watch="false",image_digest_repo="sha256:55a0efec296fae88c5fa21dfbda3bfc51635ee1c824e41c4f866fc42b9f42a15",image_architecture="amd64",image_os="linux",image_variant="undefined",image_created="2021-01-10T18:07:48.691Z",result_tag="latest",update_available="false"} 1
 wud_containers{id="8baa7e6537b4a2c477bbc49ad1b0efa6bd1484a2c6ecdd7284f370df6f39eb75",name="traefik",watcher="local",include_tags="^\\d+\\.\\d+.\\d+$",exclude_tags="undefined",image_id="sha256:da4c4921aee8ad7a7f66870bb726a8fa4d18f9b0b927ab1ef572e06be5241d65",image_registry_url="https://registry-1.docker.io/v2",image_registry_name="hub",image_name="library/traefik",image_tag_value="2.4.5",image_tag_semver="true",image_digest_watch="false",image_digest_repo="sha256:062dff1b5c54845f34147e04a251a645f3a5318c42da7127bf25a6e0d3c6e4d5",image_architecture="amd64",image_os="linux",image_variant="undefined",image_created="2021-02-25T03:23:47.339Z",result_tag="2.4.8",update_available="true"} 1
 
+# HELP wud_postupdate_bounce_count Total count of post-update dependent bounce outcomes
+# TYPE wud_postupdate_bounce_count counter
+wud_postupdate_bounce_count{type="docker",name="local",status="bounced"} 2
+wud_postupdate_bounce_count{type="docker",name="local",status="skipped"} 1
+
 # HELP wud_registry_response The Registry response time (in second)
 # TYPE wud_registry_response summary
 wud_registry_response{quantile="0.01",type="hub",name="hub"} 0.628
@@ -104,6 +109,18 @@ wud_containers{id="8a787a...",name="homeassistant",watcher="local",image_tag_val
 ?> Labels are only emitted for update kinds that are actually **available**. An update kind that applies to the container but has nothing newer, and an update kind that is impossible for the container (e.g. `patch` for a container running `:8`, or `digest` without digest watching), both emit no label at all.
 
 !> **Cardinality:** these labels change whenever any available update changes, on a gauge that is already keyed by mutable values such as `result_tag`. Expect more time series churn than before. This is documented rather than mitigated; use `sum by(...)` in your queries to project only the labels you care about.
+
+#### `wud_postupdate_bounce_count`
+
+Counts the dependent containers bounced after an update by the `docker` / `dockercompose` triggers, i.e. the containers named by the updated container's [`wud.postupdate.restart`](/configuration/watchers/?id=restart-dependent-containers-after-an-update) label.
+
+| Label    | Description                                                                 |
+| -------- | ----------------------------------------------------------------------------- |
+| `type`   | The trigger type (`docker`, `dockercompose`)                                |
+| `name`   | The trigger name                                                            |
+| `status` | `bounced` (restarted or recreated), `skipped` (not applicable or deliberately not bounced — e.g. unresolved name, batch member, health-gate failure; see the `reason` in the trigger API response) or `failed`   |
+
+?> Bounces performed by an [Agent](/configuration/agents/) are counted on the **Controller**, from the outcomes the Agent reports back — Prometheus is not exposed in Agent mode.
 
 #### Standard process metrics
 ```bash

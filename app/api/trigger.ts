@@ -1,17 +1,16 @@
-// @ts-nocheck
-import express from 'express';
-import nocache from 'nocache';
+import { Request, Response, Router } from 'express';
 import * as component from './component';
 import * as registry from '../registry';
 import * as agent from '../agent';
 import logger from '../log';
+import type { TriggerRunResult } from '../triggers/providers/docker/types';
 
 const log = logger.child({ component: 'trigger' });
 
 /**
  * Run a specific trigger on a specific container provided in the payload.
  */
-export async function runTrigger(req, res) {
+export async function runTrigger(req: Request, res: Response): Promise<void> {
     const triggerType = req.params.type;
     const triggerName = req.params.name;
     const containerToTrigger = req.body;
@@ -53,11 +52,13 @@ export async function runTrigger(req, res) {
                 containerToTrigger,
             )})`,
         );
-        await triggerToRun.trigger(containerToTrigger);
+        const result = (await triggerToRun.trigger(containerToTrigger)) as
+            | TriggerRunResult
+            | undefined;
         log.info(
             `Trigger executed with success (type=${triggerType}, name=${triggerName}, container=${JSON.stringify(containerToTrigger)})`,
         );
-        res.status(200).json({});
+        res.status(200).json(result ?? {});
     } catch (e) {
         log.warn(
             `Error when running trigger ${triggerType}.${triggerName} (${e.message})`,
@@ -71,7 +72,10 @@ export async function runTrigger(req, res) {
 /**
  * Run a specifically targeted remote trigger.
  */
-async function runRemoteTrigger(req, res) {
+async function runRemoteTrigger(
+    req: Request<{ agent: string; type: string; name: string }>,
+    res: Response,
+): Promise<void> {
     const {
         agent: agentName,
         type: triggerType,
@@ -116,7 +120,7 @@ async function runRemoteTrigger(req, res) {
  * Init Router.
  * @returns {*}
  */
-export function init() {
+export function init(): Router {
     const router = component.init('trigger');
     router.post('/:type/:name', runTrigger);
     router.post('/:agent/:type/:name', runRemoteTrigger);

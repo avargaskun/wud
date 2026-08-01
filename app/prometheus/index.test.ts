@@ -24,6 +24,10 @@ jest.mock('./trigger', () => ({
     init: jest.fn(),
 }));
 
+jest.mock('./postupdate', () => ({
+    init: jest.fn(),
+}));
+
 jest.mock('./watcher', () => ({
     init: jest.fn(),
 }));
@@ -51,6 +55,7 @@ describe('Prometheus Module', () => {
         const { collectDefaultMetrics } = await import('prom-client');
         const container = await import('./container');
         const trigger = await import('./trigger');
+        const postupdate = await import('./postupdate');
         const watcher = await import('./watcher');
         const registry = await import('./registry');
 
@@ -60,6 +65,7 @@ describe('Prometheus Module', () => {
         expect(container.init).toHaveBeenCalled();
         expect(registry.init).toHaveBeenCalled();
         expect(trigger.init).toHaveBeenCalled();
+        expect(postupdate.init).toHaveBeenCalled();
         expect(watcher.init).toHaveBeenCalled();
     });
 
@@ -70,6 +76,7 @@ describe('Prometheus Module', () => {
         const { collectDefaultMetrics } = await import('prom-client');
         const container = await import('./container');
         const trigger = await import('./trigger');
+        const postupdate = await import('./postupdate');
         const watcher = await import('./watcher');
         const registry = await import('./registry');
 
@@ -79,6 +86,7 @@ describe('Prometheus Module', () => {
         expect(container.init).not.toHaveBeenCalled();
         expect(registry.init).not.toHaveBeenCalled();
         expect(trigger.init).not.toHaveBeenCalled();
+        expect(postupdate.init).not.toHaveBeenCalled();
         expect(watcher.init).not.toHaveBeenCalled();
     });
 

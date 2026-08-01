@@ -12,6 +12,7 @@ const configurationValid = {
     once: true,
     auto: true,
     autoremovetimeout: 10000,
+    postupdatetimeout: 300000,
     simpletitle:
         'New ${container.updateKind.kind} found for container ${container.name}',
     simplebody:
@@ -122,6 +123,16 @@ test('validateConfiguration should return validated configuration when valid', a
     const validatedConfiguration =
         docker.validateConfiguration(configurationValid);
     expect(validatedConfiguration).toStrictEqual(configurationValid);
+});
+
+test('validateConfiguration should default postupdatetimeout to 300000', async () => {
+    const { postupdatetimeout, ...withoutPostupdateTimeout } =
+        configurationValid;
+    expect(postupdatetimeout).toEqual(300000);
+    expect(
+        docker.validateConfiguration(withoutPostupdateTimeout)
+            .postupdatetimeout,
+    ).toEqual(300000);
 });
 
 test('validateConfiguration should throw error when invalid', async () => {
@@ -430,6 +441,7 @@ test('clone should remove hostname and exposed ports when network mode is contai
 const happyContainer = {
     watcher: 'test',
     id: '123456789',
+    name: 'container-name',
     Name: '/container-name',
     image: {
         name: 'test/test',
@@ -444,7 +456,9 @@ const happyContainer = {
 };
 
 test('trigger should not throw when all is ok', async () => {
-    await expect(docker.trigger(happyContainer)).resolves.toBeUndefined();
+    await expect(docker.trigger(happyContainer)).resolves.toEqual({
+        dependents: [],
+    });
 });
 
 test('pullContainer should return an update context on the happy path', async () => {
@@ -499,7 +513,9 @@ test('swapContainer should run stop, remove, create and start on the happy path'
     const wait = jest.fn().mockResolvedValue(undefined);
     const newStart = jest.fn().mockResolvedValue(undefined);
     const dockerApi = {
-        createContainer: jest.fn().mockResolvedValue({ start: newStart }),
+        createContainer: jest
+            .fn()
+            .mockResolvedValue({ id: 'new-container-id', start: newStart }),
     };
     const ctx = {
         dockerApi,
@@ -518,9 +534,14 @@ test('swapContainer should run stop, remove, create and start on the happy path'
         },
         state: { Running: true },
     };
-    await expect(
-        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
-    ).resolves.toBeUndefined();
+    const container = { name: 'container-name', id: '123456789' };
+    await expect(docker.swapContainer(container, ctx)).resolves.toEqual({
+        container,
+        success: true,
+        newContainerId: 'new-container-id',
+        startedAfterSwap: true,
+        oldContainerId: '123456789',
+    });
     expect(stop).toHaveBeenCalled();
     expect(remove).toHaveBeenCalled();
     expect(wait).not.toHaveBeenCalled();
@@ -555,7 +576,11 @@ test('swapContainer should wait for auto-removal when HostConfig.AutoRemove is t
     };
     await expect(
         docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+        success: true,
+        startedAfterSwap: true,
+        oldContainerId: '123456789',
+    });
     expect(stop).toHaveBeenCalled();
     expect(wait).toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
@@ -571,18 +596,27 @@ test('trigger should skip swap when dry-run mode is enabled', async () => {
     jest.restoreAllMocks();
 });
 
+const buildSwapMock = (container) => ({
+    container,
+    success: true,
+    newContainerId: `new-${container.id}`,
+    startedAfterSwap: true,
+    oldContainerId: container.id,
+});
+
 test('triggerBatch should pull every container before swapping any (lockstep)', async () => {
     const order = [];
     jest.spyOn(docker, 'pullContainer').mockImplementation(async () => {
         order.push('pull');
         return {};
     });
-    jest.spyOn(docker, 'swapContainer').mockImplementation(async () => {
+    jest.spyOn(docker, 'swapContainer').mockImplementation(async (c) => {
         order.push('swap');
+        return buildSwapMock(c);
     });
     await docker.triggerBatch([
-        { id: 'a', watcher: 'test' },
-        { id: 'b', watcher: 'test' },
+        { id: 'a', name: 'a', watcher: 'test' },
+        { id: 'b', name: 'b', watcher: 'test' },
     ]);
     expect(order).toEqual(['pull', 'pull', 'swap', 'swap']);
     jest.restoreAllMocks();
@@ -597,11 +631,11 @@ test('triggerBatch should not swap any container when a pull rejects', async () 
     });
     const swapSpy = jest
         .spyOn(docker, 'swapContainer')
-        .mockResolvedValue(undefined);
+        .mockImplementation(async (c) => buildSwapMock(c));
     await expect(
         docker.triggerBatch([
-            { id: 'good', watcher: 'test' },
-            { id: 'bad', watcher: 'test' },
+            { id: 'good', name: 'good', watcher: 'test' },
+            { id: 'bad', name: 'bad', watcher: 'test' },
         ]),
     ).rejects.toThrowError('pull failed');
     expect(swapSpy).not.toHaveBeenCalled();
@@ -613,13 +647,17 @@ test('triggerBatch should pull all but swap none under dry-run', async () => {
     const pullSpy = jest.spyOn(docker, 'pullContainer').mockResolvedValue({});
     const swapSpy = jest
         .spyOn(docker, 'swapContainer')
-        .mockResolvedValue(undefined);
-    await docker.triggerBatch([
-        { id: 'a', watcher: 'test' },
-        { id: 'b', watcher: 'test' },
-    ]);
+        .mockImplementation(async (c) => buildSwapMock(c));
+    const postUpdateSpy = jest.spyOn(docker, 'runPostUpdate');
+    await expect(
+        docker.triggerBatch([
+            { id: 'a', name: 'a', watcher: 'test' },
+            { id: 'b', name: 'b', watcher: 'test' },
+        ]),
+    ).resolves.toBeUndefined();
     expect(pullSpy).toHaveBeenCalledTimes(2);
     expect(swapSpy).not.toHaveBeenCalled();
+    expect(postUpdateSpy).not.toHaveBeenCalled();
     docker.configuration = configurationValid;
     jest.restoreAllMocks();
 });
@@ -630,13 +668,26 @@ test('triggerBatch should swap only the containers whose pull returned a context
     );
     const swapSpy = jest
         .spyOn(docker, 'swapContainer')
-        .mockResolvedValue(undefined);
-    await docker.triggerBatch([
-        { id: 'gone', watcher: 'test' },
-        { id: 'live', watcher: 'test' },
+        .mockImplementation(async (c) => buildSwapMock(c));
+    const result = await docker.triggerBatch([
+        { id: 'gone', name: 'gone', watcher: 'test' },
+        { id: 'live', name: 'live', watcher: 'test' },
     ]);
     expect(swapSpy).toHaveBeenCalledTimes(1);
-    expect(swapSpy.mock.calls[0][0]).toEqual({ id: 'live', watcher: 'test' });
+    expect(swapSpy.mock.calls[0][0]).toEqual({
+        id: 'live',
+        name: 'live',
+        watcher: 'test',
+    });
+    expect(result.members).toEqual([
+        {
+            id: 'gone',
+            name: 'gone',
+            status: 'failed',
+            error: 'Container no longer exists',
+        },
+        { id: 'live', name: 'live', status: 'updated' },
+    ]);
     jest.restoreAllMocks();
 });
 
@@ -664,7 +715,11 @@ test('swapContainer should skip stop and start when the container is not running
     };
     await expect(
         docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+        success: true,
+        startedAfterSwap: false,
+        oldContainerId: '123456789',
+    });
     expect(stop).not.toHaveBeenCalled();
     expect(remove).toHaveBeenCalled();
     expect(dockerApi.createContainer).toHaveBeenCalled();
@@ -706,7 +761,10 @@ test('swapContainer should remove the previous image when prune is enabled', asy
         image: { name: 'test/test', tag: { value: '1.2.3' } },
         updateKind: { kind: 'tag' },
     };
-    await expect(docker.swapContainer(container, ctx)).resolves.toBeUndefined();
+    await expect(docker.swapContainer(container, ctx)).resolves.toMatchObject({
+        success: true,
+        startedAfterSwap: true,
+    });
     expect(dockerApi.getImage).toHaveBeenCalledWith(
         'my-registry/test/test:1.2.3',
     );
@@ -797,7 +855,7 @@ test('trigger should not use fallback when multi-network create succeeds', async
                 remoteValue: '4.5.6',
             },
         }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ dependents: [] });
 
     watcherSpy.mockRestore();
 
@@ -885,7 +943,7 @@ test('trigger should fallback to primary then connect secondary networks', async
                 remoteValue: '4.5.6',
             },
         }),
-    ).resolves.toBeUndefined();
+    ).resolves.toEqual({ dependents: [] });
 
     watcherSpy.mockRestore();
 
@@ -982,4 +1040,835 @@ test('trigger should throw when fallback cannot connect a secondary network', as
     ).rejects.toThrow('connect failed');
 
     watcherSpy.mockRestore();
+});
+
+const buildLogger = () => {
+    const logger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+    };
+    logger.child = () => logger;
+    return logger;
+};
+
+const buildSwap = (overrides = {}) => ({
+    container: { name: 'main-host', id: 'store-id' },
+    success: true,
+    newContainerId: 'new-host-id',
+    startedAfterSwap: true,
+    oldContainerId: 'abcdef1234567890abcdef1234567890',
+    ...overrides,
+});
+
+test('waitForPostUpdateReady should not be ready when the container was not started', async () => {
+    const inspect = jest.fn();
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(
+            dockerApi,
+            buildSwap({ startedAfterSwap: false }),
+            1000,
+        ),
+    ).resolves.toEqual({
+        ready: false,
+        reason: 'container not started after update',
+    });
+    expect(inspect).not.toHaveBeenCalled();
+});
+
+test('waitForPostUpdateReady should poll until the container is healthy', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest
+        .fn()
+        .mockResolvedValueOnce({
+            State: { Running: true, Health: { Status: 'starting' } },
+        })
+        .mockResolvedValueOnce({
+            State: { Running: true, Health: { Status: 'starting' } },
+        })
+        .mockResolvedValueOnce({
+            State: { Running: true, Health: { Status: 'healthy' } },
+        });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: true });
+    expect(inspect).toHaveBeenCalledTimes(3);
+    expect(dockerApi.getContainer).toHaveBeenCalledWith('new-host-id');
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should be ready on running when there is no healthcheck', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest
+        .fn()
+        .mockResolvedValueOnce({ State: { Running: false } })
+        .mockResolvedValueOnce({ State: { Running: true } });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: true });
+    expect(inspect).toHaveBeenCalledTimes(2);
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should fail immediately when the container is unhealthy', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest.fn().mockResolvedValue({
+        State: { Running: true, Health: { Status: 'unhealthy' } },
+    });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: false, reason: 'unhealthy' });
+    expect(inspect).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should fail when the inspect call fails', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest.fn().mockRejectedValue(new Error('no such container'));
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: false, reason: 'no such container' });
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should fail on timeout', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest.fn().mockResolvedValue({
+        State: { Running: true, Health: { Status: 'starting' } },
+    });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    const result = await docker.waitForPostUpdateReady(
+        dockerApi,
+        buildSwap(),
+        5,
+    );
+    expect(result.ready).toEqual(false);
+    expect(result.reason).toContain('health gate timeout');
+    jest.restoreAllMocks();
+});
+
+test('getPostupdateRestartNames should parse, trim and drop empty names', () => {
+    expect(
+        docker.getPostupdateRestartNames({
+            labels: {
+                'wud.postupdate.restart': ' first , second,, third ',
+            },
+        }),
+    ).toEqual(['first', 'second', 'third']);
+});
+
+test('getPostupdateRestartNames should return an empty array when the label is absent', () => {
+    expect(docker.getPostupdateRestartNames({ labels: {} })).toEqual([]);
+    expect(docker.getPostupdateRestartNames({})).toEqual([]);
+});
+
+test('resolveDependent should match the exact container name', async () => {
+    const dockerApi = {
+        listContainers: jest.fn().mockResolvedValue([
+            { Id: 'id-other', Names: ['/qbittorrent-exporter'] },
+            { Id: 'id-dep', Names: ['/qbittorrent'] },
+        ]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', buildLogger()),
+    ).resolves.toEqual({ id: 'id-dep', name: 'qbittorrent' });
+    expect(dockerApi.listContainers).toHaveBeenCalledWith({ all: true });
+});
+
+test('resolveDependent should not match on substrings', async () => {
+    const dockerApi = {
+        listContainers: jest
+            .fn()
+            .mockResolvedValue([{ Id: 'id-dep', Names: ['/qbittorrent'] }]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbit', buildLogger()),
+    ).resolves.toBeUndefined();
+});
+
+test('resolveDependent should fall back to hash-prefixed names', async () => {
+    const dockerApi = {
+        listContainers: jest
+            .fn()
+            .mockResolvedValue([
+                { Id: 'id-dep', Names: ['/abcdef123456_qbittorrent'] },
+            ]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', buildLogger()),
+    ).resolves.toEqual({ id: 'id-dep', name: 'abcdef123456_qbittorrent' });
+});
+
+test('resolveDependent should prefer the exact match over the hash-prefixed one', async () => {
+    const dockerApi = {
+        listContainers: jest.fn().mockResolvedValue([
+            { Id: 'id-temp', Names: ['/abcdef123456_qbittorrent'] },
+            { Id: 'id-dep', Names: ['/qbittorrent'] },
+        ]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', buildLogger()),
+    ).resolves.toEqual({ id: 'id-dep', name: 'qbittorrent' });
+});
+
+test('resolveDependent should return undefined when the daemon call fails', async () => {
+    const logger = buildLogger();
+    const dockerApi = {
+        listContainers: jest.fn().mockRejectedValue(new Error('daemon down')),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', logger),
+    ).resolves.toBeUndefined();
+    expect(logger.warn).toHaveBeenCalled();
+});
+
+const buildDependentSpec = (overrides = {}) => ({
+    Name: '/dependent',
+    Id: 'dep-id',
+    Config: { Image: 'dep/image:1.0.0' },
+    HostConfig: { NetworkMode: 'bridge' },
+    NetworkSettings: { Networks: {} },
+    State: { Running: true },
+    ...overrides,
+});
+
+const buildDependentApi = (spec) => {
+    const restart = jest.fn().mockResolvedValue(undefined);
+    const stop = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const wait = jest.fn().mockResolvedValue(undefined);
+    const start = jest.fn().mockResolvedValue(undefined);
+    const createContainer = jest
+        .fn()
+        .mockResolvedValue({ id: 'dep-new-id', start });
+    const dockerApi = {
+        createContainer,
+        getContainer: jest.fn(() => ({
+            inspect: jest.fn().mockResolvedValue(spec),
+            restart,
+            stop,
+            remove,
+            wait,
+        })),
+    };
+    return { dockerApi, restart, stop, remove, wait, start, createContainer };
+};
+
+test('bounceDependent should restart a dependent that does not reference the host', async () => {
+    const { dockerApi, restart, createContainer } =
+        buildDependentApi(buildDependentSpec());
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'bounced',
+        method: 'restart',
+    });
+    expect(restart).toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should skip a stopped dependent that does not reference the host', async () => {
+    const { dockerApi, restart, stop, remove, createContainer } =
+        buildDependentApi(buildDependentSpec({ State: { Running: false } }));
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'skipped',
+        reason: 'not running',
+    });
+    expect(restart).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a dependent referencing the host by id', async () => {
+    const swap = buildSwap();
+    const { dockerApi, stop, remove, wait, start, createContainer } =
+        buildDependentApi(
+            buildDependentSpec({
+                HostConfig: {
+                    NetworkMode: `container:${swap.oldContainerId}`,
+                },
+            }),
+        );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'bounced',
+        method: 'recreate',
+    });
+    expect(stop).toHaveBeenCalled();
+    expect(remove).toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+    expect(createContainer.mock.calls[0][0].HostConfig.NetworkMode).toEqual(
+        'container:new-host-id',
+    );
+    expect(start).toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a dependent referencing the host by short id', async () => {
+    const swap = buildSwap();
+    const { dockerApi, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                NetworkMode: `container:${swap.oldContainerId.slice(0, 12)}`,
+            },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(createContainer).toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a dependent referencing the host by name', async () => {
+    const { dockerApi, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: { NetworkMode: 'container:main-host' },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(createContainer).toHaveBeenCalled();
+});
+
+test('bounceDependent should restart when a short non-hex reference prefixes the old id', async () => {
+    const { dockerApi, restart, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: { NetworkMode: 'container:ab' },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'restart' });
+    expect(restart).toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should wait for auto-removal instead of removing', async () => {
+    const swap = buildSwap();
+    const { dockerApi, remove, wait, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                AutoRemove: true,
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(wait).toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a stopped id-referencing dependent without starting it', async () => {
+    const swap = buildSwap();
+    const { dockerApi, stop, start, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            State: { Running: false },
+            HostConfig: {
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'bounced',
+        method: 'recreate',
+        reason: 'recreated but left stopped',
+    });
+    expect(stop).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should report a failure when the docker call throws', async () => {
+    const { dockerApi } = buildDependentApi(buildDependentSpec());
+    dockerApi.getContainer = jest.fn(() => ({
+        inspect: jest.fn().mockResolvedValue(buildDependentSpec()),
+        restart: jest.fn().mockRejectedValue(new Error('restart failed')),
+    }));
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'failed',
+        reason: 'restart failed',
+    });
+});
+
+const buildHostSwap = (name, label, overrides = {}) => ({
+    container: {
+        id: `${name}-store-id`,
+        name,
+        watcher: 'test',
+        labels: label ? { 'wud.postupdate.restart': label } : {},
+    },
+    success: true,
+    newContainerId: `new-${name}-id`,
+    startedAfterSwap: true,
+    oldContainerId: `old-${name}-id`,
+    ...overrides,
+});
+
+const buildPostUpdateEnv = () => {
+    const dockerApi = { listContainers: jest.fn().mockResolvedValue([]) };
+    const watcherSpy = jest
+        .spyOn(docker, 'getWatcher')
+        .mockReturnValue({ dockerApi });
+    const gateSpy = jest
+        .spyOn(docker, 'waitForPostUpdateReady')
+        .mockResolvedValue({ ready: true });
+    const resolveSpy = jest
+        .spyOn(docker, 'resolveDependent')
+        .mockImplementation(async (api, name) => ({ id: `${name}-id`, name }));
+    const bounceSpy = jest
+        .spyOn(docker, 'bounceDependent')
+        .mockImplementation(async (api, resolved, swap, hostName) => ({
+            name: resolved.name,
+            host: hostName,
+            status: 'bounced',
+            method: 'restart',
+        }));
+    const counterSpy = jest
+        .spyOn(docker, 'increasePostupdateBounceCounter')
+        .mockImplementation(() => undefined);
+    return {
+        dockerApi,
+        watcherSpy,
+        gateSpy,
+        resolveSpy,
+        bounceSpy,
+        counterSpy,
+    };
+};
+
+test('runPostUpdate should bounce the label dependents in label order', async () => {
+    const { bounceSpy, counterSpy } = buildPostUpdateEnv();
+    const swap = buildHostSwap('main', ' first , second,, third ');
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main'])),
+    ).resolves.toEqual([
+        { name: 'first', host: 'main', status: 'bounced', method: 'restart' },
+        {
+            name: 'second',
+            host: 'main',
+            status: 'bounced',
+            method: 'restart',
+        },
+        { name: 'third', host: 'main', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(3);
+    expect(counterSpy).toHaveBeenCalledTimes(3);
+    expect(counterSpy).toHaveBeenCalledWith('bounced');
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should skip a self-referencing dependent', async () => {
+    const { bounceSpy } = buildPostUpdateEnv();
+    const swap = buildHostSwap('main', 'main,other');
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main'])),
+    ).resolves.toEqual([
+        {
+            name: 'main',
+            host: 'main',
+            status: 'skipped',
+            reason: 'self-reference',
+        },
+        { name: 'other', host: 'main', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should skip a dependent that is also a batch member', async () => {
+    const { bounceSpy } = buildPostUpdateEnv();
+    const swap = buildHostSwap('main', 'sibling,other');
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main', 'sibling'])),
+    ).resolves.toEqual([
+        {
+            name: 'sibling',
+            host: 'main',
+            status: 'skipped',
+            reason: 'batch member, already updated',
+        },
+        { name: 'other', host: 'main', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should report a failed batch member dependent as update failed', async () => {
+    const { bounceSpy } = buildPostUpdateEnv();
+    const swapMain = buildHostSwap('main', 'sibling,other');
+    const swapSibling = buildHostSwap('sibling', '', { success: false });
+    await expect(
+        docker.runPostUpdate(
+            [swapMain, swapSibling],
+            new Set(['main', 'sibling']),
+        ),
+    ).resolves.toEqual([
+        {
+            name: 'sibling',
+            host: 'main',
+            status: 'skipped',
+            reason: 'batch member, update failed',
+        },
+        { name: 'other', host: 'main', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should bounce a shared dependent once (first host wins)', async () => {
+    const { bounceSpy } = buildPostUpdateEnv();
+    const swapA = buildHostSwap('hostA', 'shared');
+    const swapB = buildHostSwap('hostB', 'shared');
+    await expect(
+        docker.runPostUpdate([swapA, swapB], new Set(['hostA', 'hostB'])),
+    ).resolves.toEqual([
+        { name: 'shared', host: 'hostA', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should do nothing without any label', async () => {
+    const { gateSpy, resolveSpy, bounceSpy, counterSpy } = buildPostUpdateEnv();
+    const swap = buildHostSwap('main', undefined);
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main'])),
+    ).resolves.toEqual([]);
+    expect(gateSpy).not.toHaveBeenCalled();
+    expect(resolveSpy).not.toHaveBeenCalled();
+    expect(bounceSpy).not.toHaveBeenCalled();
+    expect(counterSpy).not.toHaveBeenCalled();
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should ignore the dependents of a failed swap', async () => {
+    const { bounceSpy } = buildPostUpdateEnv();
+    const failed = buildHostSwap('main', 'dep', {
+        success: false,
+        error: 'boom',
+    });
+    await expect(
+        docker.runPostUpdate([failed], new Set(['main'])),
+    ).resolves.toEqual([]);
+    expect(bounceSpy).not.toHaveBeenCalled();
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should skip every dependent of a host that fails the health gate', async () => {
+    const { gateSpy, bounceSpy, counterSpy } = buildPostUpdateEnv();
+    gateSpy.mockResolvedValue({ ready: false, reason: 'unhealthy' });
+    const swap = buildHostSwap('main', 'first,second');
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main'])),
+    ).resolves.toEqual([
+        {
+            name: 'first',
+            host: 'main',
+            status: 'skipped',
+            reason: 'health gate: unhealthy',
+        },
+        {
+            name: 'second',
+            host: 'main',
+            status: 'skipped',
+            reason: 'health gate: unhealthy',
+        },
+    ]);
+    expect(gateSpy).toHaveBeenCalledTimes(1);
+    expect(bounceSpy).not.toHaveBeenCalled();
+    expect(counterSpy).toHaveBeenCalledWith('skipped');
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should gate each host separately', async () => {
+    const { gateSpy, bounceSpy } = buildPostUpdateEnv();
+    gateSpy.mockImplementation(async (api, swap) =>
+        swap.container.name === 'hostA'
+            ? { ready: false, reason: 'unhealthy' }
+            : { ready: true },
+    );
+    const swapA = buildHostSwap('hostA', 'depA');
+    const swapB = buildHostSwap('hostB', 'depB');
+    await expect(
+        docker.runPostUpdate([swapA, swapB], new Set(['hostA', 'hostB'])),
+    ).resolves.toEqual([
+        {
+            name: 'depA',
+            host: 'hostA',
+            status: 'skipped',
+            reason: 'health gate: unhealthy',
+        },
+        { name: 'depB', host: 'hostB', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should report an unresolved dependent as skipped and keep going', async () => {
+    const { resolveSpy, bounceSpy } = buildPostUpdateEnv();
+    resolveSpy.mockImplementation(async (api, name) =>
+        name === 'ghost' ? undefined : { id: `${name}-id`, name },
+    );
+    const swap = buildHostSwap('main', 'ghost,real');
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main'])),
+    ).resolves.toEqual([
+        {
+            name: 'ghost',
+            host: 'main',
+            status: 'skipped',
+            reason: 'unresolved',
+        },
+        { name: 'real', host: 'main', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should report the dependent under its label name', async () => {
+    const { resolveSpy, bounceSpy } = buildPostUpdateEnv();
+    resolveSpy.mockResolvedValue({ id: 'dep-id', name: 'abcdef123456_dep' });
+    bounceSpy.mockResolvedValue({
+        name: 'abcdef123456_dep',
+        host: 'main',
+        status: 'bounced',
+        method: 'recreate',
+    });
+    const swap = buildHostSwap('main', 'dep');
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main'])),
+    ).resolves.toEqual([
+        { name: 'dep', host: 'main', status: 'bounced', method: 'recreate' },
+    ]);
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should keep processing after a failed bounce', async () => {
+    const { bounceSpy, counterSpy } = buildPostUpdateEnv();
+    bounceSpy.mockImplementation(async (api, resolved, swap, hostName) =>
+        resolved.name === 'first'
+            ? {
+                  name: resolved.name,
+                  host: hostName,
+                  status: 'failed',
+                  reason: 'restart failed',
+              }
+            : {
+                  name: resolved.name,
+                  host: hostName,
+                  status: 'bounced',
+                  method: 'restart',
+              },
+    );
+    const swap = buildHostSwap('main', 'first,second');
+    await expect(
+        docker.runPostUpdate([swap], new Set(['main'])),
+    ).resolves.toEqual([
+        {
+            name: 'first',
+            host: 'main',
+            status: 'failed',
+            reason: 'restart failed',
+        },
+        { name: 'second', host: 'main', status: 'bounced', method: 'restart' },
+    ]);
+    expect(counterSpy).toHaveBeenCalledWith('failed');
+    expect(counterSpy).toHaveBeenCalledWith('bounced');
+    jest.restoreAllMocks();
+});
+
+test('runPostUpdate should increment the Prometheus counter for every outcome', async () => {
+    const { dockerApi } = buildPostUpdateEnv();
+    jest.spyOn(docker, 'increasePostupdateBounceCounter').mockRestore();
+    const counter = { inc: jest.fn() };
+    jest.spyOn(
+        require('../../../prometheus/postupdate'),
+        'getPostupdateBounceCounter',
+    ).mockReturnValue(counter);
+    const swap = buildHostSwap('main', 'first');
+    await docker.runPostUpdate([swap], new Set(['main']));
+    expect(dockerApi).toBeDefined();
+    expect(counter.inc).toHaveBeenCalledWith({
+        type: docker.type,
+        name: docker.name,
+        status: 'bounced',
+    });
+    jest.restoreAllMocks();
+});
+
+test('trigger should run the post-update epilogue with the updated container', async () => {
+    const swapOutcome = {
+        container: happyContainer,
+        success: true,
+        newContainerId: 'new-container-id',
+        startedAfterSwap: true,
+        oldContainerId: '123456798',
+    };
+    jest.spyOn(docker, 'pullContainer').mockResolvedValue({});
+    jest.spyOn(docker, 'swapContainer').mockResolvedValue(swapOutcome);
+    const postUpdateSpy = jest
+        .spyOn(docker, 'runPostUpdate')
+        .mockResolvedValue([
+            {
+                name: 'dep',
+                host: 'container-name',
+                status: 'bounced',
+                method: 'restart',
+            },
+        ]);
+    await expect(docker.trigger(happyContainer)).resolves.toEqual({
+        dependents: [
+            {
+                name: 'dep',
+                host: 'container-name',
+                status: 'bounced',
+                method: 'restart',
+            },
+        ],
+    });
+    expect(postUpdateSpy).toHaveBeenCalledWith(
+        [swapOutcome],
+        new Set(['container-name']),
+    );
+    jest.restoreAllMocks();
+});
+
+test('trigger should reject and skip the epilogue when the swap fails', async () => {
+    jest.spyOn(docker, 'pullContainer').mockResolvedValue({});
+    jest.spyOn(docker, 'swapContainer').mockRejectedValue(
+        new Error('swap failed'),
+    );
+    const postUpdateSpy = jest.spyOn(docker, 'runPostUpdate');
+    await expect(docker.trigger(happyContainer)).rejects.toThrowError(
+        'swap failed',
+    );
+    expect(postUpdateSpy).not.toHaveBeenCalled();
+    jest.restoreAllMocks();
+});
+
+test('trigger should not run the epilogue under dry-run', async () => {
+    docker.configuration = { ...configurationValid, dryrun: true };
+    const postUpdateSpy = jest.spyOn(docker, 'runPostUpdate');
+    await expect(docker.trigger(happyContainer)).resolves.toBeUndefined();
+    expect(postUpdateSpy).not.toHaveBeenCalled();
+    docker.configuration = configurationValid;
+    jest.restoreAllMocks();
+});
+
+test('triggerBatch should report a failed member and still bounce the sibling dependents', async () => {
+    const good = { id: 'good', name: 'good', watcher: 'test' };
+    const bad = { id: 'bad', name: 'bad', watcher: 'test' };
+    jest.spyOn(docker, 'pullContainer').mockImplementation(async (c) => ({
+        currentContainerSpec: { Id: `spec-${c.id}` },
+    }));
+    jest.spyOn(docker, 'swapContainer').mockImplementation(async (c) => {
+        if (c.id === 'bad') {
+            throw new Error('swap failed');
+        }
+        return buildSwapMock(c);
+    });
+    const postUpdateSpy = jest
+        .spyOn(docker, 'runPostUpdate')
+        .mockResolvedValue([
+            { name: 'dep', host: 'good', status: 'bounced', method: 'restart' },
+        ]);
+    const result = await docker.triggerBatch([good, bad]);
+    expect(result.members).toEqual([
+        { id: 'good', name: 'good', status: 'updated' },
+        { id: 'bad', name: 'bad', status: 'failed', error: 'swap failed' },
+    ]);
+    expect(result.dependents).toEqual([
+        { name: 'dep', host: 'good', status: 'bounced', method: 'restart' },
+    ]);
+    const [swaps, memberNames] = postUpdateSpy.mock.calls[0];
+    expect(swaps.map((s) => s.success)).toEqual([true, false]);
+    expect(swaps[1]).toEqual({
+        container: bad,
+        success: false,
+        startedAfterSwap: false,
+        oldContainerId: 'spec-bad',
+        error: 'swap failed',
+    });
+    expect(memberNames).toEqual(new Set(['good', 'bad']));
+    jest.restoreAllMocks();
 });

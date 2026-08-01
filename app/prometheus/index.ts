@@ -5,6 +5,7 @@ import logger from '../log';
 const log = logger.child({ component: 'prometheus' });
 import * as configuration from '../configuration';
 import * as container from './container';
+import * as postupdate from './postupdate';
 import * as trigger from './trigger';
 import * as watcher from './watcher';
 import * as registry from './registry';
@@ -23,6 +24,7 @@ export function init() {
     container.init();
     registry.init();
     trigger.init();
+    postupdate.init();
     watcher.init();
 }
 

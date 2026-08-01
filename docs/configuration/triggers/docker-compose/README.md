@@ -12,6 +12,15 @@ The trigger will:
 - Create the new container
 - Start the new container (if the previous one was running)
 - Remove the previous image (optionally)
+- Bounce the dependent containers declared with the `wud.postupdate.restart` label (optionally)
+
+### Post-update dependent restart
+
+This trigger inherits the post-update epilogue of the [docker trigger](/configuration/triggers/docker/?id=post-update-dependent-restart): health gate, restart-vs-recreate decision, stopped-dependent handling and single-hop resolution are identical. The epilogue runs once, after every container of the batch has been swapped.
+
+!> The docker-compose file is **not** rewritten for recreated dependents. A dependent recreated by WUD is cloned from its live configuration, so its on-disk `network_mode` definition may differ from the running one; Compose's own `service:<x>` form re-resolves by name on the next `docker compose up`.
+
+!> The health gate blocks the trigger run: a manual trigger HTTP call also waits through it (up to `POSTUPDATETIMEOUT` per gated container, sequentially within a batch). Reverse proxies with a short read timeout may cut the response while WUD keeps going server-side.
 
 ### Variables
 
@@ -21,6 +30,7 @@ The trigger will:
 | `WUD_TRIGGER_DOCKERCOMPOSE_{trigger_name}_BACKUP` | :white_circle: | Backup the docker-compose.yml file as `.back` before updating? | `true`, `false`  | `false`                                                                  |
 | `WUD_TRIGGER_DOCKERCOMPOSE_{trigger_name}_PRUNE`  | :white_circle: | If the old image must be pruned after upgrade                  | `true`, `false`  | `false`                                                                  |
 | `WUD_TRIGGER_DOCKERCOMPOSE_{trigger_name}_DRYRUN` | :white_circle: | When enabled, only pull the new image ahead of time            | `true`, `false`  | `false`                                                                  |
+| `WUD_TRIGGER_DOCKERCOMPOSE_{trigger_name}_POSTUPDATETIMEOUT` | :white_circle: | Health gate timeout (in ms) before bouncing dependent containers | Integer >= 0 | `300000`                                                          |
 
 ?> This trigger also supports the [common configuration variables](configuration/triggers/?id=common-trigger-configuration). but only supports the `batch` mode.
 

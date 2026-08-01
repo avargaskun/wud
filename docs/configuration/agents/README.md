@@ -75,3 +75,4 @@ services:
 - **Triggers**: 
     - `docker` and `dockercompose` triggers are executed **on the Agent** (allowing update of remote containers).
     - Notification triggers (e.g. `smtp`, `discord`) are executed **on the Controller**.
+- **Post-update dependent restart**: containers named by the [`wud.postupdate.restart`](/configuration/watchers/?id=restart-dependent-containers-after-an-update) label are resolved and bounced **on the Agent that owns the watcher**, against its local Docker socket. They therefore do not need to be watched by WUD, but they must live on that Agent's Docker host. The per-dependent outcomes are reported back to the Controller in the trigger response, which logs them and increments the [`wud_postupdate_bounce_count`](/monitoring/?id=wud_postupdate_bounce_count) metric on its side (Prometheus is not exposed in Agent mode).

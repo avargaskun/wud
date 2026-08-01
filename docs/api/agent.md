@@ -108,9 +108,40 @@ Sent when a container is removed (e.g. stopped and pruned).
 Executes a specific trigger on the Agent (e.g., to update a container).
 
 ```bash
+# Single container
 curl -X POST \
   -H "X-Wud-Agent-Secret: <SECRET>" \
   -H "Content-Type: application/json" \
   -d '{ ...container_json... }' \
   http://agent:3000/api/triggers/:type/:name
+
+# Batch (multiple containers, updated in lockstep)
+curl -X POST \
+  -H "X-Wud-Agent-Secret: <SECRET>" \
+  -H "Content-Type: application/json" \
+  -d '[ { ...container_json... }, { ...container_json... } ]' \
+  http://agent:3000/api/triggers/:type/:name/batch
 ```
+
+The batch endpoint takes an **array** of container views as its body (a non-array body is rejected with `400`); an unknown trigger returns `404`.
+
+> **Note**: The bodies are container **views**, not raw containers: the Controller resolves the [`bucket`](/api/container/?id=run-a-trigger-on-the-container) selection before forwarding, so each view already carries the update the trigger must apply. The Agent runs them as-is and performs no bucket selection of its own.
+
+### Response
+
+Both endpoints respond `200` with the trigger run result whenever the local trigger resolved, and `500 { "error": ... }` when it threw.
+
+```json
+{
+  "members": [
+    { "id": "<id>", "name": "immich", "status": "updated" }
+  ],
+  "dependents": [
+    { "name": "qbittorrent", "host": "gluetun", "status": "bounced", "method": "recreate" }
+  ]
+}
+```
+
+`members` is only present for batch runs, and `dependents` only when a container carries the [`wud.postupdate.restart`](/configuration/watchers/?id=restart-dependent-containers-after-an-update) label; the body is `{}` when the trigger reports neither. See the [Container API](/api/container/?id=response) for the field semantics.
+
+> **Note**: A batch where some members failed still responds `200` here — the partial-failure status policy (`500` with the same body) is applied by the Controller, not the Agent.

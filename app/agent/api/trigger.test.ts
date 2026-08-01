@@ -94,7 +94,7 @@ describe('Agent API Trigger', () => {
 
     test('runTriggerBatch should execute trigger for each container', async () => {
         const mockTrigger = {
-            triggerBatch: jest.fn().mockResolvedValue(true),
+            triggerBatch: jest.fn().mockResolvedValue(undefined),
         };
         // @ts-ignore
         registry.getState.mockReturnValue({
@@ -118,6 +118,61 @@ describe('Agent API Trigger', () => {
         ]);
         expect(res.status).toHaveBeenCalledWith(200);
         expect(res.json).toHaveBeenCalledWith({});
+    });
+
+    test('runTriggerBatch should return the trigger run result in the body', async () => {
+        const result = {
+            members: [{ id: '1', name: 'c1', status: 'updated' }],
+            dependents: [
+                {
+                    name: 'sidecar',
+                    host: 'c1',
+                    status: 'skipped',
+                    reason: 'unresolved',
+                },
+            ],
+        };
+        const mockTrigger = {
+            triggerBatch: jest.fn().mockResolvedValue(result),
+        };
+        registry.getState.mockReturnValue({
+            trigger: { 'docker.restart': mockTrigger },
+        });
+
+        const req = {
+            params: { type: 'docker', name: 'restart' },
+            body: [{ id: '1' }],
+        };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await runTriggerBatch(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.json).toHaveBeenCalledWith(result);
+    });
+
+    test('runTriggerBatch should still return 200 when a member failed (policy is controller-side)', async () => {
+        const result = {
+            members: [{ id: '1', name: 'c1', status: 'failed', error: 'boom' }],
+            dependents: [],
+        };
+        const mockTrigger = {
+            triggerBatch: jest.fn().mockResolvedValue(result),
+        };
+        registry.getState.mockReturnValue({
+            trigger: { 'docker.restart': mockTrigger },
+        });
+
+        const req = {
+            params: { type: 'docker', name: 'restart' },
+            body: [{ id: '1' }],
+        };
+        const res = { status: jest.fn().mockReturnThis(), json: jest.fn() };
+
+        await runTriggerBatch(req, res);
+
+        expect(res.status).toHaveBeenCalledWith(200);
+        expect(res.json).toHaveBeenCalledWith(result);
     });
 
     test('runTriggerBatch should return 500 if execution fails', async () => {

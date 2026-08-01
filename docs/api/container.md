@@ -290,6 +290,44 @@ the highest update. The request is rejected with a `400` if
   [three-state semantics](#updates) of the `updates` map, both an **absent** key and a
   **`null`** key mean "not populated" for this API.
 
+### Response
+
+On success the response is `200`. The body is `{}` for triggers that report nothing (all
+notification triggers), and carries the outcome of the run for the `docker` and
+`dockercompose` update triggers:
+
+```json
+{
+  "dependents": [
+    { "name": "qbittorrent", "host": "gluetun", "status": "bounced", "method": "recreate" },
+    { "name": "qbittorrent-exporter", "host": "gluetun", "status": "skipped", "reason": "unresolved" }
+  ]
+}
+```
+
+`dependents` reports one entry per container named by the updated container's
+[`wud.postupdate.restart`](/configuration/watchers/?id=restart-dependent-containers-after-an-update)
+label. It is absent when no such label is set.
+
+| Field    | Description                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------------------------------ |
+| `name`   | The dependent container name, as written in the label                                                             |
+| `host`   | The name of the updated container whose label named it                                                            |
+| `status` | `bounced`, `skipped` or `failed`                                                                                  |
+| `method` | `restart` or `recreate` — set when `status` is `bounced`                                                          |
+| `reason` | Why it was skipped or failed (e.g. `unresolved`, `not running`, `self-reference`) — also set for a recreate that deliberately left the dependent stopped |
+
+?> Dependents that were skipped or failed do **not** change the status code: the update
+itself succeeded, so the response stays `200`. A failed update still returns `500`.
+
+?> A `dockercompose` single trigger delegates to its batch implementation, so its `200`
+body also carries a `members` array with a single entry (see
+[below](#batch-trigger-on-multiple-containers)).
+
+!> With `wud.postupdate.restart` set, the call also blocks through the post-update health
+gate (up to the trigger's `POSTUPDATETIMEOUT`, 5 minutes by default). Reverse proxies with a
+short read timeout may cut the response while WUD keeps going server-side.
+
 ## Batch trigger on multiple containers
 
 This operation runs a single trigger against **multiple** containers as one lockstep
@@ -337,8 +375,53 @@ The batch is validated strictly and is
   container that does not belong to a managed compose file — the response lists the
   offending `containers` (`400`).
 
-On success the response is `200` with an empty body. If a pull fails mid-batch, no
-container is swapped and the response is `500` (the whole group is left untouched).
+If a pull fails mid-batch, no container is swapped and the response is `500` (the whole
+group is left untouched).
+
+### Batch response
+
+Once every image has been pulled, each member is swapped and the response reports the
+outcome per member and per dependent:
+
+```json
+{
+  "members": [
+    { "id": "<id1>", "name": "immich", "status": "updated" },
+    { "id": "<id2>", "name": "immich-machine-learning", "status": "failed", "error": "No such image" }
+  ],
+  "dependents": [
+    { "name": "qbittorrent", "host": "gluetun", "status": "bounced", "method": "restart" }
+  ]
+}
+```
+
+| Field    | Description                                                              |
+| -------- | -------------------------------------------------------------------------- |
+| `id`     | The container id **before** the update                                   |
+| `name`   | The container name                                                       |
+| `status` | `updated` or `failed`                                                    |
+| `error`  | The failure message — set when `status` is `failed`                      |
+
+`dependents` has the same shape as on the [single trigger endpoint](#response) and covers
+every member's `wud.postupdate.restart` label. A dependent that is itself a member of the
+batch is reported `skipped`, with reason `batch member, already updated` when its own
+update succeeded or `batch member, update failed` when it did not.
+
+The status code depends on the members:
+
+- every member `updated` → `200` with the body above;
+- at least one member `failed` → `500`, with the same `members` / `dependents` fields plus
+  an `error` field set to `One or more batch members failed to update`. The members that
+  did succeed **are** updated — the all-or-nothing guarantee covers the pull phase, not the
+  swap phase — and the dependents of successfully updated members are still bounced.
+
+?> Skipped or failed dependents alone do not make the batch fail; they are reported in the
+`200` body.
+
+!> When any member carries `wud.postupdate.restart`, the call also blocks through the
+post-update health gate (up to the trigger's `POSTUPDATETIMEOUT` per gated member,
+sequentially). Reverse proxies with a short read timeout may cut the response while WUD
+keeps going server-side.
 
 ## Delete a Container
 

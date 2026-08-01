@@ -321,6 +321,45 @@ describe('AgentClient', () => {
         );
     });
 
+    test('runRemoteTrigger should return the response body', async () => {
+        const result = {
+            dependents: [{ name: 'sidecar', host: 'c1', status: 'bounced' }],
+        };
+        axios.post.mockResolvedValue({ data: result });
+
+        await expect(
+            client.runRemoteTrigger({ id: '1' }, 'docker', 'restart'),
+        ).resolves.toEqual(result);
+    });
+
+    test('runRemoteTriggerBatch should return the response body', async () => {
+        const result = {
+            members: [{ id: '1', name: 'c1', status: 'updated' }],
+            dependents: [],
+        };
+        axios.post.mockResolvedValue({ data: result });
+
+        await expect(
+            client.runRemoteTriggerBatch([{ id: '1' }], 'docker', 'restart'),
+        ).resolves.toEqual(result);
+    });
+
+    test('runRemoteTrigger should tolerate an empty body from an old agent', async () => {
+        axios.post.mockResolvedValue({ data: {} });
+
+        await expect(
+            client.runRemoteTrigger({ id: '1' }, 'docker', 'restart'),
+        ).resolves.toEqual({});
+    });
+
+    test('runRemoteTriggerBatch should tolerate an empty body from an old agent', async () => {
+        axios.post.mockResolvedValue({ data: {} });
+
+        await expect(
+            client.runRemoteTriggerBatch([{ id: '1' }], 'docker', 'restart'),
+        ).resolves.toEqual({});
+    });
+
     test('deleteContainer should delete to /api/containers/...', async () => {
         // @ts-ignore
         axios.delete.mockResolvedValue({});

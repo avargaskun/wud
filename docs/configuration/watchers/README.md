@@ -205,6 +205,7 @@ To fine-tune the behaviour of WUD _per container_, you can add labels on them.
 | `wud.display.icon`    | :white_circle: | Custom display icon for the container              | Valid [Material Design Icon](https://materialdesignicons.com/), [Fontawesome Icon](https://fontawesome.com/) or [Simple icon](https://simpleicons.org/) (see details below) | `mdi:docker`                                                                          |
 | `wud.display.name`    | :white_circle: | Custom display name for the container              | Valid String                                                                                                                                                                | Container name                                                                        |
 | `wud.link.template`   | :white_circle: | Browsable link associated to the container version | JS string template with vars `${container}`, `${original}`, `${transformed}`, `${major}`, `${minor}`, `${patch}`, `${prerelease}`                                           |                                                                                       |
+| `wud.postupdate.restart` | :white_circle: | Comma separated list of container names to bounce after this container is updated | `$container_name_1,$container_name_2`                                                                                                    |                                                                                       |
 | `wud.tag.exclude`     | :white_circle: | Regex to exclude specific tags                     | Valid JavaScript Regex                                                                                                                                                      |                                                                                       |
 | `wud.tag.include`     | :white_circle: | Regex to include specific tags only                | Valid JavaScript Regex                                                                                                                                                      |                                                                                       |
 | `wud.tag.transform`   | :white_circle: | Transform function to apply to the tag             | `$valid_regex => $valid_string_with_placeholders` (see below)                                                                                                               |                                                                                       |
@@ -504,6 +505,50 @@ docker run -d --name mariadb --label 'wud.display.name=Maria DB' --label 'wud.di
 ```
 
 <!-- tabs:end -->
+
+### Restart dependent containers after an update
+
+Containers sharing the network namespace of another container (`network_mode: container:<x>` in `docker run`, `network_mode: service:<x>` in Compose) lose their network when that container is updated: the update recreates it, and the sidecars stay attached to a namespace that no longer exists. Their healthchecks often keep passing, so the breakage is silent.
+
+Add the `wud.postupdate.restart` label on the **network host** container to let WUD bounce its dependents once the update succeeded.
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  gluetun:
+    image: qmcgaw/gluetun:3.38.0
+    labels:
+      - wud.watch=true
+      - wud.postupdate.restart=qbittorrent,qbittorrent-exporter
+
+  qbittorrent:
+    image: linuxserver/qbittorrent:4.6.5
+    network_mode: service:gluetun
+
+  qbittorrent-exporter:
+    image: caseyscarborough/qbittorrent-exporter:1.4.0
+    network_mode: service:gluetun
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name gluetun \
+  --label 'wud.watch=true' \
+  --label 'wud.postupdate.restart=qbittorrent,qbittorrent-exporter' \
+  qmcgaw/gluetun:3.38.0
+
+docker run -d --name qbittorrent --network container:gluetun linuxserver/qbittorrent:4.6.5
+```
+
+<!-- tabs:end -->
+
+?> The dependents are named by **container name** and are resolved on the same Docker host as the labeled container. They do **not** need to be watched by WUD.
+
+?> The label is honoured by the [docker](/configuration/triggers/docker/) and [docker-compose](/configuration/triggers/docker-compose/) triggers only; see their documentation for the exact restart / recreate behaviour and the associated timeout.
 
 ### Assign different triggers to containers
 
