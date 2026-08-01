@@ -21,6 +21,11 @@
 - :wrench: [TELEGRAM] - Replace deprecated client by direct HTTP API use
 - :star: Add batch trigger API endpoint (`POST /api/containers/batch/triggers/:triggerType/:triggerName`) to update multiple containers in lockstep
 - :warning: `docker`/`dockercompose` batch-mode updates are now all-or-nothing: every image is pulled before any container is swapped (compose files are rewritten after a successful pull, not before)
+- :star: Add an optional `bucket` field (`major` | `minor` | `patch` | `digest`) to the container trigger endpoint (`POST /api/containers/:id/triggers/:triggerType/:triggerName`) to run the trigger against a specific pending update instead of the highest one
+- :star: Add the same optional `bucket` field to the batch trigger endpoint, applied to every member of the batch
+- :star: Add `wud.postupdate.restart` label: after the `docker`/`dockercompose` trigger updates a container, the containers it names are restarted (or recreated with their `network_mode` re-pointed when they share the updated container's network namespace), gated on the new container being healthy. Outcomes are logged, exposed as `wud_postupdate_bounce_count` and returned in the trigger API response. New `WUD_TRIGGER_{DOCKER|DOCKERCOMPOSE}_{trigger_name}_POSTUPDATETIMEOUT` variable (ms, default `300000`)
+- :warning: With `wud.postupdate.restart` set, a successful trigger run may now stop, start, restart or **recreate other containers** — including containers WUD does not watch. The label is opt-in, so nothing changes until you add it. Note that a trigger call also blocks through the health gate (up to `POSTUPDATETIMEOUT`), which may exceed a reverse proxy read timeout
+- :warning: Trigger API responses are no longer empty: the single endpoint returns `dependents`, the batch endpoint returns `members` + `dependents`, and a batch where some members failed now returns `500` with that structured body instead of a bare error (the members that succeeded are still updated). Old Agents return an empty body and degrade to the previous behaviour
 
 ## 8.3.0
 - :star: Add opt-in mode for trigger association
