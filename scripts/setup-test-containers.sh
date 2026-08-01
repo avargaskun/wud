@@ -146,11 +146,12 @@ else
         --label 'wud.tag.include=^6\..*$' \
         --label 'wud.postupdate.restart=zz_postupdate_sidecar,zz_postupdate_ghost' \
         ghcr.io/stefanprodan/podinfo:5.0.0
+    # Sidecar shares main's netns: override ports or both podinfos collide on 9898/9999
     $DOCKER_CMD run -d --name zz_postupdate_sidecar \
         --network container:zz_postupdate_main \
         --label 'wud.watch=true' \
         --label 'wud.tag.include=^5\.0\.0$' \
-        ghcr.io/stefanprodan/podinfo:5.0.0
+        ghcr.io/stefanprodan/podinfo:5.0.0 ./podinfo --port=9899 --grpc-port=9998
     $DOCKER_CMD run -d --name zz_postupdate_batch_a \
         --label 'wud.watch=true' \
         --label 'wud.tag.include=^6\.0\.0$' \
