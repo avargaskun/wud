@@ -6,7 +6,12 @@ import { Container, ContainerImage, fullName } from '../../../model/container';
 import type DockerWatcher from '../../../watchers/providers/docker/Docker';
 import type Registry from '../../../registries/Registry';
 import Logger from 'bunyan';
-import type { ContainerUpdateContext, SwapOutcome } from './types';
+import { wudPostupdateRestart } from '../../../watchers/providers/docker/label';
+import type {
+    ContainerUpdateContext,
+    DependentOutcome,
+    SwapOutcome,
+} from './types';
 
 /**
  * Replace a Docker container with an updated one.
@@ -734,6 +739,227 @@ class Docker extends Trigger {
             startedAfterSwap: state.Running,
             oldContainerId: currentContainerSpec.Id,
         };
+    }
+
+    /**
+     * Interval between two health-gate polls. Overridable in tests.
+     */
+    protected getPostupdatePollIntervalMs(): number {
+        return 2000;
+    }
+
+    /**
+     * Wait for an updated container to be ready before bouncing its dependents.
+     * @param dockerApi the docker api of the watcher owning the container
+     * @param swap the outcome of the swap phase
+     * @param timeoutMs the maximum time to wait
+     */
+    protected async waitForPostUpdateReady(
+        dockerApi: Dockerode,
+        swap: SwapOutcome,
+        timeoutMs: number,
+    ): Promise<{ ready: boolean; reason?: string }> {
+        if (!swap.startedAfterSwap) {
+            return {
+                ready: false,
+                reason: 'container not started after update',
+            };
+        }
+        const deadline = Date.now() + timeoutMs;
+        for (;;) {
+            try {
+                const spec = await dockerApi
+                    .getContainer(swap.newContainerId as string)
+                    .inspect();
+                const health = spec?.State?.Health;
+                if (health) {
+                    if (health.Status === 'healthy') {
+                        return { ready: true };
+                    }
+                    if (health.Status === 'unhealthy') {
+                        return { ready: false, reason: 'unhealthy' };
+                    }
+                } else if (spec?.State?.Running === true) {
+                    return { ready: true };
+                }
+            } catch (e: any) {
+                return { ready: false, reason: e.message };
+            }
+            if (Date.now() >= deadline) {
+                return {
+                    ready: false,
+                    reason: `health gate timeout after ${timeoutMs}ms`,
+                };
+            }
+            await new Promise((resolve) =>
+                setTimeout(resolve, this.getPostupdatePollIntervalMs()),
+            );
+        }
+    }
+
+    /**
+     * Get the dependent container names declared by the wud.postupdate.restart label.
+     * @param container the updated container
+     */
+    protected getPostupdateRestartNames(container: Container): string[] {
+        const label = container.labels?.[wudPostupdateRestart];
+        if (!label) {
+            return [];
+        }
+        return label
+            .split(/\s*,\s*/)
+            .map((name: string) => name.trim())
+            .filter((name: string) => name.length > 0);
+    }
+
+    /**
+     * Find a dependent container by name on the watcher docker daemon.
+     * @param dockerApi the docker api of the watcher owning the updated container
+     * @param name the dependent name as declared on the label
+     * @param logContainer the child logger of the updated container
+     */
+    protected async resolveDependent(
+        dockerApi: Dockerode,
+        name: string,
+        logContainer: Logger,
+    ): Promise<{ id: string; name: string } | undefined> {
+        let containers: Dockerode.ContainerInfo[];
+        try {
+            containers = await dockerApi.listContainers({ all: true });
+        } catch (e: any) {
+            logContainer.warn(
+                `Error when listing containers to resolve dependent ${name} (${e.message})`,
+            );
+            return undefined;
+        }
+        const candidates = (containers ?? []).map((containerInfo) => ({
+            id: containerInfo.Id,
+            name: (containerInfo.Names?.[0] ?? '').replace(/\//, ''),
+        }));
+        const exactMatch = candidates.find(
+            (candidate) => candidate.name === name,
+        );
+        if (exactMatch) {
+            return exactMatch;
+        }
+        // Compose recreates containers under a <hash>_<name> temporary name
+        const prefixedMatch = candidates.find(
+            (candidate) =>
+                candidate.name.replace(/^[a-f0-9]{8,12}_/i, '') === name,
+        );
+        return prefixedMatch;
+    }
+
+    /**
+     * Restart (or recreate, when it references the updated container namespace)
+     * a dependent container.
+     * @param dockerApi the docker api of the watcher owning the updated container
+     * @param resolved the resolved dependent
+     * @param swap the outcome of the swap phase of the updated container
+     * @param hostName the name of the updated container
+     * @param logContainer the child logger of the updated container
+     */
+    protected async bounceDependent(
+        dockerApi: Dockerode,
+        resolved: { id: string; name: string },
+        swap: SwapOutcome,
+        hostName: string,
+        logContainer: Logger,
+    ): Promise<DependentOutcome> {
+        const outcome = { name: resolved.name, host: hostName };
+        try {
+            const dependent = dockerApi.getContainer(resolved.id);
+            const depSpec = await dependent.inspect();
+            const ref = depSpec.HostConfig?.NetworkMode;
+            const refTarget = ref?.startsWith('container:')
+                ? ref.slice('container:'.length)
+                : undefined;
+            const referencesHost =
+                refTarget !== undefined &&
+                (refTarget === swap.oldContainerId ||
+                    // Hex guard: a short container NAME prefixing the old id must not recreate
+                    (/^[a-f0-9]{8,64}$/i.test(refTarget) &&
+                        swap.oldContainerId.startsWith(refTarget)) ||
+                    refTarget === hostName);
+            const running = depSpec.State?.Running === true;
+
+            if (!referencesHost) {
+                if (!running) {
+                    return {
+                        ...outcome,
+                        status: 'skipped',
+                        reason: 'not running',
+                    };
+                }
+                logContainer.info(
+                    `Restart dependent container ${resolved.name} with id ${resolved.id}`,
+                );
+                await dependent.restart();
+                return { ...outcome, status: 'bounced', method: 'restart' };
+            }
+
+            const specToCreate = this.cloneContainer(
+                depSpec,
+                depSpec.Config.Image,
+            );
+            specToCreate.HostConfig = {
+                ...(specToCreate.HostConfig ?? {}),
+                NetworkMode: `container:${swap.newContainerId}`,
+            };
+
+            if (running) {
+                await this.stopContainer(
+                    dependent,
+                    resolved.name,
+                    resolved.id,
+                    logContainer,
+                );
+            }
+            if (depSpec.HostConfig?.AutoRemove !== true) {
+                await this.removeContainer(
+                    dependent,
+                    resolved.name,
+                    resolved.id,
+                    logContainer,
+                );
+            } else {
+                await this.waitContainerRemoved(
+                    dependent,
+                    resolved.name,
+                    resolved.id,
+                    logContainer,
+                );
+            }
+
+            const newDependent =
+                await this.createContainerWithMultiNetworkFallback(
+                    dockerApi,
+                    specToCreate,
+                    depSpec,
+                    resolved.name,
+                    logContainer,
+                );
+            if (running) {
+                await this.startContainer(
+                    newDependent,
+                    resolved.name,
+                    logContainer,
+                );
+            }
+            logContainer.warn(
+                `Dependent container ${resolved.name} was recreated with id ${newDependent.id} to re-attach to ${hostName}`,
+            );
+            return running
+                ? { ...outcome, status: 'bounced', method: 'recreate' }
+                : {
+                      ...outcome,
+                      status: 'bounced',
+                      method: 'recreate',
+                      reason: 'recreated but left stopped',
+                  };
+        } catch (e: any) {
+            return { ...outcome, status: 'failed', reason: e.message };
+        }
     }
 
     /**

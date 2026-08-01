@@ -1012,3 +1012,431 @@ test('trigger should throw when fallback cannot connect a secondary network', as
 
     watcherSpy.mockRestore();
 });
+
+const buildLogger = () => {
+    const logger = {
+        info: jest.fn(),
+        warn: jest.fn(),
+        debug: jest.fn(),
+    };
+    logger.child = () => logger;
+    return logger;
+};
+
+const buildSwap = (overrides = {}) => ({
+    container: { name: 'main-host', id: 'store-id' },
+    success: true,
+    newContainerId: 'new-host-id',
+    startedAfterSwap: true,
+    oldContainerId: 'abcdef1234567890abcdef1234567890',
+    ...overrides,
+});
+
+test('waitForPostUpdateReady should not be ready when the container was not started', async () => {
+    const inspect = jest.fn();
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(
+            dockerApi,
+            buildSwap({ startedAfterSwap: false }),
+            1000,
+        ),
+    ).resolves.toEqual({
+        ready: false,
+        reason: 'container not started after update',
+    });
+    expect(inspect).not.toHaveBeenCalled();
+});
+
+test('waitForPostUpdateReady should poll until the container is healthy', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest
+        .fn()
+        .mockResolvedValueOnce({
+            State: { Running: true, Health: { Status: 'starting' } },
+        })
+        .mockResolvedValueOnce({
+            State: { Running: true, Health: { Status: 'starting' } },
+        })
+        .mockResolvedValueOnce({
+            State: { Running: true, Health: { Status: 'healthy' } },
+        });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: true });
+    expect(inspect).toHaveBeenCalledTimes(3);
+    expect(dockerApi.getContainer).toHaveBeenCalledWith('new-host-id');
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should be ready on running when there is no healthcheck', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest
+        .fn()
+        .mockResolvedValueOnce({ State: { Running: false } })
+        .mockResolvedValueOnce({ State: { Running: true } });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: true });
+    expect(inspect).toHaveBeenCalledTimes(2);
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should fail immediately when the container is unhealthy', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest.fn().mockResolvedValue({
+        State: { Running: true, Health: { Status: 'unhealthy' } },
+    });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: false, reason: 'unhealthy' });
+    expect(inspect).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should fail when the inspect call fails', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest.fn().mockRejectedValue(new Error('no such container'));
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    await expect(
+        docker.waitForPostUpdateReady(dockerApi, buildSwap(), 5000),
+    ).resolves.toEqual({ ready: false, reason: 'no such container' });
+    jest.restoreAllMocks();
+});
+
+test('waitForPostUpdateReady should fail on timeout', async () => {
+    jest.spyOn(docker, 'getPostupdatePollIntervalMs').mockReturnValue(1);
+    const inspect = jest.fn().mockResolvedValue({
+        State: { Running: true, Health: { Status: 'starting' } },
+    });
+    const dockerApi = { getContainer: jest.fn(() => ({ inspect })) };
+    const result = await docker.waitForPostUpdateReady(
+        dockerApi,
+        buildSwap(),
+        5,
+    );
+    expect(result.ready).toEqual(false);
+    expect(result.reason).toContain('health gate timeout');
+    jest.restoreAllMocks();
+});
+
+test('getPostupdateRestartNames should parse, trim and drop empty names', () => {
+    expect(
+        docker.getPostupdateRestartNames({
+            labels: {
+                'wud.postupdate.restart': ' first , second,, third ',
+            },
+        }),
+    ).toEqual(['first', 'second', 'third']);
+});
+
+test('getPostupdateRestartNames should return an empty array when the label is absent', () => {
+    expect(docker.getPostupdateRestartNames({ labels: {} })).toEqual([]);
+    expect(docker.getPostupdateRestartNames({})).toEqual([]);
+});
+
+test('resolveDependent should match the exact container name', async () => {
+    const dockerApi = {
+        listContainers: jest.fn().mockResolvedValue([
+            { Id: 'id-other', Names: ['/qbittorrent-exporter'] },
+            { Id: 'id-dep', Names: ['/qbittorrent'] },
+        ]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', buildLogger()),
+    ).resolves.toEqual({ id: 'id-dep', name: 'qbittorrent' });
+    expect(dockerApi.listContainers).toHaveBeenCalledWith({ all: true });
+});
+
+test('resolveDependent should not match on substrings', async () => {
+    const dockerApi = {
+        listContainers: jest
+            .fn()
+            .mockResolvedValue([{ Id: 'id-dep', Names: ['/qbittorrent'] }]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbit', buildLogger()),
+    ).resolves.toBeUndefined();
+});
+
+test('resolveDependent should fall back to hash-prefixed names', async () => {
+    const dockerApi = {
+        listContainers: jest
+            .fn()
+            .mockResolvedValue([
+                { Id: 'id-dep', Names: ['/abcdef123456_qbittorrent'] },
+            ]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', buildLogger()),
+    ).resolves.toEqual({ id: 'id-dep', name: 'abcdef123456_qbittorrent' });
+});
+
+test('resolveDependent should prefer the exact match over the hash-prefixed one', async () => {
+    const dockerApi = {
+        listContainers: jest.fn().mockResolvedValue([
+            { Id: 'id-temp', Names: ['/abcdef123456_qbittorrent'] },
+            { Id: 'id-dep', Names: ['/qbittorrent'] },
+        ]),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', buildLogger()),
+    ).resolves.toEqual({ id: 'id-dep', name: 'qbittorrent' });
+});
+
+test('resolveDependent should return undefined when the daemon call fails', async () => {
+    const logger = buildLogger();
+    const dockerApi = {
+        listContainers: jest.fn().mockRejectedValue(new Error('daemon down')),
+    };
+    await expect(
+        docker.resolveDependent(dockerApi, 'qbittorrent', logger),
+    ).resolves.toBeUndefined();
+    expect(logger.warn).toHaveBeenCalled();
+});
+
+const buildDependentSpec = (overrides = {}) => ({
+    Name: '/dependent',
+    Id: 'dep-id',
+    Config: { Image: 'dep/image:1.0.0' },
+    HostConfig: { NetworkMode: 'bridge' },
+    NetworkSettings: { Networks: {} },
+    State: { Running: true },
+    ...overrides,
+});
+
+const buildDependentApi = (spec) => {
+    const restart = jest.fn().mockResolvedValue(undefined);
+    const stop = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const wait = jest.fn().mockResolvedValue(undefined);
+    const start = jest.fn().mockResolvedValue(undefined);
+    const createContainer = jest
+        .fn()
+        .mockResolvedValue({ id: 'dep-new-id', start });
+    const dockerApi = {
+        createContainer,
+        getContainer: jest.fn(() => ({
+            inspect: jest.fn().mockResolvedValue(spec),
+            restart,
+            stop,
+            remove,
+            wait,
+        })),
+    };
+    return { dockerApi, restart, stop, remove, wait, start, createContainer };
+};
+
+test('bounceDependent should restart a dependent that does not reference the host', async () => {
+    const { dockerApi, restart, createContainer } =
+        buildDependentApi(buildDependentSpec());
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'bounced',
+        method: 'restart',
+    });
+    expect(restart).toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should skip a stopped dependent that does not reference the host', async () => {
+    const { dockerApi, restart, stop, remove, createContainer } =
+        buildDependentApi(buildDependentSpec({ State: { Running: false } }));
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'skipped',
+        reason: 'not running',
+    });
+    expect(restart).not.toHaveBeenCalled();
+    expect(stop).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a dependent referencing the host by id', async () => {
+    const swap = buildSwap();
+    const { dockerApi, stop, remove, wait, start, createContainer } =
+        buildDependentApi(
+            buildDependentSpec({
+                HostConfig: {
+                    NetworkMode: `container:${swap.oldContainerId}`,
+                },
+            }),
+        );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'bounced',
+        method: 'recreate',
+    });
+    expect(stop).toHaveBeenCalled();
+    expect(remove).toHaveBeenCalled();
+    expect(wait).not.toHaveBeenCalled();
+    expect(createContainer.mock.calls[0][0].HostConfig.NetworkMode).toEqual(
+        'container:new-host-id',
+    );
+    expect(start).toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a dependent referencing the host by short id', async () => {
+    const swap = buildSwap();
+    const { dockerApi, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                NetworkMode: `container:${swap.oldContainerId.slice(0, 12)}`,
+            },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(createContainer).toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a dependent referencing the host by name', async () => {
+    const { dockerApi, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: { NetworkMode: 'container:main-host' },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(createContainer).toHaveBeenCalled();
+});
+
+test('bounceDependent should restart when a short non-hex reference prefixes the old id', async () => {
+    const { dockerApi, restart, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: { NetworkMode: 'container:ab' },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'restart' });
+    expect(restart).toHaveBeenCalled();
+    expect(createContainer).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should wait for auto-removal instead of removing', async () => {
+    const swap = buildSwap();
+    const { dockerApi, remove, wait, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                AutoRemove: true,
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(wait).toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalled();
+});
+
+test('bounceDependent should recreate a stopped id-referencing dependent without starting it', async () => {
+    const swap = buildSwap();
+    const { dockerApi, stop, start, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            State: { Running: false },
+            HostConfig: {
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'bounced',
+        method: 'recreate',
+        reason: 'recreated but left stopped',
+    });
+    expect(stop).not.toHaveBeenCalled();
+    expect(createContainer).toHaveBeenCalled();
+    expect(start).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should report a failure when the docker call throws', async () => {
+    const { dockerApi } = buildDependentApi(buildDependentSpec());
+    dockerApi.getContainer = jest.fn(() => ({
+        inspect: jest.fn().mockResolvedValue(buildDependentSpec()),
+        restart: jest.fn().mockRejectedValue(new Error('restart failed')),
+    }));
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            buildSwap(),
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'failed',
+        reason: 'restart failed',
+    });
+});
