@@ -4,7 +4,7 @@ import yaml from 'yaml';
 import Docker from '../docker/Docker';
 import { getState } from '../../../registry';
 import { Container } from '../../../model/container';
-import type { ContainerUpdateContext } from '../docker/types';
+import type { ContainerUpdateContext, TriggerRunResult } from '../docker/types';
 
 /**
  * Minimal shape of a parsed docker-compose file — only the fields this trigger reads.
@@ -105,10 +105,21 @@ class Dockercompose extends Docker {
     /**
      * Update the container.
      * @param container the container
-     * @returns {Promise<void>}
+     * @returns {Promise<TriggerRunResult | undefined>}
      */
-    async trigger(container: Container): Promise<void> {
-        return this.triggerBatch([container]);
+    async trigger(container: Container): Promise<TriggerRunResult | undefined> {
+        const result = await this.triggerBatch([container]);
+        // triggerBatch no longer rejects on a swap failure, but the single-container
+        // contract must keep surfacing it to the caller (HTTP 500).
+        const failed = result?.members?.find(
+            (member) => member.status === 'failed',
+        );
+        if (failed) {
+            throw new Error(
+                failed.error ?? `Failed to update container ${failed.name}`,
+            );
+        }
+        return result;
     }
 
     /**
@@ -236,9 +247,11 @@ class Dockercompose extends Docker {
      * pull ALL images (the barrier), rewrite each compose file, then swap ALL
      * containers back-to-back.
      * @param containers the containers
-     * @returns {Promise<void>}
+     * @returns {Promise<TriggerRunResult | undefined>}
      */
-    async triggerBatch(containers: Container[]): Promise<void> {
+    async triggerBatch(
+        containers: Container[],
+    ): Promise<TriggerRunResult | undefined> {
         // Validate + group (local-host only, resolvable/existing compose file,
         // container belongs to that file).
         const groups = await this.groupByComposeFile(containers);
@@ -267,13 +280,19 @@ class Dockercompose extends Docker {
             await this.rewriteComposeFile(composeFile, groupContainers);
         }
 
-        // Swap phase — barrier across ALL containers. Skip any that vanished.
-        await Promise.all(
-            valid.map((container) => {
-                const ctx = ctxByContainer.get(container);
-                return ctx ? this.swapContainer(container, ctx) : undefined;
-            }),
+        // Swap phase — barrier across ALL containers. A member that vanished fails.
+        const swaps = await this.swapAll(
+            valid,
+            valid.map((container) => ctxByContainer.get(container)),
         );
+
+        // Post-update epilogue — once, after the global swap barrier, over the
+        // filtered member set.
+        const dependents = await this.runPostUpdate(
+            swaps,
+            new Set(valid.map((container) => container.name.trim())),
+        );
+        return { members: this.toMemberOutcomes(swaps), dependents };
     }
 
     /**

@@ -3,7 +3,11 @@ import fs from 'fs/promises';
 import Dockercompose, { doesContainerBelongToCompose } from './Dockercompose';
 import log from '../../../log';
 import { Container } from '../../../model/container';
-import type { ContainerUpdateContext } from '../docker/types';
+import type {
+    ContainerUpdateContext,
+    DependentOutcome,
+    SwapOutcome,
+} from '../docker/types';
 
 jest.mock('fs/promises', () => ({
     access: jest.fn(),
@@ -65,6 +69,27 @@ const baseConfiguration = {
 
 const dockercompose = new Dockercompose();
 dockercompose.log = log;
+
+/**
+ * Typed view on the protected post-update helpers inherited from Docker.
+ */
+interface ProtectedDockerApi {
+    runPostUpdate(
+        swaps: SwapOutcome[],
+        memberNames: Set<string>,
+    ): Promise<DependentOutcome[]>;
+}
+const protectedApi = dockercompose as unknown as ProtectedDockerApi;
+
+function buildSwapOutcome(container: Container): SwapOutcome {
+    return {
+        container,
+        success: true,
+        newContainerId: `new-${container.id}`,
+        startedAfterSwap: true,
+        oldContainerId: container.id,
+    };
+}
 
 function buildContainer(overrides: Partial<Container> = {}): Container {
     return {
@@ -247,13 +272,7 @@ test('triggerBatch should pull all, then rewrite, then swap (ordering)', async (
     jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
         async (container) => {
             order.push('swap');
-            return {
-                container,
-                success: true,
-                newContainerId: `new-${container.id}`,
-                startedAfterSwap: true,
-                oldContainerId: container.id,
-            };
+            return buildSwapOutcome(container);
         },
     );
     await dockercompose.triggerBatch([c1, c2]);
@@ -279,7 +298,7 @@ test('triggerBatch should abort before any write or swap when a pull rejects', a
         .mockResolvedValue(undefined);
     const swapSpy = jest
         .spyOn(dockercompose, 'swapContainer')
-        .mockResolvedValue(undefined);
+        .mockImplementation(async (container) => buildSwapOutcome(container));
     await expect(dockercompose.triggerBatch([c1, bad])).rejects.toThrow(
         'pull failed',
     );
@@ -302,7 +321,7 @@ test('triggerBatch should pull but not rewrite or swap under dry-run', async () 
         .mockResolvedValue(undefined);
     const swapSpy = jest
         .spyOn(dockercompose, 'swapContainer')
-        .mockResolvedValue(undefined);
+        .mockImplementation(async (container) => buildSwapOutcome(container));
     await dockercompose.triggerBatch([c1, c2]);
     expect(pullSpy).toHaveBeenCalledTimes(2);
     expect(writeSpy).not.toHaveBeenCalled();
@@ -328,7 +347,7 @@ test('triggerBatch should abort before any swap when a compose write fails', asy
     mockedWriteFile.mockRejectedValue(new Error('EROFS'));
     const swapSpy = jest
         .spyOn(dockercompose, 'swapContainer')
-        .mockResolvedValue(undefined);
+        .mockImplementation(async (container) => buildSwapOutcome(container));
     await expect(dockercompose.triggerBatch([c1, c2])).rejects.toThrow('EROFS');
     expect(swapSpy).not.toHaveBeenCalled();
 });
@@ -347,10 +366,19 @@ test('triggerBatch should swap only the containers whose pull returned a context
     );
     const swapSpy = jest
         .spyOn(dockercompose, 'swapContainer')
-        .mockResolvedValue(undefined);
-    await dockercompose.triggerBatch([live, gone]);
+        .mockImplementation(async (container) => buildSwapOutcome(container));
+    const result = await dockercompose.triggerBatch([live, gone]);
     expect(swapSpy).toHaveBeenCalledTimes(1);
     expect(swapSpy.mock.calls[0][0]).toBe(live);
+    expect(result?.members).toEqual([
+        { id: 'live', name: 'zz_batch_compose_1', status: 'updated' },
+        {
+            id: 'gone',
+            name: 'zz_batch_compose_1',
+            status: 'failed',
+            error: 'Container no longer exists',
+        },
+    ]);
 });
 
 test('doesContainerBelongToCompose should match a service whose image contains the container image', () => {
@@ -412,4 +440,156 @@ test('getUnbatchableContainers should return an empty array when all containers 
     });
     const result = await dockercompose.getUnbatchableContainers([c1, c2]);
     expect(result).toEqual([]);
+});
+
+test('triggerBatch should run the post-update epilogue once, after every swap, with the filtered member set', async () => {
+    const order: string[] = [];
+    const c1 = buildContainer({ id: 'c1', name: 'zz_batch_compose_1' });
+    const c2 = buildContainer({ id: 'c2', name: 'zz_batch_compose_2' });
+    const foreign = buildContainer({ id: 'c3', name: 'not_in_compose' });
+    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
+        new Map([['/abs/docker-compose.yml', [c1, c2]]]),
+    );
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
+        {} as ContainerUpdateContext,
+    );
+    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue(
+        undefined,
+    );
+    jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
+        async (container) => {
+            order.push('swap');
+            return buildSwapOutcome(container);
+        },
+    );
+    const postUpdateSpy = jest
+        .spyOn(protectedApi, 'runPostUpdate')
+        .mockImplementation(async () => {
+            order.push('postupdate');
+            return [
+                {
+                    name: 'dep',
+                    host: 'zz_batch_compose_1',
+                    status: 'bounced',
+                    method: 'restart',
+                },
+            ];
+        });
+
+    const result = await dockercompose.triggerBatch([c1, c2, foreign]);
+
+    expect(order).toEqual(['swap', 'swap', 'postupdate']);
+    expect(postUpdateSpy).toHaveBeenCalledTimes(1);
+    const [swaps, memberNames] = postUpdateSpy.mock.calls[0];
+    expect(swaps.map((swap) => swap.container.id)).toEqual(['c1', 'c2']);
+    expect(memberNames).toEqual(
+        new Set(['zz_batch_compose_1', 'zz_batch_compose_2']),
+    );
+    expect(result).toEqual({
+        members: [
+            { id: 'c1', name: 'zz_batch_compose_1', status: 'updated' },
+            { id: 'c2', name: 'zz_batch_compose_2', status: 'updated' },
+        ],
+        dependents: [
+            {
+                name: 'dep',
+                host: 'zz_batch_compose_1',
+                status: 'bounced',
+                method: 'restart',
+            },
+        ],
+    });
+});
+
+test('triggerBatch should report a failed member without aborting the epilogue', async () => {
+    const good = buildContainer({ id: 'good', name: 'zz_batch_compose_1' });
+    const bad = buildContainer({ id: 'bad', name: 'zz_batch_compose_2' });
+    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
+        new Map([['/abs/docker-compose.yml', [good, bad]]]),
+    );
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
+        {} as ContainerUpdateContext,
+    );
+    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue(
+        undefined,
+    );
+    jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
+        async (container) => {
+            if (container.id === 'bad') {
+                throw new Error('swap failed');
+            }
+            return buildSwapOutcome(container);
+        },
+    );
+    const postUpdateSpy = jest
+        .spyOn(protectedApi, 'runPostUpdate')
+        .mockResolvedValue([]);
+
+    const result = await dockercompose.triggerBatch([good, bad]);
+
+    expect(postUpdateSpy).toHaveBeenCalledTimes(1);
+    expect(result?.members).toEqual([
+        { id: 'good', name: 'zz_batch_compose_1', status: 'updated' },
+        {
+            id: 'bad',
+            name: 'zz_batch_compose_2',
+            status: 'failed',
+            error: 'swap failed',
+        },
+    ]);
+});
+
+test('triggerBatch should return void and skip the epilogue when no container is batchable', async () => {
+    const foreign = buildContainer({ id: 'c1', name: 'not_in_compose' });
+    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
+        new Map(),
+    );
+    const postUpdateSpy = jest.spyOn(protectedApi, 'runPostUpdate');
+    await expect(
+        dockercompose.triggerBatch([foreign]),
+    ).resolves.toBeUndefined();
+    expect(postUpdateSpy).not.toHaveBeenCalled();
+});
+
+test('trigger should throw when the sole batch member failed', async () => {
+    const container = buildContainer({ id: 'c1' });
+    jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue({
+        members: [
+            {
+                id: 'c1',
+                name: 'zz_batch_compose_1',
+                status: 'failed',
+                error: 'swap failed',
+            },
+        ],
+        dependents: [],
+    });
+    await expect(dockercompose.trigger(container)).rejects.toThrow(
+        'swap failed',
+    );
+});
+
+test('trigger should return the batch result when the sole member was updated', async () => {
+    const container = buildContainer({ id: 'c1' });
+    const batchResult = {
+        members: [
+            {
+                id: 'c1',
+                name: 'zz_batch_compose_1',
+                status: 'updated' as const,
+            },
+        ],
+        dependents: [
+            {
+                name: 'dep',
+                host: 'zz_batch_compose_1',
+                status: 'bounced' as const,
+                method: 'restart' as const,
+            },
+        ],
+    };
+    jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue(batchResult);
+    await expect(dockercompose.trigger(container)).resolves.toEqual(
+        batchResult,
+    );
 });

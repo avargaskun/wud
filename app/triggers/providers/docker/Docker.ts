@@ -7,10 +7,14 @@ import type DockerWatcher from '../../../watchers/providers/docker/Docker';
 import type Registry from '../../../registries/Registry';
 import Logger from 'bunyan';
 import { wudPostupdateRestart } from '../../../watchers/providers/docker/label';
+import { getPostupdateBounceCounter } from '../../../prometheus/postupdate';
 import type {
     ContainerUpdateContext,
     DependentOutcome,
+    DependentOutcomeStatus,
+    MemberOutcome,
     SwapOutcome,
+    TriggerRunResult,
 } from './types';
 
 /**
@@ -963,11 +967,234 @@ class Docker extends Trigger {
     }
 
     /**
+     * Increase the Prometheus post-update bounce counter with the provided status.
+     * @param status the dependent bounce outcome status
+     */
+    protected increasePostupdateBounceCounter(
+        status: DependentOutcomeStatus,
+    ): void {
+        const bounceCounter = getPostupdateBounceCounter();
+        if (bounceCounter) {
+            bounceCounter.inc({
+                type: this.type,
+                name: this.name,
+                status,
+            });
+        }
+    }
+
+    /**
+     * Post-update epilogue: bounce the dependents declared by the
+     * wud.postupdate.restart label of every successfully updated container.
+     * @param swaps the outcome of every member that reached the swap phase
+     * @param memberNames the normalized names of the effective batch members
+     */
+    protected async runPostUpdate(
+        swaps: SwapOutcome[],
+        memberNames: Set<string>,
+    ): Promise<DependentOutcome[]> {
+        const entries: {
+            name: string;
+            swap: SwapOutcome;
+            outcome?: DependentOutcome;
+        }[] = [];
+        const collectedNames = new Set<string>();
+
+        // Collection pass — member order, then label order within a member.
+        for (const swap of swaps) {
+            if (!swap.success) {
+                continue;
+            }
+            const hostName = swap.container.name.trim();
+            for (const name of this.getPostupdateRestartNames(swap.container)) {
+                if (name === hostName) {
+                    entries.push({
+                        name,
+                        swap,
+                        outcome: {
+                            name,
+                            host: hostName,
+                            status: 'skipped',
+                            reason: 'self-reference',
+                        },
+                    });
+                    continue;
+                }
+                if (memberNames.has(name)) {
+                    entries.push({
+                        name,
+                        swap,
+                        outcome: {
+                            name,
+                            host: hostName,
+                            status: 'skipped',
+                            reason: 'batch member, already updated',
+                        },
+                    });
+                    continue;
+                }
+                // First host naming a dependent wins
+                if (collectedNames.has(name)) {
+                    continue;
+                }
+                collectedNames.add(name);
+                entries.push({ name, swap });
+            }
+        }
+
+        if (entries.length === 0) {
+            return [];
+        }
+
+        const loggers = new Map<SwapOutcome, Logger>();
+        const loggerFor = (swap: SwapOutcome): Logger => {
+            let logContainer = loggers.get(swap);
+            if (!logContainer) {
+                logContainer = this.log.child({
+                    container: fullName(swap.container),
+                });
+                loggers.set(swap, logContainer);
+            }
+            return logContainer;
+        };
+
+        // Health gate pass — once per host that has dependents to bounce.
+        for (const swap of swaps) {
+            const gated = entries.filter(
+                (entry) => entry.swap === swap && !entry.outcome,
+            );
+            if (gated.length === 0) {
+                continue;
+            }
+            const { dockerApi } = this.getWatcher(swap.container);
+            const gate = await this.waitForPostUpdateReady(
+                dockerApi,
+                swap,
+                this.configuration.postupdatetimeout,
+            );
+            if (!gate.ready) {
+                gated.forEach((entry) => {
+                    entry.outcome = {
+                        name: entry.name,
+                        host: swap.container.name.trim(),
+                        status: 'skipped',
+                        reason: `health gate: ${gate.reason}`,
+                    };
+                });
+            }
+        }
+
+        // Bounce pass — collection order; a failure never aborts the loop.
+        for (const entry of entries) {
+            if (entry.outcome) {
+                continue;
+            }
+            const { swap } = entry;
+            const hostName = swap.container.name.trim();
+            const logContainer = loggerFor(swap);
+            const { dockerApi } = this.getWatcher(swap.container);
+            const resolved = await this.resolveDependent(
+                dockerApi,
+                entry.name,
+                logContainer,
+            );
+            if (!resolved) {
+                entry.outcome = {
+                    name: entry.name,
+                    host: hostName,
+                    status: 'skipped',
+                    reason: 'unresolved',
+                };
+                continue;
+            }
+            const outcome = await this.bounceDependent(
+                dockerApi,
+                resolved,
+                swap,
+                hostName,
+                logContainer,
+            );
+            // Report the dependent under the name declared on the label
+            entry.outcome = { ...outcome, name: entry.name };
+        }
+
+        return entries.map((entry) => {
+            const outcome = entry.outcome as DependentOutcome;
+            const logContainer = loggerFor(entry.swap);
+            if (outcome.status === 'bounced') {
+                logContainer.info(
+                    `Dependent container ${outcome.name} bounced with method ${outcome.method}${outcome.reason ? ` (${outcome.reason})` : ''}`,
+                );
+            } else {
+                logContainer.warn(
+                    `Dependent container ${outcome.name} ${outcome.status} (${outcome.reason})`,
+                );
+            }
+            this.increasePostupdateBounceCounter(outcome.status);
+            return outcome;
+        });
+    }
+
+    /**
+     * Swap every member that has a context and convert rejections into failed
+     * swap outcomes, so a failing member never strands its siblings.
+     * @param containers the batch members
+     * @param contexts the contexts returned by the pull phase, member-aligned
+     */
+    protected async swapAll(
+        containers: Container[],
+        contexts: (ContainerUpdateContext | undefined)[],
+    ): Promise<SwapOutcome[]> {
+        const settled = await Promise.allSettled(
+            containers.map((container, index) => {
+                const ctx = contexts[index];
+                if (!ctx) {
+                    return Promise.reject(
+                        new Error('Container no longer exists'),
+                    );
+                }
+                return this.swapContainer(container, ctx);
+            }),
+        );
+        return settled.map((result, index) => {
+            if (result.status === 'fulfilled') {
+                return result.value;
+            }
+            const error = String(result.reason?.message ?? result.reason);
+            const container = containers[index];
+            this.log.warn(
+                `Error when updating container ${container.name} (${error})`,
+            );
+            return {
+                container,
+                success: false,
+                startedAfterSwap: false,
+                oldContainerId:
+                    contexts[index]?.currentContainerSpec?.Id ?? container.id,
+                error,
+            };
+        });
+    }
+
+    /**
+     * Convert swap outcomes into the batch member outcomes reported by the API.
+     * @param swaps the swap outcomes
+     */
+    protected toMemberOutcomes(swaps: SwapOutcome[]): MemberOutcome[] {
+        return swaps.map((swap) => ({
+            id: swap.container.id,
+            name: swap.container.name,
+            status: swap.success ? 'updated' : 'failed',
+            ...(swap.error ? { error: swap.error } : {}),
+        }));
+    }
+
+    /**
      * Update the container.
      * @param container the container
-     * @returns {Promise<void>}
+     * @returns {Promise<TriggerRunResult | undefined>}
      */
-    async trigger(container: Container): Promise<void> {
+    async trigger(container: Container): Promise<TriggerRunResult | undefined> {
         const ctx = await this.pullContainer(container);
         if (!ctx) {
             return;
@@ -984,16 +1211,23 @@ class Docker extends Trigger {
             return;
         }
 
-        await this.swapContainer(container, ctx);
+        const swap = await this.swapContainer(container, ctx);
+        const dependents = await this.runPostUpdate(
+            [swap],
+            new Set([container.name.trim()]),
+        );
+        return { dependents };
     }
 
     /**
      * Update the containers as a two-phase lockstep operation: pull ALL images
      * (the barrier), then swap ALL containers back-to-back.
      * @param containers
-     * @returns {Promise<void>}
+     * @returns {Promise<TriggerRunResult | undefined>}
      */
-    async triggerBatch(containers: Container[]): Promise<void> {
+    async triggerBatch(
+        containers: Container[],
+    ): Promise<TriggerRunResult | undefined> {
         // Phase 1 — pull ALL. A pull rejection aborts here, so no swap happens.
         const contexts = await Promise.all(
             containers.map((container) => this.pullContainer(container)),
@@ -1004,13 +1238,14 @@ class Docker extends Trigger {
             return;
         }
 
-        // Phase 2 — swap ALL. Skip any container that vanished before the pull.
-        await Promise.all(
-            containers.map((container, index) => {
-                const ctx = contexts[index];
-                return ctx ? this.swapContainer(container, ctx) : undefined;
-            }),
+        // Phase 2 — swap ALL. A member that vanished before the pull fails.
+        const swaps = await this.swapAll(containers, contexts);
+
+        const dependents = await this.runPostUpdate(
+            swaps,
+            new Set(containers.map((container) => container.name.trim())),
         );
+        return { members: this.toMemberOutcomes(swaps), dependents };
     }
 }
 
