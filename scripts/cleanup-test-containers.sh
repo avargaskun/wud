@@ -19,6 +19,9 @@ docker rm -f \
     quay_prometheus \
     zz_batch_local_1 \
     zz_batch_local_2 \
+    zz_bucket_batch_1 \
+    zz_bucket_batch_2 \
+    zz_bucket_single \
     zz_mv_buckets \
     zz_mv_semver_digest \
     wud \

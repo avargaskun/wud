@@ -33,3 +33,47 @@ Feature: WUD Batch Trigger API
     And I GET /api/containers
     Then the container with saved name "CN1" should have a version different than "CV1"
     And the container with saved name "CN2" should have a version different than "CV2"
+
+  Scenario: Reject an invalid bucket value on the batch endpoint
+    When I find the container with name "zz_bucket_batch_1" and save its ID as "BKID1", version as "BKV1", and name as "BKN1"
+    And I send POST to /api/containers/batch/triggers/docker/update with container IDs "BKID1" and bucket "nonsense"
+    Then response code should be 400
+    And response body path $.error should be bucket must be one of major, minor, patch, digest
+
+  Scenario: Reject a single-container trigger with an unpopulated bucket
+    When I find the container with name "zz_bucket_single" and save its ID as "BKSID", version as "BKSV", and name as "BKSN"
+    And I send POST to /api/containers/`BKSID`/triggers/docker/update with bucket "major"
+    Then response code should be 400
+    And I GET /api/containers/`BKSID`
+    And response body path $.image.tag.value should be 6.0.0
+
+  Scenario: Reject a batch bucket trigger when members lack the bucket
+    When I find the container with name "zz_bucket_batch_1" and save its ID as "BKID1", version as "BKV1", and name as "BKN1"
+    And I find the container with name "zz_bucket_batch_2" and save its ID as "BKID2", version as "BKV2", and name as "BKN2"
+    And I send POST to /api/containers/batch/triggers/docker/update with container IDs "BKID1,BKID2" and bucket "major"
+    Then response code should be 400
+    And response body path $.error should be All containers must have a populated 'major' update
+    And I GET /api/containers/`BKID1`
+    And response body path $.image.tag.value should be 6.0.0
+
+  Scenario: Apply a specific bucket to a single container
+    When I find the container with name "zz_bucket_single" and save its ID as "BKSID", version as "BKSV", and name as "BKSN"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.0\.\d+$" and value "" as "EXPECTED_PATCH_TAG"
+    And I send POST to /api/containers/`BKSID`/triggers/docker/update with bucket "patch"
+    Then response code should be 200
+    And I wait for 30 seconds
+    And I send POST to /api/containers/watch
+    And I GET /api/containers
+    Then the container with saved name "BKSN" should have version equal to variable "EXPECTED_PATCH_TAG"
+
+  Scenario: Batch update with bucket patch applies the patch not the highest update
+    When I find the container with name "zz_bucket_batch_1" and save its ID as "BKID1", version as "BKV1", and name as "BKN1"
+    And I find the container with name "zz_bucket_batch_2" and save its ID as "BKID2", version as "BKV2", and name as "BKN2"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.0\.\d+$" and value "" as "EXPECTED_PATCH_TAG"
+    And I send POST to /api/containers/batch/triggers/docker/update with container IDs "BKID1,BKID2" and bucket "patch"
+    Then response code should be 200
+    And I wait for 30 seconds
+    And I send POST to /api/containers/watch
+    And I GET /api/containers
+    Then the container with saved name "BKN1" should have version equal to variable "EXPECTED_PATCH_TAG"
+    And the container with saved name "BKN2" should have version equal to variable "EXPECTED_PATCH_TAG"

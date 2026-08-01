@@ -265,6 +265,60 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
     assert.notStrictEqual(currentVersion, oldVersion, `Container version expected to change from ${oldVersion}, but is still ${currentVersion}`);
 });
 
+Then(/^the container with saved name "([^"]*)" should have version equal to variable "([^"]*)"$/, async function (this: any, nameVar: string, versionVar: string) {
+    const name = this.apickli.getGlobalVariable(nameVar);
+    const expectedVersion = this.apickli.getGlobalVariable(versionVar);
+
+    // Refresh containers
+    await new Promise<void>((resolve, reject) => {
+        this.apickli.get('/api/containers', (error: any, response: any) => {
+            if (error) reject(error);
+            else resolve(response);
+        });
+    });
+    const response = this.apickli.getResponseObject();
+
+    let containers: Container[] | any = response.body;
+
+    if (typeof containers === 'string') {
+        try {
+            containers = JSON.parse(containers);
+        } catch (e) {
+            this.attach('Failed to parse response body:', e);
+            throw new Error('Response body is not valid JSON');
+        }
+    }
+
+    if (!response || !Array.isArray(containers)) {
+         throw new Error('Failed to retrieve containers or invalid response format');
+    }
+
+    // Find containers matching the name
+    const matches = (containers as Container[]).filter(c => c.name === name);
+
+    if (matches.length === 0) {
+        throw new Error(`Container with name ${name} not found in current list`);
+    }
+
+    let container: Container;
+    if (matches.length > 1) {
+        // If multiple containers found (e.g. old exited + new running), prefer the running one
+        const running = matches.find(c => c.status && c.status.toLowerCase() === 'running');
+        if (running) {
+            container = running;
+            this.attach(`Found ${matches.length} containers with name ${name}. Selected running container (id=${container.id})`);
+        } else {
+            container = matches[0];
+            this.attach(`Found ${matches.length} containers with name ${name}, none are running. Selected first (id=${container.id})`);
+        }
+    } else {
+        container = matches[0];
+    }
+
+    const currentVersion = container.image.tag.value;
+    assert.strictEqual(currentVersion, expectedVersion, `Container version expected to be ${expectedVersion}, but is ${currentVersion}`);
+});
+
 Then(/^the container with saved ID "([^"]*)" should have a version different than "([^"]*)"$/, async function (this: any, idVar: string, oldVersionVar: string) {
     const id = this.apickli.getGlobalVariable(idVar);
     const oldVersion = this.apickli.getGlobalVariable(oldVersionVar);
@@ -322,6 +376,33 @@ When(/^I send POST to (\S+)$/, async function (this: any, url: string) {
 When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this: any, url: string, idVars: string) {
     const containerIds = idVars.split(',').map(v => this.apickli.getGlobalVariable(v.trim()));
     const body = { containerIds };
+    this.apickli.setRequestBody(JSON.stringify(body));
+    this.apickli.addRequestHeader('Content-Type', 'application/json');
+    const safeUrl = substituteVariables(url, this.apickli);
+    await new Promise<void>((resolve, reject) => {
+        this.apickli.post(safeUrl, (error: any, response: any) => {
+            if (error) reject(error);
+            else resolve(response);
+        });
+    });
+});
+
+When(/^I send POST to (.*) with container IDs "([^"]*)" and bucket "([^"]*)"$/, async function (this: any, url: string, idVars: string, bucket: string) {
+    const containerIds = idVars.split(',').map(v => this.apickli.getGlobalVariable(v.trim()));
+    const body = { containerIds, bucket };
+    this.apickli.setRequestBody(JSON.stringify(body));
+    this.apickli.addRequestHeader('Content-Type', 'application/json');
+    const safeUrl = substituteVariables(url, this.apickli);
+    await new Promise<void>((resolve, reject) => {
+        this.apickli.post(safeUrl, (error: any, response: any) => {
+            if (error) reject(error);
+            else resolve(response);
+        });
+    });
+});
+
+When(/^I send POST to (.*) with bucket "([^"]*)"$/, async function (this: any, url: string, bucket: string) {
+    const body = { bucket };
     this.apickli.setRequestBody(JSON.stringify(body));
     this.apickli.addRequestHeader('Content-Type', 'application/json');
     const safeUrl = substituteVariables(url, this.apickli);
