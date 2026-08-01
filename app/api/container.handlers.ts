@@ -11,6 +11,7 @@ import {
     UPDATE_BUCKET_KEYS,
 } from '../model/container';
 import Trigger from '../triggers/providers/Trigger';
+import type { TriggerRunResult } from '../triggers/providers/docker/types';
 import { BatchTriggerRequestBody, TriggerRequestBody } from './types';
 
 const log = logger.child({ component: 'container' });
@@ -211,6 +212,7 @@ export async function runTrigger(req: Request, res: Response): Promise<void> {
     }
 
     try {
+        let result: TriggerRunResult | undefined;
         if (bucket) {
             const update = containerToTrigger.updates?.[bucket];
             if (!update) {
@@ -219,16 +221,18 @@ export async function runTrigger(req: Request, res: Response): Promise<void> {
                 });
                 return;
             }
-            await triggerToRun.trigger(
+            result = (await triggerToRun.trigger(
                 Trigger.buildTriggerView(containerToTrigger, update),
-            );
+            )) as TriggerRunResult | undefined;
         } else {
-            await triggerToRun.trigger(containerToTrigger);
+            result = (await triggerToRun.trigger(containerToTrigger)) as
+                | TriggerRunResult
+                | undefined;
         }
         log.info(
             `Trigger executed with success (type=${triggerType}, name=${triggerName}, container=${JSON.stringify(containerToTrigger)})`,
         );
-        res.status(200).json({});
+        res.status(200).json(result ?? {});
     } catch (e) {
         log.warn(
             `Error when running trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
@@ -370,11 +374,23 @@ export async function runTriggerBatch(
             return;
         }
 
-        await triggerToRun.triggerBatch(containersToRun);
+        const result = (await triggerToRun.triggerBatch(containersToRun)) as
+            | TriggerRunResult
+            | undefined;
+        if (result?.members?.some((member) => member.status === 'failed')) {
+            log.warn(
+                `Batch trigger executed with failures (trigger=${triggerId}, containers=${containers.length})`,
+            );
+            res.status(500).json({
+                error: 'One or more batch members failed to update',
+                ...result,
+            });
+            return;
+        }
         log.info(
             `Batch trigger executed with success (trigger=${triggerId}, containers=${containers.length})`,
         );
-        res.status(200).json({});
+        res.status(200).json(result ?? {});
     } catch (e) {
         log.warn(
             `Error when running batch trigger (trigger=${triggerId}) (${e.message})`,

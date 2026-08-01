@@ -123,7 +123,6 @@ describe('Trigger API', () => {
             name: 'default',
             getId: () => 'docker.default',
         };
-        // @ts-ignore
         registry.getState.mockReturnValue({
             trigger: { 'docker.default': mockTrigger },
         });
@@ -260,6 +259,55 @@ describe('Trigger API', () => {
 
         expect(mockTrigger.trigger).toHaveBeenCalledWith(container);
         expect(mockRes.status).toHaveBeenCalledWith(200);
+    });
+
+    test('should round-trip the trigger run result in the response body', async () => {
+        const container = { id: '123' };
+        mockReq = {
+            params: { type: 'docker', name: 'default' },
+            body: container,
+        };
+        const result = {
+            members: [{ id: '123', name: 'c1', status: 'updated' }],
+            dependents: [
+                {
+                    name: 'sidecar',
+                    host: 'c1',
+                    status: 'bounced',
+                    method: 'restart',
+                },
+            ],
+        };
+        const mockTrigger = {
+            trigger: jest.fn().mockResolvedValue(result),
+        };
+        registry.getState.mockReturnValue({
+            trigger: { 'docker.default': mockTrigger },
+        });
+
+        await runTrigger(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+        expect(mockRes.json).toHaveBeenCalledWith(result);
+    });
+
+    test('should respond with an empty body when the trigger returns nothing', async () => {
+        const container = { id: '123' };
+        mockReq = {
+            params: { type: 'docker', name: 'default' },
+            body: container,
+        };
+        const mockTrigger = {
+            trigger: jest.fn().mockResolvedValue(undefined),
+        };
+        registry.getState.mockReturnValue({
+            trigger: { 'docker.default': mockTrigger },
+        });
+
+        await runTrigger(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(200);
+        expect(mockRes.json).toHaveBeenCalledWith({});
     });
 
     test('should return 404 if local trigger is not found', async () => {

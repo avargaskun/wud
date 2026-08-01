@@ -432,6 +432,65 @@ describe('Container API', () => {
                 }),
             );
         });
+
+        test('should serialize the trigger run result in the 200 body', async () => {
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                buildContainer(),
+            );
+            const dependents = [
+                {
+                    name: 'sidecar',
+                    host: 'c1',
+                    status: 'bounced',
+                    method: 'recreate',
+                },
+                {
+                    name: 'ghost',
+                    host: 'c1',
+                    status: 'skipped',
+                    reason: 'unresolved',
+                },
+            ];
+            mockTrigger.mockReset().mockResolvedValue({ dependents });
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith({ dependents });
+        });
+
+        test('should serialize the trigger run result on the bucket path', async () => {
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                buildContainer(),
+            );
+            mockTrigger.mockReset().mockResolvedValue({ dependents: [] });
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                { bucket: 'patch' },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith({ dependents: [] });
+        });
+
+        test('should respond with an empty body when the trigger returns nothing', async () => {
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                buildContainer(),
+            );
+            mockTrigger.mockReset().mockResolvedValue(undefined);
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith({});
+        });
     });
 
     describe('runTriggerBatch', () => {
@@ -838,6 +897,67 @@ describe('Container API', () => {
             expect(passed[0]).toBe(c1);
             expect(passed[1]).toBe(c2);
             expect(mockGetUnbatchable.mock.calls[0][0]).toBe(passed);
+        });
+
+        test('should serialize members and dependents in the 200 body', async () => {
+            const c1 = buildContainer({ id: 'c1' });
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(c1);
+            const result = {
+                members: [{ id: 'c1', name: 'c1', status: 'updated' }],
+                dependents: [
+                    { name: 'sidecar', host: 'c1', status: 'skipped' },
+                ],
+            };
+            mockTriggerBatch.mockReset().mockResolvedValue(result);
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1'] },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith(result);
+        });
+
+        test('should return 500 with the result fields when a member failed', async () => {
+            const c1 = buildContainer({ id: 'c1' });
+            const c2 = buildContainer({ id: 'c2' });
+            (storeContainer.getContainer as jest.Mock).mockImplementation(
+                (id) => (id === 'c1' ? c1 : c2),
+            );
+            const members = [
+                { id: 'c1', name: 'c1', status: 'updated' },
+                { id: 'c2', name: 'c2', status: 'failed', error: 'boom' },
+            ];
+            mockTriggerBatch
+                .mockReset()
+                .mockResolvedValue({ members, dependents: [] });
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1', 'c2'] },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(500);
+            expect(mockRes.json).toHaveBeenCalledWith({
+                error: 'One or more batch members failed to update',
+                members,
+                dependents: [],
+            });
+        });
+
+        test('should respond with an empty body when triggerBatch returns nothing', async () => {
+            const c1 = buildContainer({ id: 'c1' });
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(c1);
+            mockTriggerBatch.mockReset().mockResolvedValue(undefined);
+
+            await callHandler(
+                { triggerType: 'docker', triggerName: 'update' },
+                { containerIds: ['c1'] },
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(200);
+            expect(mockRes.json).toHaveBeenCalledWith({});
         });
     });
 });

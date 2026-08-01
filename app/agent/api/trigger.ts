@@ -3,6 +3,7 @@ import * as registry from '../../registry';
 import { mapComponentsToList } from '../../api/component';
 import * as triggerApi from '../../api/trigger';
 import logger from '../../log';
+import type { TriggerRunResult } from '../../triggers/providers/docker/types';
 
 const log = logger.child({ component: 'agent-api-trigger' });
 
@@ -53,8 +54,10 @@ export async function runTriggerBatch(req: Request, res: Response) {
             }
             return container;
         });
-        await trigger.triggerBatch(sanitizedContainers);
-        res.status(200).json({});
+        const result = (await trigger.triggerBatch(sanitizedContainers)) as
+            | TriggerRunResult
+            | undefined;
+        res.status(200).json(result ?? {});
     } catch (e: any) {
         log.error(`Error running batch trigger ${name}: ${e.message}`);
         res.status(500).json({ error: e.message });

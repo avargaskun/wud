@@ -7,6 +7,7 @@ import * as storeContainer from '../store/container';
 import { emitContainerReport } from '../event';
 import { Container, ContainerReport } from '../model/container';
 import * as registry from '../registry';
+import type { TriggerRunResult } from '../triggers/providers/docker/types';
 
 export interface AgentClientConfig {
     host: string;
@@ -279,18 +280,19 @@ export class AgentClient {
         container: Container,
         triggerType: string,
         triggerName: string,
-    ) {
+    ): Promise<TriggerRunResult | undefined> {
         try {
             this.log.debug(
                 `Running remote trigger ${triggerType}.${triggerName} (container=${JSON.stringify(
                     container,
                 )})`,
             );
-            await axios.post(
+            const response = await axios.post(
                 `${this.baseUrl}/api/triggers/${triggerType}/${triggerName}`,
                 container,
                 this.axiosOptions,
             );
+            return response?.data as TriggerRunResult | undefined;
         } catch (e: any) {
             this.log.error(`Error running remote trigger: ${e.message}`);
             throw e;
@@ -301,13 +303,14 @@ export class AgentClient {
         containers: Container[],
         triggerType: string,
         triggerName: string,
-    ) {
+    ): Promise<TriggerRunResult | undefined> {
         try {
-            await axios.post(
+            const response = await axios.post(
                 `${this.baseUrl}/api/triggers/${triggerType}/${triggerName}/batch`,
                 containers,
                 this.axiosOptions,
             );
+            return response?.data as TriggerRunResult | undefined;
         } catch (e: any) {
             this.log.error(`Error running remote batch trigger: ${e.message}`);
             throw e;
