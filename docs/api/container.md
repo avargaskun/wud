@@ -284,7 +284,8 @@ curl -X POST http://wud:3000/api/containers/<id>/triggers/ntfy/one \
 the trigger runs against that entry of the container's [`updates`](#updates) map instead of
 the highest update. The request is rejected with a `400` if
 
-- `bucket` is not one of `major`/`minor`/`patch`/`digest`;
+- `bucket` is not one of `major`/`minor`/`patch`/`digest` — an explicit `null` is also
+  rejected; omit the field entirely to target the highest update;
 - the container has no populated update for that bucket — per the
   [three-state semantics](#updates) of the `updates` map, both an **absent** key and a
   **`null`** key mean "not populated" for this API.
@@ -322,7 +323,8 @@ The batch is validated strictly and is
 
 - `containerIds` is missing, empty, or not an array (`400`);
 - `containerIds` contains duplicates — the response lists the `duplicates` (`400`);
-- `bucket` is present but not one of `major`/`minor`/`patch`/`digest` (`400`);
+- `bucket` is present but not one of `major`/`minor`/`patch`/`digest` — an explicit `null`
+  is also rejected; omit the field entirely instead (`400`);
 - the trigger does not exist (`404`);
 - any container id is unknown — the response lists the `missing` ids (`404`);
 - the containers do not all belong to the trigger's agent (`400`);
