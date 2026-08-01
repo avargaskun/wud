@@ -1573,6 +1573,28 @@ test('runPostUpdate should skip a dependent that is also a batch member', async 
     jest.restoreAllMocks();
 });
 
+test('runPostUpdate should report a failed batch member dependent as update failed', async () => {
+    const { bounceSpy } = buildPostUpdateEnv();
+    const swapMain = buildHostSwap('main', 'sibling,other');
+    const swapSibling = buildHostSwap('sibling', '', { success: false });
+    await expect(
+        docker.runPostUpdate(
+            [swapMain, swapSibling],
+            new Set(['main', 'sibling']),
+        ),
+    ).resolves.toEqual([
+        {
+            name: 'sibling',
+            host: 'main',
+            status: 'skipped',
+            reason: 'batch member, update failed',
+        },
+        { name: 'other', host: 'main', status: 'bounced', method: 'restart' },
+    ]);
+    expect(bounceSpy).toHaveBeenCalledTimes(1);
+    jest.restoreAllMocks();
+});
+
 test('runPostUpdate should bounce a shared dependent once (first host wins)', async () => {
     const { bounceSpy } = buildPostUpdateEnv();
     const swapA = buildHostSwap('hostA', 'shared');

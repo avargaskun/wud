@@ -1021,6 +1021,9 @@ class Docker extends Trigger {
                     continue;
                 }
                 if (memberNames.has(name)) {
+                    const memberSwap = swaps.find(
+                        (candidate) => candidate.container.name.trim() === name,
+                    );
                     entries.push({
                         name,
                         swap,
@@ -1028,7 +1031,10 @@ class Docker extends Trigger {
                             name,
                             host: hostName,
                             status: 'skipped',
-                            reason: 'batch member, already updated',
+                            reason:
+                                memberSwap && !memberSwap.success
+                                    ? 'batch member, update failed'
+                                    : 'batch member, already updated',
                         },
                     });
                     continue;

@@ -404,7 +404,8 @@ outcome per member and per dependent:
 
 `dependents` has the same shape as on the [single trigger endpoint](#response) and covers
 every member's `wud.postupdate.restart` label. A dependent that is itself a member of the
-batch is reported `skipped` (it has just been updated in its own right).
+batch is reported `skipped`, with reason `batch member, already updated` when its own
+update succeeded or `batch member, update failed` when it did not.
 
 The status code depends on the members:
 
