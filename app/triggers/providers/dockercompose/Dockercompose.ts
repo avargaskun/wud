@@ -3,6 +3,7 @@ import path from 'path';
 import { parseDocument, isScalar, Scalar } from 'yaml';
 import type { Document } from 'yaml';
 import Docker from '../docker/Docker';
+import { ContainerGoneError } from '../docker/errors';
 import { getState } from '../../../registry';
 import { Container } from '../../../model/container';
 import type {
@@ -477,10 +478,31 @@ class Dockercompose extends Docker {
             (member) => member.status === 'failed',
         );
         if (failed) {
+            if (failed.gone) {
+                throw new ContainerGoneError(container);
+            }
             throw new Error(
                 failed.error ?? `Failed to update container ${failed.name}`,
             );
         }
+
+        // Dry-run legitimately produces no member outcome; anything else means the
+        // container was filtered out and nothing was applied.
+        if (!this.configuration.dryrun) {
+            const updated = result?.members?.some(
+                (member) =>
+                    member.id === container.id && member.status === 'updated',
+            );
+            if (!updated) {
+                const [unprocessable] = await this.getUnprocessableContainers([
+                    container,
+                ]);
+                throw new Error(
+                    `Container ${container.name} was not updated by this trigger (${unprocessable?.reason ?? 'unknown reason'})`,
+                );
+            }
+        }
+
         return result;
     }
 

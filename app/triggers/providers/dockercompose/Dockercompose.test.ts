@@ -12,6 +12,7 @@ import Dockercompose, {
     applyComposeEdits,
 } from './Dockercompose';
 import type { ComposeEdit, ComposeFile } from './Dockercompose';
+import { ContainerGoneError } from '../docker/errors';
 import log from '../../../log';
 import { Container } from '../../../model/container';
 import type {
@@ -984,6 +985,43 @@ test('trigger should return the batch result when the sole member was updated', 
     jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue(batchResult);
     await expect(dockercompose.trigger(container)).resolves.toEqual(
         batchResult,
+    );
+});
+
+test('trigger should throw with the resolution reason when the container is unprocessable', async () => {
+    const container = buildContainer({
+        id: 'c1',
+        labels: { 'wud.compose.file': '/missing/docker-compose.yml' },
+    });
+    mockedAccess.mockRejectedValue(new Error('ENOENT'));
+    await expect(dockercompose.trigger(container)).rejects.toThrow(
+        'Container zz_batch_compose_1 was not updated by this trigger (none of its candidate compose files exist (/missing/docker-compose.yml))',
+    );
+});
+
+test('trigger should not throw under dryrun when triggerBatch returns void', async () => {
+    dockercompose.configuration = { ...baseConfiguration, dryrun: true };
+    const container = buildContainer({ id: 'c1' });
+    jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue(undefined);
+    await expect(dockercompose.trigger(container)).resolves.toBeUndefined();
+});
+
+test('trigger should throw ContainerGoneError when the sole member is gone', async () => {
+    const container = buildContainer({ id: 'c1' });
+    jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue({
+        members: [
+            {
+                id: 'c1',
+                name: 'zz_batch_compose_1',
+                status: 'failed',
+                error: 'Container zz_batch_compose_1 no longer exists',
+                gone: true,
+            },
+        ],
+        dependents: [],
+    });
+    await expect(dockercompose.trigger(container)).rejects.toBeInstanceOf(
+        ContainerGoneError,
     );
 });
 
