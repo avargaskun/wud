@@ -3,6 +3,7 @@ import fs from 'fs/promises';
 import { Scalar } from 'yaml';
 import Dockercompose, {
     doesContainerBelongToCompose,
+    resolveComposeServiceName,
     canonicalizeImageRef,
     imageRefsMatch,
     getCurrentImageRef,
@@ -10,7 +11,7 @@ import Dockercompose, {
     renderScalarValue,
     applyComposeEdits,
 } from './Dockercompose';
-import type { ComposeEdit } from './Dockercompose';
+import type { ComposeEdit, ComposeFile } from './Dockercompose';
 import log from '../../../log';
 import { Container } from '../../../model/container';
 import type {
@@ -64,6 +65,40 @@ const composeYaml = `services:
     image: ghcr.io/stefanprodan/podinfo:5.0.0
 `;
 
+const composeYamlRich = `# top comment
+x-common: &base
+  image: ghcr.io/stefanprodan/podinfo:5.0.0
+services:
+  svc_plain:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0   # keep this comment
+  svc_twin:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+  svc_quoted:
+    image: "ghcr.io/stefanprodan/podinfo:5.0.0"
+  svc_single:
+    image: 'nginx:1.25'
+  svc_prefix:
+    image: ghcr.io/stefanprodan/podinfo:5.0.00
+  svc_interpolated:
+    image: ghcr.io/stefanprodan/podinfo:\${PODINFO_TAG}
+  svc_digest:
+    image: ghcr.io/stefanprodan/podinfo@sha256:abc123
+  svc_anchor:
+    image: &shared_img ghcr.io/stefanprodan/podinfo:4.0.0
+  svc_alias:
+    image: *shared_img
+  svc_inherits:
+    <<: *base
+    container_name: svc_inherits
+  svc_build:
+    build: .
+`;
+
+const composeYamlPrefixOnly = `services:
+  only_prefix:
+    image: ghcr.io/stefanprodan/podinfo:5.0.00
+`;
+
 const baseConfiguration = {
     prune: false,
     dryrun: false,
@@ -101,7 +136,12 @@ function buildSwapOutcome(container: Container): SwapOutcome {
     };
 }
 
-function buildContainer(overrides: Partial<Container> = {}): Container {
+type ContainerOverrides = Partial<Omit<Container, 'labels'>> & {
+    labels?: Container['labels'] | null;
+};
+
+function buildContainer(overrides: ContainerOverrides = {}): Container {
+    const { labels, ...rest } = overrides;
     return {
         id: 'container-id',
         name: 'zz_batch_compose_1',
@@ -124,8 +164,52 @@ function buildContainer(overrides: Partial<Container> = {}): Container {
             localValue: '5.0.0',
             remoteValue: '6.0.0',
         },
-        ...overrides,
+        labels:
+            labels === null
+                ? {}
+                : {
+                      'com.docker.compose.service': 'zz_batch_compose_1',
+                      ...labels,
+                  },
+        ...rest,
     };
+}
+
+const singleQuoted = buildContainer({
+    id: 'c-single',
+    labels: null,
+    image: {
+        id: 'img-nginx',
+        registry: { name: 'hub', url: 'docker.io' },
+        name: 'library/nginx',
+        tag: { value: '1.25', semver: true },
+        digest: { watch: false },
+        architecture: 'amd64',
+        os: 'linux',
+    },
+    updateKind: { kind: 'tag', localValue: '1.25', remoteValue: '1.26' },
+});
+
+function buildAnchorContainer(label: string | null): Container {
+    return buildContainer({
+        id: 'c-anchor',
+        labels: label === null ? null : { 'com.docker.compose.service': label },
+        image: {
+            id: 'img-anchor',
+            registry: { name: 'hub', url: 'ghcr.io' },
+            name: 'stefanprodan/podinfo',
+            tag: { value: '4.0.0', semver: true },
+            digest: { watch: false },
+            architecture: 'amd64',
+            os: 'linux',
+        },
+        updateKind: { kind: 'tag', localValue: '4.0.0', remoteValue: '4.1.0' },
+    });
+}
+
+async function loadRichCompose(): Promise<ComposeFile> {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    return dockercompose.getComposeFileAsObject('/abs/docker-compose.yml');
 }
 
 beforeEach(() => {
@@ -391,7 +475,7 @@ test('triggerBatch should swap only the containers whose pull returned a context
     ]);
 });
 
-test('doesContainerBelongToCompose should match a service whose image contains the container image', () => {
+test('doesContainerBelongToCompose should match the service whose image equals the container image', () => {
     const compose = {
         services: {
             podinfo: { image: 'ghcr.io/stefanprodan/podinfo:5.0.0' },
@@ -790,4 +874,155 @@ test('getCurrentImageRef should return the registry normalized ref', () => {
     expect(getCurrentImageRef(buildContainer())).toBe(
         'ghcr.io/stefanprodan/podinfo:5.0.0',
     );
+});
+
+test('resolveComposeServiceName should let the label pick among services sharing a pin', async () => {
+    const compose = await loadRichCompose();
+    const container = buildContainer({
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+    });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'resolved',
+        serviceName: 'svc_twin',
+        source: 'label',
+    });
+});
+
+test('resolveComposeServiceName should return ambiguous for a label-less container with duplicate pins', async () => {
+    const compose = await loadRichCompose();
+    const container = buildContainer({ labels: null });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'ambiguous',
+        candidates: ['svc_plain', 'svc_twin', 'svc_quoted'],
+    });
+});
+
+test('resolveComposeServiceName should match the file short hub form through canonicalization', async () => {
+    const compose = await loadRichCompose();
+    expect(
+        resolveComposeServiceName(
+            compose,
+            singleQuoted,
+            getCurrentImageRef(singleQuoted),
+        ),
+    ).toEqual({
+        status: 'resolved',
+        serviceName: 'svc_single',
+        source: 'image',
+    });
+});
+
+test('resolveComposeServiceName should ignore a label naming a service that is not a candidate', async () => {
+    const compose = await loadRichCompose();
+    const container = buildContainer({
+        labels: { 'com.docker.compose.service': 'svc_prefix' },
+    });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'ambiguous',
+        candidates: ['svc_plain', 'svc_twin', 'svc_quoted'],
+    });
+});
+
+test('resolveComposeServiceName should ignore a label naming a service absent from the file', async () => {
+    const compose = await loadRichCompose();
+    const container = buildContainer({
+        ...singleQuoted,
+        labels: { 'com.docker.compose.service': 'ghost_service' },
+    });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'resolved',
+        serviceName: 'svc_single',
+        source: 'image',
+    });
+});
+
+test.each(['constructor', 'toString', 'hasOwnProperty', 'valueOf'])(
+    'resolveComposeServiceName should return not-found for the prototype label %s',
+    (label) => {
+        const compose: ComposeFile = {
+            services: { other: { image: 'nginx:1.0.0' } },
+        };
+        const container = buildContainer({
+            labels: { 'com.docker.compose.service': label },
+        });
+        expect(
+            resolveComposeServiceName(
+                compose,
+                container,
+                getCurrentImageRef(container),
+            ),
+        ).toEqual({ status: 'not-found' });
+    },
+);
+
+test('resolveComposeServiceName should return not-found without throwing when services is undefined', () => {
+    const container = buildContainer();
+    expect(() =>
+        resolveComposeServiceName(
+            {} as ComposeFile,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).not.toThrow();
+    expect(
+        resolveComposeServiceName(
+            {} as ComposeFile,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({ status: 'not-found' });
+});
+
+test('doesContainerBelongToCompose should return true for an ambiguous container', async () => {
+    const compose = await loadRichCompose();
+    expect(
+        doesContainerBelongToCompose(compose, buildContainer({ labels: null })),
+    ).toBe(true);
+});
+
+test('getUnbatchableContainers should return an empty array for an ambiguous container', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const container = buildContainer({ id: 'c1', labels: null });
+    await expect(
+        dockercompose.getUnbatchableContainers([container]),
+    ).resolves.toEqual([]);
+});
+
+test('getUnbatchableContainers should return a container whose only compose pin is a longer tag', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlPrefixOnly);
+    const container = buildContainer({ id: 'c1' });
+    await expect(
+        dockercompose.getUnbatchableContainers([container]),
+    ).resolves.toEqual([container]);
+});
+
+test('groupByComposeFile should keep an ambiguous container in its group', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const container = buildContainer({ id: 'c1', labels: null });
+    const groups = await dockercompose.groupByComposeFile([container]);
+    expect(groups.get('/default/docker-compose.yml')).toEqual([container]);
 });

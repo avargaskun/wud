@@ -182,27 +182,73 @@ function applyComposeEdits(source: string, edits: ComposeEdit[]): string {
 }
 
 /**
- * Return true if the container belongs to the compose file.
- * @param compose
- * @param container
- * @returns true/false
+ * Resolve which compose service a container corresponds to. The file must first
+ * pin the image the container runs; `com.docker.compose.service` then only
+ * disambiguates between services sharing that pin.
+ */
+function resolveComposeServiceName(
+    compose: ComposeFile,
+    container: Container,
+    currentImageRef: string | undefined,
+): ServiceResolution {
+    const services: Record<string, ComposeService> = compose?.services ?? {};
+
+    if (currentImageRef === undefined) {
+        return { status: 'not-found' };
+    }
+
+    const candidates: string[] = Object.keys(services).filter((key) => {
+        const image: string | undefined = services[key]?.image;
+        return (
+            typeof image === 'string' && imageRefsMatch(image, currentImageRef)
+        );
+    });
+
+    const serviceLabel: string | undefined = (container.labels ?? {})[
+        COMPOSE_SERVICE_LABEL
+    ];
+    if (
+        typeof serviceLabel === 'string' &&
+        serviceLabel.length > 0 &&
+        candidates.includes(serviceLabel)
+    ) {
+        return {
+            status: 'resolved',
+            serviceName: serviceLabel,
+            source: 'label',
+        };
+    }
+
+    if (candidates.length === 1) {
+        return {
+            status: 'resolved',
+            serviceName: candidates[0],
+            source: 'image',
+        };
+    }
+    if (candidates.length === 0) {
+        return { status: 'not-found' };
+    }
+    return { status: 'ambiguous', candidates };
+}
+
+/**
+ * Return true if the container belongs to the compose file. An ambiguous
+ * container still belongs: the file pins its image, we just cannot tell which
+ * line is its own.
  */
 function doesContainerBelongToCompose(
     compose: ComposeFile,
     container: Container,
-) {
-    // Get registry configuration
-    const registry = getState().registry[container.image.registry.name];
-
-    // Rebuild image definition string
-    const currentImage = registry.getImageFullName(
-        container.image,
-        container.image.tag.value,
+): boolean {
+    const resolution: ServiceResolution = resolveComposeServiceName(
+        compose,
+        container,
+        getCurrentImageRef(container),
     );
-    return Object.keys(compose.services).some((key) => {
-        const service = compose.services[key];
-        return Boolean(service.image) && service.image.includes(currentImage);
-    });
+    return (
+        resolution.status === 'resolved' || resolution.status === 'ambiguous'
+    );
 }
 
 /**
@@ -597,6 +643,7 @@ class Dockercompose extends Docker {
 export default Dockercompose;
 export {
     doesContainerBelongToCompose,
+    resolveComposeServiceName,
     canonicalizeImageRef,
     imageRefsMatch,
     getCurrentImageRef,
@@ -604,4 +651,4 @@ export {
     renderScalarValue,
     applyComposeEdits,
 };
-export type { ComposeEdit, ComposeFile };
+export type { ComposeEdit, ComposeFile, ServiceResolution };
