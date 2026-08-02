@@ -94,6 +94,17 @@ services:
     build: .
 `;
 
+const composeYamlSingleService = `services:
+  zz_batch_compose_1:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+`;
+
+const composeYamlCrlf = composeYamlSingleService.replace(/\n/g, '\r\n');
+
+const composeYamlBom = `\uFEFF${composeYamlSingleService}`;
+
+const composeYamlTabs = 'services:\n\ta:\n\t\timage: nginx:1.0\n';
+
 const composeYamlPrefixOnly = `services:
   only_prefix:
     image: ghcr.io/stefanprodan/podinfo:5.0.00
@@ -1329,4 +1340,147 @@ test('rewriteComposeFile should skip a service whose image is an alias', async (
         buildAnchorContainer('svc_alias'),
     ]);
     expect(mockedWriteFile).not.toHaveBeenCalled();
+});
+
+test('rewriteComposeFile should neither write nor backup for a digest update', async () => {
+    dockercompose.configuration = { ...baseConfiguration, backup: true };
+    const container = buildContainer({
+        id: 'c-digest',
+        updateKind: {
+            kind: 'digest',
+            localValue: 'sha256:aaa',
+            remoteValue: 'sha256:bbb',
+        },
+    });
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        container,
+    ]);
+    expect(mockedWriteFile).not.toHaveBeenCalled();
+    expect(mockedCopyFile).not.toHaveBeenCalled();
+});
+
+test('rewriteComposeFile should take the backup before the write', async () => {
+    dockercompose.configuration = { ...baseConfiguration, backup: true };
+    const order: string[] = [];
+    mockedCopyFile.mockImplementation(async () => {
+        order.push('copy');
+    });
+    mockedWriteFile.mockImplementation(async () => {
+        order.push('write');
+    });
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        buildContainer(),
+    ]);
+    expect(order).toEqual(['copy', 'write']);
+});
+
+test('rewriteComposeFile should preserve CRLF line endings', async () => {
+    mockedReadFile.mockResolvedValue(Buffer.from(composeYamlCrlf));
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        buildContainer(),
+    ]);
+    const [, data] = mockedWriteFile.mock.calls[0];
+    expect(data).toContain('\r\n');
+    expect(data).toBe(
+        composeYamlCrlf.replace('podinfo:5.0.0', 'podinfo:6.0.0'),
+    );
+});
+
+test('rewriteComposeFile should preserve a leading byte order mark', async () => {
+    mockedReadFile.mockResolvedValue(Buffer.from(composeYamlBom));
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        buildContainer(),
+    ]);
+    const [, data] = mockedWriteFile.mock.calls[0];
+    expect(data).toMatch(/^\uFEFF/);
+    expect(data).toBe(composeYamlBom.replace('podinfo:5.0.0', 'podinfo:6.0.0'));
+});
+
+test('rewriteComposeFile should reject tab-indented yaml without writing', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlTabs);
+    await expect(
+        dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+            buildContainer(),
+        ]),
+    ).rejects.toThrow('Tabs are not allowed as indentation');
+    expect(mockedWriteFile).not.toHaveBeenCalled();
+});
+
+test('rewriteComposeFile should let the first container win for a scaled service', async () => {
+    const debugSpy = jest.spyOn(dockercompose.log, 'debug');
+    const first = buildContainer({ id: 'c1' });
+    const second = buildContainer({
+        id: 'c2',
+        updateKind: { kind: 'tag', localValue: '5.0.0', remoteValue: '6.1.0' },
+    });
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        first,
+        second,
+    ]);
+    expect(mockedWriteFile).toHaveBeenCalledTimes(1);
+    const [, data] = mockedWriteFile.mock.calls[0];
+    expect(data).toBe(
+        composeYaml.replace(
+            'zz_batch_compose_1:\n    image: ghcr.io/stefanprodan/podinfo:5.0.0',
+            'zz_batch_compose_1:\n    image: ghcr.io/stefanprodan/podinfo:6.0.0',
+        ),
+    );
+    expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Service zz_batch_compose_1 already planned'),
+    );
+});
+
+test('groupByComposeFile should drop a container matching no service in the file', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const member = buildContainer({
+        id: 'c-member',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const foreign = buildContainer({
+        id: 'c-foreign',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+        image: {
+            id: 'img-foreign',
+            registry: { name: 'hub', url: 'ghcr.io' },
+            name: 'library/nginx',
+            tag: { value: '5.0.0', semver: true },
+            digest: { watch: false },
+            architecture: 'amd64',
+            os: 'linux',
+        },
+    });
+    const groups = await dockercompose.groupByComposeFile([member, foreign]);
+    expect(groups.get('/abs/docker-compose.yml')).toEqual([member]);
+});
+
+test('triggerBatch should pull and swap a container whose group planned no edit', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const container = buildContainer({ id: 'c-ambiguous', labels: null });
+    const pullSpy = jest
+        .spyOn(dockercompose, 'pullContainer')
+        .mockResolvedValue({} as ContainerUpdateContext);
+    const writeSpy = jest
+        .spyOn(dockercompose, 'writeComposeFile')
+        .mockResolvedValue(undefined);
+    const swapSpy = jest
+        .spyOn(dockercompose, 'swapContainer')
+        .mockImplementation(async (swapped) => buildSwapOutcome(swapped));
+    await dockercompose.triggerBatch([container]);
+    expect(pullSpy).toHaveBeenCalledTimes(1);
+    expect(swapSpy).toHaveBeenCalledTimes(1);
+    expect(writeSpy).not.toHaveBeenCalled();
+});
+
+test('triggerBatch should read the compose file exactly twice for one file', async () => {
+    const c1 = buildContainer({ id: 'c1' });
+    const c2 = buildContainer({ id: 'c2' });
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
+        {} as ContainerUpdateContext,
+    );
+    jest.spyOn(dockercompose, 'writeComposeFile').mockResolvedValue(undefined);
+    jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
+        async (swapped) => buildSwapOutcome(swapped),
+    );
+    await dockercompose.triggerBatch([c1, c2]);
+    expect(mockedReadFile).toHaveBeenCalledTimes(2);
 });
