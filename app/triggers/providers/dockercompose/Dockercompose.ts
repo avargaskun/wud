@@ -1,16 +1,184 @@
 import fs from 'fs/promises';
 import path from 'path';
 import yaml from 'yaml';
+import { Scalar } from 'yaml';
+import type { Document } from 'yaml';
 import Docker from '../docker/Docker';
 import { getState } from '../../../registry';
 import { Container } from '../../../model/container';
 import type { ContainerUpdateContext, TriggerRunResult } from '../docker/types';
 
 /**
+ * Minimal shape of a compose service — only the fields this trigger reads.
+ */
+interface ComposeService {
+    image?: string;
+    build?: unknown;
+}
+
+/**
  * Minimal shape of a parsed docker-compose file — only the fields this trigger reads.
  */
 interface ComposeFile {
-    services: Record<string, { image?: string; build?: string }>;
+    services: Record<string, ComposeService>;
+}
+
+/**
+ * A compose file read once: its exact bytes, its AST and its materialized services.
+ */
+interface LoadedCompose {
+    source: string;
+    doc: Document.Parsed;
+    compose: ComposeFile;
+}
+
+/**
+ * Outcome of matching a container against the services of a compose file.
+ */
+type ServiceResolution =
+    | { status: 'resolved'; serviceName: string; source: 'label' | 'image' }
+    | { status: 'not-found' }
+    | { status: 'ambiguous'; candidates: string[] };
+
+/**
+ * A single character-range replacement to apply to a compose file.
+ */
+interface ComposeEdit {
+    serviceName: string;
+    start: number; // inclusive offset into LoadedCompose.source
+    end: number; // exclusive offset into LoadedCompose.source
+    text: string;
+    from: string;
+    to: string;
+}
+
+/**
+ * Which containers got their compose image line spliced, and which were left stale.
+ */
+interface ComposeRewriteOutcome {
+    editedIds: Set<string>;
+    staleIds: Set<string>;
+}
+
+const COMPOSE_SERVICE_LABEL = 'com.docker.compose.service';
+
+const HUB_HOSTS = new Set<string>([
+    'docker.io',
+    'index.docker.io',
+    'registry-1.docker.io',
+]);
+
+const PLAIN_SAFE = /^[A-Za-z0-9._:/@-]+$/;
+
+/**
+ * Reduce an image reference to a comparable canonical form: drop an explicit
+ * Docker Hub host, then drop a redundant `library/` namespace.
+ */
+function canonicalizeImageRef(ref: string): string {
+    let rest: string = ref.trim();
+    const slash: number = rest.indexOf('/');
+    if (slash !== -1) {
+        const head: string = rest.slice(0, slash);
+        if (HUB_HOSTS.has(head)) {
+            rest = rest.slice(slash + 1);
+        }
+    }
+    if (rest.startsWith('library/') && rest.split('/').length === 2) {
+        rest = rest.slice('library/'.length);
+    }
+    return rest;
+}
+
+/**
+ * Return true when two image references are the same after canonicalization.
+ */
+function imageRefsMatch(a: string, b: string): boolean {
+    return canonicalizeImageRef(a) === canonicalizeImageRef(b);
+}
+
+/**
+ * The image reference WUD believes the container is currently running, in
+ * registry-normalized form. Returns undefined instead of throwing when the
+ * registry is unknown.
+ */
+function getCurrentImageRef(container: Container): string | undefined {
+    const registry = getState().registry[container.image.registry.name];
+    if (!registry) {
+        return undefined;
+    }
+    try {
+        return registry.getImageFullName(
+            container.image,
+            container.image.tag.value,
+        );
+    } catch {
+        return undefined;
+    }
+}
+
+/**
+ * Return the image reference to write, derived from the one already in the file
+ * by replacing only its tag. Returns undefined when the file's reference is not
+ * tag-pinned.
+ */
+function buildUpdatedImageRef(
+    currentFileRef: string,
+    newTag: string,
+): string | undefined {
+    if (currentFileRef.includes('${')) {
+        return undefined;
+    }
+    if (currentFileRef.includes('@')) {
+        return undefined;
+    }
+    const lastColon: number = currentFileRef.lastIndexOf(':');
+    const lastSlash: number = currentFileRef.lastIndexOf('/');
+    if (lastColon === -1 || lastColon < lastSlash) {
+        return undefined;
+    }
+    return `${currentFileRef.slice(0, lastColon)}:${newTag}`;
+}
+
+/**
+ * Render a value back in the quoting style of the scalar it replaces.
+ * Returns undefined when the value cannot be written in that style.
+ */
+function renderScalarValue(
+    value: string,
+    type: Scalar.Type | undefined,
+): string | undefined {
+    switch (type) {
+        case Scalar.QUOTE_DOUBLE:
+            return JSON.stringify(value);
+        case Scalar.QUOTE_SINGLE:
+            return `'${value.replaceAll("'", "''")}'`;
+        case Scalar.PLAIN:
+        case undefined:
+            return PLAIN_SAFE.test(value) ? value : undefined;
+        default:
+            return undefined;
+    }
+}
+
+/**
+ * Apply character-range edits to the source string, in descending start order so
+ * earlier offsets stay valid. Throws on overlapping ranges.
+ */
+function applyComposeEdits(source: string, edits: ComposeEdit[]): string {
+    const ordered: ComposeEdit[] = [...edits].sort((a, b) => b.start - a.start);
+    let result: string = source;
+    let previousStart: number = Number.POSITIVE_INFINITY;
+    for (const edit of ordered) {
+        if (edit.end > previousStart) {
+            throw new Error(
+                `Overlapping compose edits for service ${edit.serviceName} at ${edit.start}-${edit.end}`,
+            );
+        }
+        result =
+            result.slice(0, edit.start) + edit.text + result.slice(edit.end);
+        previousStart = edit.start;
+    }
+    return result;
 }
 
 /**
@@ -427,4 +595,13 @@ class Dockercompose extends Docker {
 }
 
 export default Dockercompose;
-export { doesContainerBelongToCompose };
+export {
+    doesContainerBelongToCompose,
+    canonicalizeImageRef,
+    imageRefsMatch,
+    getCurrentImageRef,
+    buildUpdatedImageRef,
+    renderScalarValue,
+    applyComposeEdits,
+};
+export type { ComposeEdit, ComposeFile };

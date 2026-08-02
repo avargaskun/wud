@@ -1,6 +1,16 @@
 import path from 'path';
 import fs from 'fs/promises';
-import Dockercompose, { doesContainerBelongToCompose } from './Dockercompose';
+import { Scalar } from 'yaml';
+import Dockercompose, {
+    doesContainerBelongToCompose,
+    canonicalizeImageRef,
+    imageRefsMatch,
+    getCurrentImageRef,
+    buildUpdatedImageRef,
+    renderScalarValue,
+    applyComposeEdits,
+} from './Dockercompose';
+import type { ComposeEdit } from './Dockercompose';
 import log from '../../../log';
 import { Container } from '../../../model/container';
 import type {
@@ -591,5 +601,193 @@ test('trigger should return the batch result when the sole member was updated', 
     jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue(batchResult);
     await expect(dockercompose.trigger(container)).resolves.toEqual(
         batchResult,
+    );
+});
+
+test.each([
+    ['docker.io/library/nginx:1.0', 'nginx:1.0'],
+    ['index.docker.io/library/nginx:1.0', 'nginx:1.0'],
+    ['library/nginx:1.0', 'nginx:1.0'],
+    ['nginx:1.0', 'nginx:1.0'],
+    ['ghcr.io/x/y:1.0', 'ghcr.io/x/y:1.0'],
+])('canonicalizeImageRef should canonicalize %s to %s', (input, expected) => {
+    expect(canonicalizeImageRef(input)).toBe(expected);
+});
+
+test('canonicalizeImageRef should not strip library from a 3 segment path', () => {
+    expect(canonicalizeImageRef('ghcr.io/library/x:1.0')).toBe(
+        'ghcr.io/library/x:1.0',
+    );
+});
+
+test('canonicalizeImageRef should not add an implicit latest tag', () => {
+    expect(canonicalizeImageRef('nginx')).toBe('nginx');
+});
+
+test('imageRefsMatch should not match a longer tag with the same prefix', () => {
+    expect(
+        imageRefsMatch(
+            'ghcr.io/stefanprodan/podinfo:5.0.00',
+            'ghcr.io/stefanprodan/podinfo:5.0.0',
+        ),
+    ).toBe(false);
+});
+
+test('imageRefsMatch should not match a combined tag and digest pin', () => {
+    expect(
+        imageRefsMatch(
+            'ghcr.io/stefanprodan/podinfo:5.0.0@sha256:x',
+            'ghcr.io/stefanprodan/podinfo:5.0.0',
+        ),
+    ).toBe(false);
+});
+
+test('imageRefsMatch should match the short and long hub forms', () => {
+    expect(imageRefsMatch('docker.io/library/nginx:1.25', 'nginx:1.25')).toBe(
+        true,
+    );
+});
+
+test('buildUpdatedImageRef should return undefined for a digest pin', () => {
+    expect(
+        buildUpdatedImageRef(
+            'ghcr.io/stefanprodan/podinfo@sha256:abc',
+            '6.0.0',
+        ),
+    ).toBeUndefined();
+});
+
+test('buildUpdatedImageRef should return undefined for an interpolated ref', () => {
+    expect(
+        buildUpdatedImageRef(
+            'ghcr.io/stefanprodan/podinfo:${PODINFO_TAG}',
+            '6.0.0',
+        ),
+    ).toBeUndefined();
+});
+
+test('buildUpdatedImageRef should return undefined for an untagged repo', () => {
+    expect(buildUpdatedImageRef('nginx', '1.1')).toBeUndefined();
+});
+
+test('buildUpdatedImageRef should return undefined for a registry port without a tag', () => {
+    expect(buildUpdatedImageRef('host:5000/repo', '1.1')).toBeUndefined();
+});
+
+test('buildUpdatedImageRef should swap the tag and keep the rest of the ref', () => {
+    expect(buildUpdatedImageRef('docker.io/library/nginx:1.0', '1.1')).toBe(
+        'docker.io/library/nginx:1.1',
+    );
+    expect(buildUpdatedImageRef('host:5000/repo:1.0', '1.1')).toBe(
+        'host:5000/repo:1.1',
+    );
+});
+
+test('renderScalarValue should render a double quoted scalar', () => {
+    expect(renderScalarValue('nginx:1.1', Scalar.QUOTE_DOUBLE)).toBe(
+        '"nginx:1.1"',
+    );
+});
+
+test('renderScalarValue should render a single quoted scalar and double its quotes', () => {
+    expect(renderScalarValue('nginx:1.1', Scalar.QUOTE_SINGLE)).toBe(
+        "'nginx:1.1'",
+    );
+    expect(renderScalarValue("ngi'nx:1.1", Scalar.QUOTE_SINGLE)).toBe(
+        "'ngi''nx:1.1'",
+    );
+});
+
+test('renderScalarValue should render a plain scalar as is', () => {
+    expect(renderScalarValue('nginx:1.1', Scalar.PLAIN)).toBe('nginx:1.1');
+    expect(renderScalarValue('nginx:1.1', undefined)).toBe('nginx:1.1');
+});
+
+test('renderScalarValue should return undefined for a block scalar', () => {
+    expect(
+        renderScalarValue('nginx:1.1', Scalar.BLOCK_LITERAL),
+    ).toBeUndefined();
+});
+
+test('renderScalarValue should return undefined for an unsafe plain value', () => {
+    expect(renderScalarValue('nginx:1.1 #x', Scalar.PLAIN)).toBeUndefined();
+});
+
+test('applyComposeEdits should splice regardless of the input order', () => {
+    const source = '0123456789ABCDEFGHIJ';
+    const edits: ComposeEdit[] = [
+        {
+            serviceName: 'a',
+            start: 2,
+            end: 4,
+            text: 'XX',
+            from: '23',
+            to: 'XX',
+        },
+        {
+            serviceName: 'b',
+            start: 8,
+            end: 10,
+            text: 'Y',
+            from: '89',
+            to: 'Y',
+        },
+        {
+            serviceName: 'c',
+            start: 12,
+            end: 16,
+            text: 'ZZZZZZ',
+            from: 'CDEF',
+            to: 'ZZZZZZ',
+        },
+    ];
+    const ascending = applyComposeEdits(source, edits);
+    const descending = applyComposeEdits(source, [...edits].reverse());
+    expect(ascending).toBe('01XX4567YABZZZZZZGHIJ');
+    expect(descending).toBe(ascending);
+});
+
+test('applyComposeEdits should throw on overlapping ranges', () => {
+    const edits: ComposeEdit[] = [
+        {
+            serviceName: 'a',
+            start: 2,
+            end: 6,
+            text: 'X',
+            from: '2345',
+            to: 'X',
+        },
+        {
+            serviceName: 'b',
+            start: 4,
+            end: 8,
+            text: 'Y',
+            from: '4567',
+            to: 'Y',
+        },
+    ];
+    expect(() => applyComposeEdits('0123456789', edits)).toThrow(
+        'Overlapping compose edits for service a at 2-6',
+    );
+});
+
+test('getCurrentImageRef should return undefined for an unknown registry', () => {
+    const container = buildContainer({
+        image: {
+            id: 'image-id',
+            registry: { name: 'unknown', url: 'ghcr.io' },
+            name: 'stefanprodan/podinfo',
+            tag: { value: '5.0.0', semver: true },
+            digest: { watch: false },
+            architecture: 'amd64',
+            os: 'linux',
+        },
+    });
+    expect(getCurrentImageRef(container)).toBeUndefined();
+});
+
+test('getCurrentImageRef should return the registry normalized ref', () => {
+    expect(getCurrentImageRef(buildContainer())).toBe(
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
     );
 });
