@@ -22,7 +22,7 @@ The file is looked up in this order, and the **first** source that yields at lea
 2. the automatic `com.docker.compose.project.config_files` label;
 3. the trigger's `FILE` variable.
 
-Each source is read as a **comma-separated list**, because that is how Compose writes `com.docker.compose.project.config_files` for a project started with more than one file (`docker-compose.yml,docker-compose.override.yml`). Whitespace around each entry is trimmed, empty entries are dropped, and a relative path is resolved against WUD's working directory. `wud.compose.file` accepts a list too.
+Each source is read as a **comma-separated list**, because that is how Compose writes `com.docker.compose.project.config_files` for a project started with more than one file (`docker-compose.yml,docker-compose.override.yml`). Whitespace around each entry is trimmed, empty entries are dropped, and a relative path is resolved against WUD's working directory. `wud.compose.file` and the trigger's `FILE` variable accept a list too — for `FILE`, the trigger refuses to start unless at least one of the configured paths exists, and warns about each one that does not.
 
 Every candidate is then validated independently: it must exist (as seen from **inside** the wud container) and it must declare a service matching the container. Of those that pass, the **last** one is the file that gets rewritten — later `-f` files win under Compose's own merge semantics, so rewriting an earlier file while a later one still pins the old tag would be a silent no-op on the next `docker compose up`.
 

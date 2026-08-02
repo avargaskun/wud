@@ -289,13 +289,24 @@ class Dockercompose extends Docker {
 
         // Check default docker-compose file exists if specified
         if (this.configuration.file) {
-            try {
-                await fs.access(this.configuration.file);
-            } catch (e) {
-                this.log.error(
-                    `The default file ${this.configuration.file} does not exist`,
-                );
-                throw e;
+            const candidates: string[] = this.splitComposeFileList(
+                this.configuration.file,
+            );
+            const existing: string[] = [];
+            for (const candidate of candidates) {
+                try {
+                    await fs.access(candidate);
+                    existing.push(candidate);
+                } catch {
+                    this.log.warn(
+                        `The default file ${candidate} does not exist`,
+                    );
+                }
+            }
+            if (existing.length === 0) {
+                const message = `The default file ${this.configuration.file} does not exist`;
+                this.log.error(message);
+                throw new Error(message);
             }
         }
     }
@@ -389,7 +400,7 @@ class Dockercompose extends Docker {
                 } catch (e) {
                     loaded = null;
                     this.log.warn(
-                        `Skipping compose file ${file} for container ${container.name} because it could not be parsed (${e.message})`,
+                        `Skipping compose file ${file} for container ${container.name} because it could not be read or parsed (${e.message})`,
                     );
                 }
                 loadedByFile.set(file, loaded);
@@ -406,7 +417,7 @@ class Dockercompose extends Docker {
         if (matching.length === 0) {
             if (parseFailed.length === existing.length) {
                 return {
-                    reason: `none of its candidate compose files could be parsed (${existing.join(', ')})`,
+                    reason: `none of its candidate compose files could be read or parsed (${existing.join(', ')})`,
                 };
             }
             return {

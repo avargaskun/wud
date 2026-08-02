@@ -297,6 +297,31 @@ beforeEach(() => {
     dockercompose.configuration = { ...baseConfiguration };
 });
 
+test('initTrigger should accept a configured file list when at least one exists', async () => {
+    dockercompose.configuration.file = '/abs/a.yml,/abs/b.yml';
+    mockedAccess.mockImplementation(async (file: string) => {
+        if (file === '/abs/b.yml') {
+            return undefined;
+        }
+        throw new Error('missing');
+    });
+    const warn = jest.spyOn(dockercompose.log, 'warn');
+
+    await expect(dockercompose.initTrigger()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+        'The default file /abs/a.yml does not exist',
+    );
+});
+
+test('initTrigger should reject when no configured file exists', async () => {
+    dockercompose.configuration.file = '/abs/a.yml,/abs/b.yml';
+    mockedAccess.mockRejectedValue(new Error('missing'));
+
+    await expect(dockercompose.initTrigger()).rejects.toThrow(
+        'The default file /abs/a.yml,/abs/b.yml does not exist',
+    );
+});
+
 test('getComposeFilesForContainer should return the absolute label path', () => {
     const container = buildContainer({
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
@@ -574,7 +599,7 @@ test('classifyContainers should report a parse failure rather than a service mis
         container,
     ]);
     expect(unprocessable[0].reason).toBe(
-        'none of its candidate compose files could be parsed (/abs/a.yml, /abs/b.yml)',
+        'none of its candidate compose files could be read or parsed (/abs/a.yml, /abs/b.yml)',
     );
 });
 
