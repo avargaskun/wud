@@ -387,6 +387,11 @@ class Dockercompose extends Docker {
                 loadedByFile.set(composeFile, loaded);
             }
             if (!doesContainerBelongToCompose(loaded.compose, container)) {
+                const currentImageRef: string | undefined =
+                    getCurrentImageRef(container);
+                this.log.warn(
+                    `Cannot update container ${container.name} because no service in ${composeFile} pins its image ${currentImageRef ?? 'unknown'}`,
+                );
                 continue;
             }
 

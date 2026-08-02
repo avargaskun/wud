@@ -1485,6 +1485,30 @@ test('groupByComposeFile should drop a container matching no service in the file
     expect(groups.get('/abs/docker-compose.yml')).toEqual([member]);
 });
 
+test('groupByComposeFile should warn when it drops a non-belonging container', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const foreign = buildContainer({
+        id: 'c-foreign',
+        name: 'zz_foreign',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+        image: {
+            id: 'img-foreign',
+            registry: { name: 'hub', url: 'ghcr.io' },
+            name: 'library/nginx',
+            tag: { value: '5.0.0', semver: true },
+            digest: { watch: false },
+            architecture: 'amd64',
+            os: 'linux',
+        },
+    });
+    const groups = await dockercompose.groupByComposeFile([foreign]);
+    expect(groups.size).toBe(0);
+    expect(warnSpy).toHaveBeenCalledWith(
+        'Cannot update container zz_foreign because no service in /abs/docker-compose.yml pins its image ghcr.io/library/nginx:5.0.0',
+    );
+});
+
 test('triggerBatch should pull and swap a container whose group planned no edit', async () => {
     mockedReadFile.mockResolvedValue(composeYamlRich);
     const container = buildContainer({ id: 'c-ambiguous', labels: null });
