@@ -48,6 +48,7 @@ export interface MemberOutcome {
     name: string;
     status: 'updated' | 'failed';
     error?: string;
+    fileUpdated?: boolean; // omitted unless a compose image line was expected to change
 }
 
 /**

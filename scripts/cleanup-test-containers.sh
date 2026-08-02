@@ -37,7 +37,8 @@ docker rm -f \
     zz_batch_remote_1 \
     zz_batch_remote_2 \
     zz_batch_compose_1 \
-    zz_batch_compose_2 2>/dev/null || true
+    zz_batch_compose_2 \
+    zz_batch_compose_bystander 2>/dev/null || true
 
 # Tear down the compose stack and remove the disposable runtime copy
 docker compose -f "$(dirname "$0")/../test/compose-stack/docker-compose.active.yml" down --remove-orphans 2>/dev/null || true

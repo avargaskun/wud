@@ -33,6 +33,8 @@ Feature: WUD Batch Trigger API
     And I GET /api/containers
     Then the container with saved name "CN1" should have a version different than "CV1"
     And the container with saved name "CN2" should have a version different than "CV2"
+    And the compose file "../test/compose-stack/docker-compose.active.yml" should pin service "zz_batch_compose_bystander" to "ghcr.io/stefanprodan/podinfo:5.0.0"
+    And the compose file "../test/compose-stack/docker-compose.active.yml" should pin service "zz_batch_compose_1" to "ghcr.io/stefanprodan/podinfo:6.0.0"
 
   Scenario: Reject an invalid bucket value on the batch endpoint
     When I find the container with name "zz_bucket_batch_1" and save its ID as "BKID1", version as "BKV1", and name as "BKN1"
