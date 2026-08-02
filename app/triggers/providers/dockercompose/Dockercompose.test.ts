@@ -110,6 +110,11 @@ const composeYamlPrefixOnly = `services:
     image: ghcr.io/stefanprodan/podinfo:5.0.00
 `;
 
+const composeYamlDigestCombined = `services:
+  only_digest:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0@sha256:abc123
+`;
+
 const composeYamlAliasBomb = `services:
   bomb:
     image: ghcr.io/stefanprodan/podinfo:5.0.0
@@ -1020,6 +1025,33 @@ test('getUnbatchableContainers should return an empty array for an ambiguous con
 test('getUnbatchableContainers should return a container whose only compose pin is a longer tag', async () => {
     mockedReadFile.mockResolvedValue(composeYamlPrefixOnly);
     const container = buildContainer({ id: 'c1' });
+    await expect(
+        dockercompose.getUnbatchableContainers([container]),
+    ).resolves.toEqual([container]);
+});
+
+test('getUnbatchableContainers should return a container whose only compose pin combines a tag and a digest', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlDigestCombined);
+    const container = buildContainer({ id: 'c1' });
+    await expect(
+        dockercompose.getUnbatchableContainers([container]),
+    ).resolves.toEqual([container]);
+});
+
+test('getUnbatchableContainers should return a container with an unknown registry without throwing', async () => {
+    mockedReadFile.mockResolvedValue(composeYaml);
+    const container = buildContainer({
+        id: 'c1',
+        image: {
+            id: 'image-id',
+            registry: { name: 'unknown', url: 'ghcr.io' },
+            name: 'stefanprodan/podinfo',
+            tag: { value: '5.0.0', semver: true },
+            digest: { watch: false },
+            architecture: 'amd64',
+            os: 'linux',
+        },
+    });
     await expect(
         dockercompose.getUnbatchableContainers([container]),
     ).resolves.toEqual([container]);
