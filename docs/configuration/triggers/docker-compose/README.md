@@ -14,6 +14,22 @@ The trigger will:
 - Remove the previous image (optionally)
 - Bounce the dependent containers declared with the `wud.postupdate.restart` label (optionally)
 
+### Which compose file is updated
+
+The file is looked up in this order, and the **first** source that yields at least one path wins:
+
+1. the container's `wud.compose.file` label;
+2. the automatic `com.docker.compose.project.config_files` label;
+3. the trigger's `FILE` variable.
+
+Each source is read as a **comma-separated list**, because that is how Compose writes `com.docker.compose.project.config_files` for a project started with more than one file (`docker-compose.yml,docker-compose.override.yml`). Whitespace around each entry is trimmed, empty entries are dropped, and a relative path is resolved against WUD's working directory. `wud.compose.file` accepts a list too.
+
+Every candidate is then validated independently: it must exist (as seen from **inside** the wud container) and it must declare a service matching the container. Of those that pass, the **last** one is the file that gets rewritten — later `-f` files win under Compose's own merge semantics, so rewriting an earlier file while a later one still pins the old tag would be a silent no-op on the next `docker compose up`.
+
+A candidate whose YAML cannot be parsed is skipped with a warning and the remaining candidates are still tried; the run only fails if none of them resolves.
+
+!> A path containing a literal comma is not supported — it is split at the comma like any other list.
+
 ### How the compose file is updated
 
 A container is matched to a compose service by the service's **`image:` pin**: the pin and the container's current image reference must be equal once both are canonicalized, so `image: nginx:1.0` and `image: docker.io/library/nginx:1.0` both match the same Docker Hub container.
@@ -40,7 +56,7 @@ Other service shapes are never matched to a container at all, so the container i
 - `build:`-only services (no `image:` key);
 - untagged pins (`image: nginx`).
 
-!> A batch trigger request that explicitly names a container whose service is never matched returns HTTP 400.
+!> A trigger request that explicitly names such a container returns **HTTP 400**, on the single-container endpoint as well as the batch one. The same applies to a container whose compose file cannot be resolved at all — no label and no configured file, none of the candidate files exists, none of them parses, or none of them declares the container's image — and to a container that is not watched on the local host. Such a request used to answer `200` with an empty body while doing nothing; it now fails with the reason in the response body (see the [API documentation](/api/container/?id=response)).
 
 ?> The trigger API response reports the outcome per member: `fileUpdated: true` when the service's `image:` line was rewritten, `false` when the container was updated but its compose file could not be. The field is omitted for digest updates, where no file change is expected because the tag does not change.
 

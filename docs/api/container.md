@@ -298,12 +298,21 @@ notification triggers), and carries the outcome of the run for the `docker` and
 
 ```json
 {
+  "members": [
+    { "id": "31a61a8305ef1fc9a71fa4f20a68d7ec88b28e32303bbc4a5f192e851165b816", "name": "homeassistant", "status": "updated" }
+  ],
   "dependents": [
     { "name": "qbittorrent", "host": "gluetun", "status": "bounced", "method": "recreate" },
     { "name": "qbittorrent-exporter", "host": "gluetun", "status": "skipped", "reason": "unresolved" }
   ]
 }
 ```
+
+`members` holds a single entry — the requested container — with the same fields as on the
+[batch endpoint](#batch-response), and is the authoritative outcome of the run: a `200` whose
+`members[0].status` is `updated` is what proves the container was actually updated. Both the
+`docker` and the `dockercompose` update trigger report it, **except under dry-run**, where
+nothing is applied and the body stays `{}` by design.
 
 `dependents` reports one entry per container named by the updated container's
 [`wud.postupdate.restart`](/configuration/watchers/?id=restart-dependent-containers-after-an-update)
@@ -320,9 +329,40 @@ label. It is absent when no such label is set.
 ?> Dependents that were skipped or failed do **not** change the status code: the update
 itself succeeded, so the response stays `200`. A failed update still returns `500`.
 
-?> A `dockercompose` single trigger delegates to its batch implementation, so its `200`
-body also carries a `members` array with a single entry (see
-[below](#batch-trigger-on-multiple-containers)).
+The request is rejected with a `400` when the trigger cannot act on the container at all —
+e.g. a `dockercompose` container whose compose file cannot be resolved (no
+`wud.compose.file` label and no `com.docker.compose.project.config_files` label, none of the
+candidate files exists, or none of them declares a matching service). Nothing is applied and
+the body names the reason, with the same keys as the
+[batch endpoint](#batch-trigger-on-multiple-containers) plus a `details` array:
+
+```json
+{
+  "error": "Container homeassistant cannot be updated by this trigger (none of its candidate compose files exist (/etc/my-services/docker-compose.yml))",
+  "containers": ["31a61a8305ef1fc9a71fa4f20a68d7ec88b28e32303bbc4a5f192e851165b816"],
+  "details": [
+    {
+      "id": "31a61a8305ef1fc9a71fa4f20a68d7ec88b28e32303bbc4a5f192e851165b816",
+      "name": "homeassistant",
+      "reason": "none of its candidate compose files exist (/etc/my-services/docker-compose.yml)"
+    }
+  ]
+}
+```
+
+The response is `409` when the container is still in WUD's store but no longer exists in
+Docker — it was removed between the last watch cycle and the trigger call:
+
+```json
+{
+  "error": "Container homeassistant no longer exists",
+  "containers": ["31a61a8305ef1fc9a71fa4f20a68d7ec88b28e32303bbc4a5f192e851165b816"]
+}
+```
+
+?> `404` and `409` are not interchangeable: `404` means the id is unknown to **WUD**, while
+`409` means WUD knows the container but **Docker** does not. A `409` clears itself on the
+next watch cycle, which drops the container from the store.
 
 !> With `wud.postupdate.restart` set, the call also blocks through the post-update health
 gate (up to the trigger's `POSTUPDATETIMEOUT`, 5 minutes by default). Reverse proxies with a
@@ -373,7 +413,8 @@ The batch is validated strictly and is
   `containers` (`400`);
 - any container cannot be updated by this trigger as a batch — e.g. a `dockercompose`
   container that does not belong to a managed compose file — the response lists the
-  offending `containers` (`400`).
+  offending `containers`, plus a `details` array carrying `{ id, name, reason }` for each of
+  them (`400`).
 
 If a pull fails mid-batch, no container is swapped and the response is `500` (the whole
 group is left untouched).
@@ -401,6 +442,7 @@ outcome per member and per dependent:
 | `name`   | The container name                                                       |
 | `status` | `updated` or `failed`                                                    |
 | `error`  | The failure message — set when `status` is `failed`                      |
+| `gone`   | `true` when the member failed because the container no longer exists in Docker — omitted otherwise |
 
 `dependents` has the same shape as on the [single trigger endpoint](#response) and covers
 every member's `wud.postupdate.restart` label. A dependent that is itself a member of the
@@ -413,7 +455,10 @@ The status code depends on the members:
 - at least one member `failed` → `500`, with the same `members` / `dependents` fields plus
   an `error` field set to `One or more batch members failed to update`. The members that
   did succeed **are** updated — the all-or-nothing guarantee covers the pull phase, not the
-  swap phase — and the dependents of successfully updated members are still bounced.
+  swap phase — and the dependents of successfully updated members are still bounced. A
+  member that no longer exists in Docker is reported here as `failed` with `gone: true`,
+  rather than mapped onto the `409` the single endpoint returns — a batch-wide status code
+  would lose the outcome of the other members.
 
 ?> Skipped or failed dependents alone do not make the batch fail; they are reported in the
 `200` body.
