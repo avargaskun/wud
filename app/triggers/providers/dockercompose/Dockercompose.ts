@@ -5,7 +5,11 @@ import type { Document } from 'yaml';
 import Docker from '../docker/Docker';
 import { getState } from '../../../registry';
 import { Container } from '../../../model/container';
-import type { ContainerUpdateContext, TriggerRunResult } from '../docker/types';
+import type {
+    ContainerUpdateContext,
+    MemberOutcome,
+    TriggerRunResult,
+} from '../docker/types';
 
 /**
  * Minimal shape of a compose service — only the fields this trigger reads.
@@ -624,8 +628,15 @@ class Dockercompose extends Docker {
         }
 
         // Rewrite phase — images are local now; rewrite each compose file.
+        const editedIds = new Set<string>();
+        const staleIds = new Set<string>();
         for (const [composeFile, groupContainers] of groups) {
-            await this.rewriteComposeFile(composeFile, groupContainers);
+            const outcome = await this.rewriteComposeFile(
+                composeFile,
+                groupContainers,
+            );
+            outcome.editedIds.forEach((id) => editedIds.add(id));
+            outcome.staleIds.forEach((id) => staleIds.add(id));
         }
 
         // Swap phase — barrier across ALL containers. A member that vanished fails.
@@ -640,7 +651,18 @@ class Dockercompose extends Docker {
             swaps,
             new Set(valid.map((container) => container.name.trim())),
         );
-        return { members: this.toMemberOutcomes(swaps), dependents };
+        const members: MemberOutcome[] = this.toMemberOutcomes(swaps).map(
+            (member: MemberOutcome): MemberOutcome => {
+                if (staleIds.has(member.id)) {
+                    return { ...member, fileUpdated: false };
+                }
+                if (editedIds.has(member.id)) {
+                    return { ...member, fileUpdated: true };
+                }
+                return member;
+            },
+        );
+        return { members, dependents };
     }
 
     /**

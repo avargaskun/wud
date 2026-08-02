@@ -1484,3 +1484,104 @@ test('triggerBatch should read the compose file exactly twice for one file', asy
     await dockercompose.triggerBatch([c1, c2]);
     expect(mockedReadFile).toHaveBeenCalledTimes(2);
 });
+
+function stubPullAndSwap(): void {
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
+        {} as ContainerUpdateContext,
+    );
+    jest.spyOn(dockercompose, 'writeComposeFile').mockResolvedValue(undefined);
+    jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
+        async (swapped) => buildSwapOutcome(swapped),
+    );
+}
+
+test('triggerBatch should report fileUpdated false for an ambiguous member', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    stubPullAndSwap();
+    const container = buildContainer({ id: 'c-ambiguous', labels: null });
+    const result = await dockercompose.triggerBatch([container]);
+    expect(result.members).toEqual([
+        {
+            id: 'c-ambiguous',
+            name: 'zz_batch_compose_1',
+            status: 'updated',
+            fileUpdated: false,
+        },
+    ]);
+});
+
+test('triggerBatch should report fileUpdated true for a spliced member', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    stubPullAndSwap();
+    const container = buildContainer({
+        id: 'c-twin',
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+    });
+    const result = await dockercompose.triggerBatch([container]);
+    expect(result.members).toEqual([
+        {
+            id: 'c-twin',
+            name: 'zz_batch_compose_1',
+            status: 'updated',
+            fileUpdated: true,
+        },
+    ]);
+});
+
+test('triggerBatch should omit fileUpdated for a digest member', async () => {
+    stubPullAndSwap();
+    const container = buildContainer({
+        id: 'c-digest',
+        updateKind: {
+            kind: 'digest',
+            localValue: 'sha256:aaa',
+            remoteValue: 'sha256:bbb',
+        },
+    });
+    const result = await dockercompose.triggerBatch([container]);
+    expect('fileUpdated' in result.members[0]).toBe(false);
+    expect(result.members[0].status).toBe('updated');
+});
+
+test('triggerBatch should union the outcomes of two compose files', async () => {
+    mockedReadFile.mockImplementation(async () => composeYamlRich);
+    stubPullAndSwap();
+    const stale = buildContainer({ id: 'c-stale', labels: null });
+    const edited = buildContainer({
+        id: 'c-edited',
+        labels: {
+            'com.docker.compose.service': 'svc_twin',
+            'wud.compose.file': '/abs/b.yml',
+        },
+    });
+    const result = await dockercompose.triggerBatch([stale, edited]);
+    const byId = new Map(result.members.map((member) => [member.id, member]));
+    expect(byId.get('c-stale').fileUpdated).toBe(false);
+    expect(byId.get('c-edited').fileUpdated).toBe(true);
+});
+
+test('triggerBatch should report fileUpdated true for both containers of a scaled service', async () => {
+    stubPullAndSwap();
+    const first = buildContainer({ id: 'c1' });
+    const second = buildContainer({ id: 'c2' });
+    const result = await dockercompose.triggerBatch([first, second]);
+    expect(result.members.map((member) => member.fileUpdated)).toEqual([
+        true,
+        true,
+    ]);
+});
+
+test('triggerBatch should annotate by container id when two members share a name', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    stubPullAndSwap();
+    const stale = buildContainer({ id: 'c-stale', name: 'dup', labels: null });
+    const edited = buildContainer({
+        id: 'c-edited',
+        name: 'dup',
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+    });
+    const result = await dockercompose.triggerBatch([stale, edited]);
+    const byId = new Map(result.members.map((member) => [member.id, member]));
+    expect(byId.get('c-stale').fileUpdated).toBe(false);
+    expect(byId.get('c-edited').fileUpdated).toBe(true);
+});
