@@ -128,6 +128,20 @@ x-a6: &a6 [*a5, *a5]
 x-a7: &a7 [*a6, *a6]
 `;
 
+const composeYamlCascade = `services:
+  svc_a:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+  svc_b:
+    image: ghcr.io/stefanprodan/podinfo:6.0.0
+`;
+
+const composeYamlCascadeExpected = `services:
+  svc_a:
+    image: ghcr.io/stefanprodan/podinfo:6.0.0
+  svc_b:
+    image: ghcr.io/stefanprodan/podinfo:6.1.0
+`;
+
 const baseConfiguration = {
     prune: false,
     dryrun: false,
@@ -234,6 +248,33 @@ function buildAnchorContainer(label: string | null): Container {
         },
         updateKind: { kind: 'tag', localValue: '4.0.0', remoteValue: '4.1.0' },
     });
+}
+
+function buildCascadeContainers(): [Container, Container] {
+    return [
+        buildContainer({
+            id: 'c-cascade-a',
+            labels: { 'com.docker.compose.service': 'svc_a' },
+        }),
+        buildContainer({
+            id: 'c-cascade-b',
+            labels: { 'com.docker.compose.service': 'svc_b' },
+            image: {
+                id: 'img-cascade-b',
+                registry: { name: 'hub', url: 'ghcr.io' },
+                name: 'stefanprodan/podinfo',
+                tag: { value: '6.0.0', semver: true },
+                digest: { watch: false },
+                architecture: 'amd64',
+                os: 'linux',
+            },
+            updateKind: {
+                kind: 'tag',
+                localValue: '6.0.0',
+                remoteValue: '6.1.0',
+            },
+        }),
+    ];
 }
 
 async function loadRichCompose(): Promise<ComposeFile> {
@@ -1461,6 +1502,21 @@ test('rewriteComposeFile should let the first container win for a scaled service
         expect.stringContaining('Service zz_batch_compose_1 already planned'),
     );
 });
+
+test.each([false, true])(
+    'rewriteComposeFile should bump two services with overlapping tags without cascading (reversed order: %s)',
+    async (reversed: boolean) => {
+        mockedReadFile.mockResolvedValue(composeYamlCascade);
+        const containers = buildCascadeContainers();
+        await dockercompose.rewriteComposeFile(
+            '/abs/docker-compose.yml',
+            reversed ? [containers[1], containers[0]] : containers,
+        );
+        expect(mockedWriteFile).toHaveBeenCalledTimes(1);
+        const data: string = mockedWriteFile.mock.calls[0][1] as string;
+        expect(data).toBe(composeYamlCascadeExpected);
+    },
+);
 
 test('groupByComposeFile should drop a container matching no service in the file', async () => {
     mockedReadFile.mockResolvedValue(composeYamlRich);
