@@ -439,7 +439,7 @@ class Dockercompose extends Docker {
         for (const container of containers) {
             if (container.updateKind?.kind !== 'tag') {
                 this.log.debug(
-                    `Skipping ${container.name}: ${container.updateKind?.kind} update does not change the compose image`,
+                    `Skipping ${container.name}: ${container.updateKind?.kind ?? 'unknown'} update does not change the compose image`,
                 );
                 continue;
             }
@@ -727,9 +727,15 @@ class Dockercompose extends Docker {
      * @returns {Promise<LoadedCompose>}
      */
     async loadComposeFile(composeFile: string): Promise<LoadedCompose> {
-        const source: string = (
-            await this.getComposeFile(composeFile)
-        ).toString();
+        let source: string;
+        try {
+            source = (await this.getComposeFile(composeFile)).toString();
+        } catch (e) {
+            this.log.error(
+                `Error when reading the docker-compose yaml file ${composeFile} (${e.message})`,
+            );
+            throw e;
+        }
         const doc: Document.Parsed = parseDocument(source);
         if (doc.errors.length > 0) {
             const first = doc.errors[0];

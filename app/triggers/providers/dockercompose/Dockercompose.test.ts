@@ -1129,6 +1129,19 @@ test('loadComposeFile should log and rethrow when materializing the document fai
     );
 });
 
+test('loadComposeFile should log and rethrow when the compose file cannot be read', async () => {
+    const errorSpy = jest.spyOn(dockercompose.log, 'error');
+    mockedReadFile.mockRejectedValue(
+        new Error('ENOENT: no such file or directory'),
+    );
+    await expect(
+        dockercompose.loadComposeFile('/abs/docker-compose.yml'),
+    ).rejects.toThrow('ENOENT: no such file or directory');
+    expect(errorSpy).toHaveBeenCalledWith(
+        'Error when reading the docker-compose yaml file /abs/docker-compose.yml (ENOENT: no such file or directory)',
+    );
+});
+
 test('getComposeFileAsObject should return empty services for an empty file', async () => {
     mockedReadFile.mockResolvedValue('');
     await expect(
@@ -1203,6 +1216,30 @@ test('planComposeEdits should put a digest update in neither set', async () => {
     expect(edits).toEqual([]);
     expect(editedIds.has('c-digest')).toBe(false);
     expect(staleIds.has('c-digest')).toBe(false);
+});
+
+test('planComposeEdits should describe a container without an update kind as unknown', async () => {
+    const debugSpy = jest.spyOn(dockercompose.log, 'debug');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        id: 'c-no-kind',
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+        updateKind: undefined,
+    });
+    const { edits, editedIds, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toEqual([]);
+    expect(editedIds.has('c-no-kind')).toBe(false);
+    expect(staleIds.has('c-no-kind')).toBe(false);
+    expect(debugSpy).toHaveBeenCalledWith(
+        'Skipping zz_batch_compose_1: unknown update does not change the compose image',
+    );
 });
 
 test('planComposeEdits should mark an ambiguous container stale and name every candidate', async () => {
