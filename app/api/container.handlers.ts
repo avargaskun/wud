@@ -11,6 +11,7 @@ import {
     UPDATE_BUCKET_KEYS,
 } from '../model/container';
 import Trigger from '../triggers/providers/Trigger';
+import { ContainerGoneError } from '../triggers/providers/docker/errors';
 import type { TriggerRunResult } from '../triggers/providers/docker/types';
 import { BatchTriggerRequestBody, TriggerRequestBody } from './types';
 
@@ -211,29 +212,57 @@ export async function runTrigger(req: Request, res: Response): Promise<void> {
         return;
     }
 
+    const update = bucket ? containerToTrigger.updates?.[bucket] : undefined;
+    if (bucket && !update) {
+        res.status(400).json({
+            error: `Container has no populated '${bucket}' update`,
+        });
+        return;
+    }
+
     try {
-        let result: TriggerRunResult | undefined;
-        if (bucket) {
-            const update = containerToTrigger.updates?.[bucket];
-            if (!update) {
-                res.status(400).json({
-                    error: `Container has no populated '${bucket}' update`,
-                });
-                return;
-            }
-            result = (await triggerToRun.trigger(
-                Trigger.buildTriggerView(containerToTrigger, update),
-            )) as TriggerRunResult | undefined;
-        } else {
-            result = (await triggerToRun.trigger(containerToTrigger)) as
-                | TriggerRunResult
-                | undefined;
+        const containerToRun = update
+            ? Trigger.buildTriggerView(containerToTrigger, update)
+            : containerToTrigger;
+
+        const unprocessable = await triggerToRun.getUnprocessableContainers([
+            containerToRun,
+        ]);
+        if (unprocessable.length > 0) {
+            const [{ reason }] = unprocessable;
+            log.warn(
+                `Trigger cannot be applied (type=${triggerType}, name=${triggerName}, container=${containerToTrigger.name}, reason=${reason})`,
+            );
+            res.status(400).json({
+                error: `Container ${containerToTrigger.name} cannot be updated by this trigger (${reason})`,
+                containers: [containerToTrigger.id],
+                details: unprocessable.map((u) => ({
+                    id: u.container.id,
+                    name: u.container.name,
+                    reason: u.reason,
+                })),
+            });
+            return;
         }
+
+        const result = (await triggerToRun.trigger(containerToRun)) as
+            | TriggerRunResult
+            | undefined;
         log.info(
             `Trigger executed with success (type=${triggerType}, name=${triggerName}, container=${JSON.stringify(containerToTrigger)})`,
         );
         res.status(200).json(result ?? {});
     } catch (e) {
+        if (e instanceof ContainerGoneError) {
+            log.warn(
+                `Container gone (type=${triggerType}, name=${triggerName}, container=${containerToTrigger.name})`,
+            );
+            res.status(409).json({
+                error: e.message,
+                containers: [containerToTrigger.id],
+            });
+            return;
+        }
         log.warn(
             `Error when running trigger (type=${triggerType}, name=${triggerName}) (${e.message})`,
         );

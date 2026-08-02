@@ -4,6 +4,7 @@ import * as agent from '../agent';
 import * as registry from '../registry';
 import * as component from './component';
 import express from 'express';
+import { ContainerGoneError } from '../triggers/providers/docker/errors';
 
 jest.mock('express', () => ({
     Router: jest.fn(),
@@ -247,6 +248,7 @@ describe('Trigger API', () => {
 
         const mockTrigger = {
             trigger: jest.fn().mockResolvedValue({}),
+            getUnprocessableContainers: jest.fn().mockResolvedValue([]),
         };
         // @ts-ignore
         registry.getState.mockReturnValue({
@@ -280,6 +282,7 @@ describe('Trigger API', () => {
         };
         const mockTrigger = {
             trigger: jest.fn().mockResolvedValue(result),
+            getUnprocessableContainers: jest.fn().mockResolvedValue([]),
         };
         registry.getState.mockReturnValue({
             trigger: { 'docker.default': mockTrigger },
@@ -299,6 +302,7 @@ describe('Trigger API', () => {
         };
         const mockTrigger = {
             trigger: jest.fn().mockResolvedValue(undefined),
+            getUnprocessableContainers: jest.fn().mockResolvedValue([]),
         };
         registry.getState.mockReturnValue({
             trigger: { 'docker.default': mockTrigger },
@@ -341,6 +345,7 @@ describe('Trigger API', () => {
 
         const mockTrigger = {
             trigger: jest.fn().mockRejectedValue(new Error('Trigger error')),
+            getUnprocessableContainers: jest.fn().mockResolvedValue([]),
         };
         // @ts-ignore
         registry.getState.mockReturnValue({
@@ -357,6 +362,69 @@ describe('Trigger API', () => {
                 error: expect.stringContaining('Trigger error'),
             }),
         );
+    });
+
+    test('should return 400 if the trigger cannot process the container', async () => {
+        const container = { id: '123', name: 'c1' };
+        mockReq = {
+            params: { type: 'dockercompose', name: 'default' },
+            body: container,
+        };
+
+        const mockTrigger = {
+            trigger: jest.fn().mockResolvedValue({}),
+            getUnprocessableContainers: jest.fn().mockResolvedValue([
+                {
+                    container,
+                    reason: 'it is not running on the local host',
+                },
+            ]),
+        };
+        registry.getState.mockReturnValue({
+            trigger: { 'dockercompose.default': mockTrigger },
+        });
+
+        await runTrigger(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(400);
+        expect(mockRes.json).toHaveBeenCalledWith({
+            error: 'Container c1 cannot be updated by this trigger (it is not running on the local host)',
+            containers: ['123'],
+            details: [
+                {
+                    id: '123',
+                    name: 'c1',
+                    reason: 'it is not running on the local host',
+                },
+            ],
+        });
+        expect(mockTrigger.trigger).not.toHaveBeenCalled();
+    });
+
+    test('should return 409 if the trigger reports the container is gone', async () => {
+        const container = { id: '123', name: 'c1' };
+        mockReq = {
+            params: { type: 'docker', name: 'default' },
+            body: container,
+        };
+
+        const mockTrigger = {
+            trigger: jest
+                .fn()
+                .mockRejectedValue(new ContainerGoneError(container)),
+            getUnprocessableContainers: jest.fn().mockResolvedValue([]),
+        };
+        registry.getState.mockReturnValue({
+            trigger: { 'docker.default': mockTrigger },
+        });
+
+        await runTrigger(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(409);
+        expect(mockRes.json).toHaveBeenCalledWith({
+            error: 'Container c1 no longer exists',
+            containers: ['123'],
+        });
     });
 
     test('should return 404 if remote agent not found for runRemoteTrigger', async () => {

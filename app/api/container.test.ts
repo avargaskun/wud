@@ -7,6 +7,7 @@ import {
 import * as storeContainer from '../store/container';
 import * as registry from '../registry';
 import Trigger from '../triggers/providers/Trigger';
+import { ContainerGoneError } from '../triggers/providers/docker/errors';
 import { Container } from '../model/container';
 
 jest.mock('../store/container');
@@ -182,6 +183,7 @@ describe('Container API', () => {
 
     describe('runTrigger', () => {
         const mockTrigger = jest.fn();
+        const mockGetUnprocessable = jest.fn();
 
         const buildContainer = (overrides = {}) => ({
             id: 'c1',
@@ -227,9 +229,13 @@ describe('Container API', () => {
                 RealTrigger.buildTriggerView,
             );
             mockTrigger.mockReset().mockResolvedValue(undefined);
+            mockGetUnprocessable.mockReset().mockResolvedValue([]);
             (registry.getState as jest.Mock).mockReturnValue({
                 trigger: {
-                    'docker.update': { trigger: mockTrigger },
+                    'docker.update': {
+                        trigger: mockTrigger,
+                        getUnprocessableContainers: mockGetUnprocessable,
+                    },
                 },
             });
         });
@@ -384,7 +390,12 @@ describe('Container API', () => {
             const agentTrigger = jest.fn().mockResolvedValue(undefined);
             (registry.getState as jest.Mock).mockReturnValue({
                 trigger: {
-                    'agent1.docker.update': { trigger: agentTrigger },
+                    'agent1.docker.update': {
+                        trigger: agentTrigger,
+                        getUnprocessableContainers: jest
+                            .fn()
+                            .mockResolvedValue([]),
+                    },
                 },
             });
             const container = buildContainer({
@@ -490,6 +501,130 @@ describe('Container API', () => {
 
             expect(mockRes.status).toHaveBeenCalledWith(200);
             expect(mockRes.json).toHaveBeenCalledWith({});
+        });
+
+        test('should return 400 when the trigger cannot process the container', async () => {
+            const container = buildContainer();
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+            mockGetUnprocessable.mockResolvedValue([
+                { container, reason: 'it is not running on the local host' },
+            ]);
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith({
+                error: 'Container c1 cannot be updated by this trigger (it is not running on the local host)',
+                containers: ['c1'],
+                details: [
+                    {
+                        id: 'c1',
+                        name: 'c1',
+                        reason: 'it is not running on the local host',
+                    },
+                ],
+            });
+            expect(mockTrigger).not.toHaveBeenCalled();
+        });
+
+        test('should probe and trigger with the same container instance on the raw path', async () => {
+            const container = buildContainer();
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockGetUnprocessable).toHaveBeenCalledTimes(1);
+            expect(mockGetUnprocessable.mock.calls[0][0][0]).toBe(
+                mockTrigger.mock.calls[0][0],
+            );
+            expect(mockTrigger.mock.calls[0][0]).toBe(container);
+        });
+
+        test('should probe and trigger with the same container instance on the bucket path', async () => {
+            const container = buildContainer();
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                { bucket: 'patch' },
+            );
+
+            expect(mockGetUnprocessable).toHaveBeenCalledTimes(1);
+            const probed = mockGetUnprocessable.mock.calls[0][0][0];
+            expect(probed).not.toBe(container);
+            expect(probed).toBe(mockTrigger.mock.calls[0][0]);
+        });
+
+        test('should return 409 when the trigger reports the container is gone', async () => {
+            const container = buildContainer();
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                container,
+            );
+            mockTrigger.mockRejectedValue(
+                new ContainerGoneError(container as unknown as Container),
+            );
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(409);
+            expect(mockRes.json).toHaveBeenCalledWith({
+                error: 'Container c1 no longer exists',
+                containers: ['c1'],
+            });
+        });
+
+        test('should return 500 when the unprocessable probe rejects', async () => {
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                buildContainer(),
+            );
+            mockGetUnprocessable.mockRejectedValue(new Error('probe boom'));
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(500);
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    error: expect.stringContaining('probe boom'),
+                }),
+            );
+            expect(mockTrigger).not.toHaveBeenCalled();
+        });
+
+        test('should return 500 when the trigger rejects with a plain error', async () => {
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                buildContainer(),
+            );
+            mockTrigger.mockRejectedValue(new Error('boom'));
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(500);
+            expect(mockRes.json).toHaveBeenCalledWith(
+                expect.objectContaining({
+                    error: expect.stringContaining('boom'),
+                }),
+            );
         });
     });
 
