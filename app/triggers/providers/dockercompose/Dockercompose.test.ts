@@ -586,7 +586,7 @@ test('classifyContainers should list the existing candidates when none declares 
         container,
     ]);
     expect(unprocessable[0].reason).toBe(
-        'it does not match any service of /abs/a.yml, /abs/b.yml',
+        'no service in /abs/a.yml, /abs/b.yml pins its image ghcr.io/stefanprodan/podinfo:5.0.0',
     );
 });
 
@@ -611,7 +611,7 @@ test('classifyContainers should warn when a container matches no service', async
     });
     await dockercompose.classifyContainers([container]);
     expect(warnSpy).toHaveBeenCalledWith(
-        'Cannot update container zz_batch_compose_1 because it does not match any service of /abs/docker-compose.yml',
+        'Cannot update container zz_batch_compose_1 because no service in /abs/docker-compose.yml pins its image ghcr.io/stefanprodan/podinfo:5.0.0',
     );
 });
 
@@ -843,7 +843,7 @@ test('getUnprocessableContainers should return containers that do not belong to 
     ]);
     expect(result).toHaveLength(1);
     expect(result[0].container).toBe(foreign);
-    expect(result[0].reason).toMatch(/does not match any service/);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
 test('getUnprocessableContainers should return an empty array when all containers belong', async () => {
@@ -1380,18 +1380,19 @@ test('getUnprocessableContainers should return a container whose only compose pi
     const result = await dockercompose.getUnprocessableContainers([container]);
     expect(result).toHaveLength(1);
     expect(result[0].container).toBe(container);
-    expect(result[0].reason).toMatch(/does not match any service/);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
-test('getUnbatchableContainers should return a container whose only compose pin combines a tag and a digest', async () => {
+test('getUnprocessableContainers should return a container whose only compose pin combines a tag and a digest', async () => {
     mockedReadFile.mockResolvedValue(composeYamlDigestCombined);
     const container = buildContainer({ id: 'c1' });
-    await expect(
-        dockercompose.getUnbatchableContainers([container]),
-    ).resolves.toEqual([container]);
+    const result = await dockercompose.getUnprocessableContainers([container]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(container);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
-test('getUnbatchableContainers should return a container with an unknown registry without throwing', async () => {
+test('getUnprocessableContainers should return a container with an unknown registry without throwing', async () => {
     mockedReadFile.mockResolvedValue(composeYaml);
     const container = buildContainer({
         id: 'c1',
@@ -1405,9 +1406,10 @@ test('getUnbatchableContainers should return a container with an unknown registr
             os: 'linux',
         },
     });
-    await expect(
-        dockercompose.getUnbatchableContainers([container]),
-    ).resolves.toEqual([container]);
+    const result = await dockercompose.getUnprocessableContainers([container]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(container);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
 test('groupByComposeFile should keep an ambiguous container in its group', async () => {

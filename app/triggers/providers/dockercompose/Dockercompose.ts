@@ -421,7 +421,7 @@ class Dockercompose extends Docker {
                 };
             }
             return {
-                reason: `it does not match any service of ${existing.join(', ')}`,
+                reason: `no service in ${existing.join(', ')} pins its image ${getCurrentImageRef(container) ?? 'unknown'}`,
             };
         }
 
