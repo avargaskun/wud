@@ -1,6 +1,7 @@
 // @ts-nocheck
 import { ValidationError } from 'joi';
 import Docker from './Docker';
+import { ContainerGoneError } from './errors';
 import log from '../../../log';
 
 const configurationValid = {
@@ -457,6 +458,9 @@ const happyContainer = {
 
 test('trigger should not throw when all is ok', async () => {
     await expect(docker.trigger(happyContainer)).resolves.toEqual({
+        members: [
+            { id: '123456789', name: 'container-name', status: 'updated' },
+        ],
         dependents: [],
     });
 });
@@ -684,7 +688,8 @@ test('triggerBatch should swap only the containers whose pull returned a context
             id: 'gone',
             name: 'gone',
             status: 'failed',
-            error: 'Container no longer exists',
+            error: 'Container gone no longer exists',
+            gone: true,
         },
         { id: 'live', name: 'live', status: 'updated' },
     ]);
@@ -855,7 +860,12 @@ test('trigger should not use fallback when multi-network create succeeds', async
                 remoteValue: '4.5.6',
             },
         }),
-    ).resolves.toEqual({ dependents: [] });
+    ).resolves.toEqual({
+        members: [
+            { id: '123456789', name: 'container-name', status: 'updated' },
+        ],
+        dependents: [],
+    });
 
     watcherSpy.mockRestore();
 
@@ -943,7 +953,12 @@ test('trigger should fallback to primary then connect secondary networks', async
                 remoteValue: '4.5.6',
             },
         }),
-    ).resolves.toEqual({ dependents: [] });
+    ).resolves.toEqual({
+        members: [
+            { id: '123456789', name: 'container-name', status: 'updated' },
+        ],
+        dependents: [],
+    });
 
     watcherSpy.mockRestore();
 
@@ -1797,6 +1812,9 @@ test('trigger should run the post-update epilogue with the updated container', a
             },
         ]);
     await expect(docker.trigger(happyContainer)).resolves.toEqual({
+        members: [
+            { id: '123456789', name: 'container-name', status: 'updated' },
+        ],
         dependents: [
             {
                 name: 'dep',
@@ -1870,5 +1888,57 @@ test('triggerBatch should report a failed member and still bounce the sibling de
         error: 'swap failed',
     });
     expect(memberNames).toEqual(new Set(['good', 'bad']));
+    jest.restoreAllMocks();
+});
+
+test('trigger should throw ContainerGoneError when the container no longer exists', async () => {
+    jest.spyOn(docker, 'pullContainer').mockResolvedValue(undefined);
+    const swapSpy = jest.spyOn(docker, 'swapContainer');
+    await expect(docker.trigger(happyContainer)).rejects.toBeInstanceOf(
+        ContainerGoneError,
+    );
+    await expect(docker.trigger(happyContainer)).rejects.toThrowError(
+        'Container container-name no longer exists',
+    );
+    expect(swapSpy).not.toHaveBeenCalled();
+    jest.restoreAllMocks();
+});
+
+test('trigger should still resolve undefined under dry-run', async () => {
+    docker.configuration = { ...configurationValid, dryrun: true };
+    await expect(docker.trigger(happyContainer)).resolves.toBeUndefined();
+    docker.configuration = configurationValid;
+    jest.restoreAllMocks();
+});
+
+test('swapAll should mark a context-less member gone and toMemberOutcomes should propagate it', async () => {
+    const gone = { id: 'gone', name: 'gone', watcher: 'test' };
+    const live = { id: 'live', name: 'live', watcher: 'test' };
+    jest.spyOn(docker, 'swapContainer').mockImplementation(async (c) =>
+        buildSwapMock(c),
+    );
+    const swaps = await docker.swapAll(
+        [gone, live],
+        [undefined, { currentContainerSpec: { Id: 'spec-live' } }],
+    );
+    expect(swaps[0]).toEqual({
+        container: gone,
+        success: false,
+        startedAfterSwap: false,
+        oldContainerId: 'gone',
+        error: 'Container gone no longer exists',
+        gone: true,
+    });
+    expect(swaps[1].gone).toBeUndefined();
+    expect(docker.toMemberOutcomes(swaps)).toEqual([
+        {
+            id: 'gone',
+            name: 'gone',
+            status: 'failed',
+            error: 'Container gone no longer exists',
+            gone: true,
+        },
+        { id: 'live', name: 'live', status: 'updated' },
+    ]);
     jest.restoreAllMocks();
 });

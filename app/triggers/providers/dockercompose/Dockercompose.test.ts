@@ -764,7 +764,8 @@ test('triggerBatch should swap only the containers whose pull returned a context
             id: 'gone',
             name: 'zz_batch_compose_1',
             status: 'failed',
-            error: 'Container no longer exists',
+            error: 'Container zz_batch_compose_1 no longer exists',
+            gone: true,
         },
     ]);
 });

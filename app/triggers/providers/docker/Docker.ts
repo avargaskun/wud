@@ -8,6 +8,7 @@ import type Registry from '../../../registries/Registry';
 import Logger from 'bunyan';
 import { wudPostupdateRestart } from '../../../watchers/providers/docker/label';
 import { getPostupdateBounceCounter } from '../../../prometheus/postupdate';
+import { ContainerGoneError } from './errors';
 import type {
     ContainerUpdateContext,
     DependentOutcome,
@@ -1155,9 +1156,7 @@ class Docker extends Trigger {
             containers.map((container, index) => {
                 const ctx = contexts[index];
                 if (!ctx) {
-                    return Promise.reject(
-                        new Error('Container no longer exists'),
-                    );
+                    return Promise.reject(new ContainerGoneError(container));
                 }
                 return this.swapContainer(container, ctx);
             }),
@@ -1178,6 +1177,9 @@ class Docker extends Trigger {
                 oldContainerId:
                     contexts[index]?.currentContainerSpec?.Id ?? container.id,
                 error,
+                ...(result.reason instanceof ContainerGoneError
+                    ? { gone: true }
+                    : {}),
             };
         });
     }
@@ -1192,6 +1194,7 @@ class Docker extends Trigger {
             name: swap.container.name,
             status: swap.success ? 'updated' : 'failed',
             ...(swap.error ? { error: swap.error } : {}),
+            ...(swap.gone ? { gone: true } : {}),
         }));
     }
 
@@ -1203,7 +1206,7 @@ class Docker extends Trigger {
     async trigger(container: Container): Promise<TriggerRunResult | undefined> {
         const ctx = await this.pullContainer(container);
         if (!ctx) {
-            return;
+            throw new ContainerGoneError(container);
         }
 
         // Dry-run?
@@ -1222,7 +1225,7 @@ class Docker extends Trigger {
             [swap],
             new Set([container.name.trim()]),
         );
-        return { dependents };
+        return { members: this.toMemberOutcomes([swap]), dependents };
     }
 
     /**
