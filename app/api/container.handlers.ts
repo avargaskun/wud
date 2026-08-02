@@ -364,12 +364,17 @@ export async function runTriggerBatch(
                   Trigger.buildTriggerView(c, c.updates![bucket]!),
               )
             : containers;
-        const unbatchable =
-            await triggerToRun.getUnbatchableContainers(containersToRun);
-        if (unbatchable.length > 0) {
+        const unprocessable =
+            await triggerToRun.getUnprocessableContainers(containersToRun);
+        if (unprocessable.length > 0) {
             res.status(400).json({
                 error: 'All containers must be updatable by this trigger as a batch',
-                containers: unbatchable.map((container) => container.id),
+                containers: unprocessable.map((u) => u.container.id),
+                details: unprocessable.map((u) => ({
+                    id: u.container.id,
+                    name: u.container.name,
+                    reason: u.reason,
+                })),
             });
             return;
         }

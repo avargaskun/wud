@@ -792,7 +792,7 @@ test('doesContainerBelongToCompose should return false without throwing when a s
     expect(doesContainerBelongToCompose(compose, buildContainer())).toBe(false);
 });
 
-test('getUnbatchableContainers should return containers that do not belong to a compose file', async () => {
+test('getUnprocessableContainers should return containers that do not belong to a compose file', async () => {
     const belongs = buildContainer({
         id: 'c1',
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
@@ -810,14 +810,16 @@ test('getUnbatchableContainers should return containers that do not belong to a 
             os: 'linux',
         },
     });
-    const result = await dockercompose.getUnbatchableContainers([
+    const result = await dockercompose.getUnprocessableContainers([
         belongs,
         foreign,
     ]);
-    expect(result).toEqual([foreign]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(foreign);
+    expect(result[0].reason).toMatch(/does not match any service/);
 });
 
-test('getUnbatchableContainers should return an empty array when all containers belong', async () => {
+test('getUnprocessableContainers should return an empty array when all containers belong', async () => {
     const c1 = buildContainer({
         id: 'c1',
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
@@ -826,7 +828,7 @@ test('getUnbatchableContainers should return an empty array when all containers 
         id: 'c2',
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
     });
-    const result = await dockercompose.getUnbatchableContainers([c1, c2]);
+    const result = await dockercompose.getUnprocessableContainers([c1, c2]);
     expect(result).toEqual([]);
 });
 
@@ -1300,20 +1302,21 @@ test('doesContainerBelongToCompose should return true for an ambiguous container
     ).toBe(true);
 });
 
-test('getUnbatchableContainers should return an empty array for an ambiguous container', async () => {
+test('getUnprocessableContainers should return an empty array for an ambiguous container', async () => {
     mockedReadFile.mockResolvedValue(composeYamlRich);
     const container = buildContainer({ id: 'c1', labels: null });
     await expect(
-        dockercompose.getUnbatchableContainers([container]),
+        dockercompose.getUnprocessableContainers([container]),
     ).resolves.toEqual([]);
 });
 
-test('getUnbatchableContainers should return a container whose only compose pin is a longer tag', async () => {
+test('getUnprocessableContainers should return a container whose only compose pin is a longer tag', async () => {
     mockedReadFile.mockResolvedValue(composeYamlPrefixOnly);
     const container = buildContainer({ id: 'c1' });
-    await expect(
-        dockercompose.getUnbatchableContainers([container]),
-    ).resolves.toEqual([container]);
+    const result = await dockercompose.getUnprocessableContainers([container]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(container);
+    expect(result[0].reason).toMatch(/does not match any service/);
 });
 
 test('getUnbatchableContainers should return a container whose only compose pin combines a tag and a digest', async () => {

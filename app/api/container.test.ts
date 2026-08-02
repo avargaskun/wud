@@ -495,7 +495,7 @@ describe('Container API', () => {
 
     describe('runTriggerBatch', () => {
         const mockTriggerBatch = jest.fn();
-        const mockGetUnbatchable = jest.fn();
+        const mockGetUnprocessable = jest.fn();
 
         const buildContainer = (overrides = {}) => ({
             id: 'c1',
@@ -514,12 +514,12 @@ describe('Container API', () => {
 
         beforeEach(() => {
             mockTriggerBatch.mockReset().mockResolvedValue(undefined);
-            mockGetUnbatchable.mockReset().mockResolvedValue([]);
+            mockGetUnprocessable.mockReset().mockResolvedValue([]);
             (registry.getState as jest.Mock).mockReturnValue({
                 trigger: {
                     'docker.update': {
                         triggerBatch: mockTriggerBatch,
-                        getUnbatchableContainers: mockGetUnbatchable,
+                        getUnprocessableContainers: mockGetUnprocessable,
                     },
                 },
             });
@@ -680,13 +680,15 @@ describe('Container API', () => {
             expect(mockTriggerBatch).not.toHaveBeenCalled();
         });
 
-        test('should return 400 and not call triggerBatch when the trigger reports unbatchable containers', async () => {
+        test('should return 400 and not call triggerBatch when the trigger reports unprocessable containers', async () => {
             const c1 = buildContainer({ id: 'c1' });
             const c2 = buildContainer({ id: 'c2' });
             (storeContainer.getContainer as jest.Mock).mockImplementation(
                 (id) => (id === 'c1' ? c1 : c2),
             );
-            mockGetUnbatchable.mockResolvedValue([c2]);
+            mockGetUnprocessable.mockResolvedValue([
+                { container: c2, reason: 'it does not match any service' },
+            ]);
 
             await callHandler(
                 { triggerType: 'docker', triggerName: 'update' },
@@ -696,6 +698,11 @@ describe('Container API', () => {
             expect(mockRes.status).toHaveBeenCalledWith(400);
             expect(mockRes.json).toHaveBeenCalledWith(
                 expect.objectContaining({ containers: ['c2'] }),
+            );
+            const body = (mockRes.json as jest.Mock).mock.calls[0][0];
+            expect(body.details[0].id).toEqual('c2');
+            expect(body.details[0].reason).toEqual(
+                'it does not match any service',
             );
             expect(mockTriggerBatch).not.toHaveBeenCalled();
         });
@@ -724,7 +731,7 @@ describe('Container API', () => {
                 trigger: {
                     'remote.docker.update': {
                         triggerBatch: agentTriggerBatch,
-                        getUnbatchableContainers: jest
+                        getUnprocessableContainers: jest
                             .fn()
                             .mockResolvedValue([]),
                     },
@@ -819,7 +826,7 @@ describe('Container API', () => {
                 error: "All containers must have a populated 'patch' update",
                 containers: ['c2', 'c3'],
             });
-            expect(mockGetUnbatchable).not.toHaveBeenCalled();
+            expect(mockGetUnprocessable).not.toHaveBeenCalled();
             expect(mockTriggerBatch).not.toHaveBeenCalled();
         });
 
@@ -854,7 +861,7 @@ describe('Container API', () => {
             expect(views[1].updateKind.remoteValue).toBe('1.0.2');
         });
 
-        test('should pass the same array instance to getUnbatchableContainers and triggerBatch', async () => {
+        test('should pass the same array instance to getUnprocessableContainers and triggerBatch', async () => {
             wireRealBuildTriggerView();
             const c1 = buildContainer({
                 id: 'c1',
@@ -868,7 +875,7 @@ describe('Container API', () => {
             );
 
             expect(mockRes.status).toHaveBeenCalledWith(200);
-            expect(mockGetUnbatchable.mock.calls[0][0]).toBe(
+            expect(mockGetUnprocessable.mock.calls[0][0]).toBe(
                 mockTriggerBatch.mock.calls[0][0],
             );
         });
@@ -896,7 +903,7 @@ describe('Container API', () => {
             const passed = mockTriggerBatch.mock.calls[0][0];
             expect(passed[0]).toBe(c1);
             expect(passed[1]).toBe(c2);
-            expect(mockGetUnbatchable.mock.calls[0][0]).toBe(passed);
+            expect(mockGetUnprocessable.mock.calls[0][0]).toBe(passed);
         });
 
         test('should serialize members and dependents in the 200 body', async () => {

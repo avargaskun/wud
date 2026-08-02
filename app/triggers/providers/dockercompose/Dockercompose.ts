@@ -10,6 +10,7 @@ import type {
     MemberOutcome,
     TriggerRunResult,
 } from '../docker/types';
+import type { UnprocessableContainer } from '../Trigger';
 
 /**
  * Minimal shape of a compose service — only the fields this trigger reads.
@@ -419,14 +420,14 @@ class Dockercompose extends Docker {
      * Resolve every container to its compose file in one pass, returning both the
      * grouping and the reason each rejected container cannot be processed.
      * @param containers the containers
-     * @returns {Promise<{groups: Map<string, Container[]>, unprocessable: {container: Container, reason: string}[]}>}
+     * @returns {Promise<{groups: Map<string, Container[]>, unprocessable: UnprocessableContainer[]}>}
      */
     async classifyContainers(containers: Container[]): Promise<{
         groups: Map<string, Container[]>;
-        unprocessable: { container: Container; reason: string }[];
+        unprocessable: UnprocessableContainer[];
     }> {
         const groups = new Map<string, Container[]>();
-        const unprocessable: { container: Container; reason: string }[] = [];
+        const unprocessable: UnprocessableContainer[] = [];
         const loadedByFile = new Map<string, LoadedCompose | null>();
 
         for (const container of containers) {
@@ -497,18 +498,15 @@ class Dockercompose extends Docker {
     }
 
     /**
-     * Return the passed containers that cannot be batch-updated because they do
-     * not resolve to, or belong to, a managed compose file. Used by the batch API
-     * to reject the whole request instead of silently updating only a subset.
+     * Return the passed containers that cannot be updated because they do not
+     * resolve to, or belong to, a managed compose file, with the reason for each.
      * @param containers
-     * @returns {Promise<Container[]>}
+     * @returns {Promise<UnprocessableContainer[]>}
      */
-    async getUnbatchableContainers(
+    async getUnprocessableContainers(
         containers: Container[],
-    ): Promise<Container[]> {
-        const groups = await this.groupByComposeFile(containers);
-        const batchable = new Set<Container>([...groups.values()].flat());
-        return containers.filter((container) => !batchable.has(container));
+    ): Promise<UnprocessableContainer[]> {
+        return (await this.classifyContainers(containers)).unprocessable;
     }
 
     /**
