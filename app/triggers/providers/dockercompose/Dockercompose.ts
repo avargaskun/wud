@@ -1,7 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import yaml from 'yaml';
-import { Scalar } from 'yaml';
+import { parseDocument, Scalar } from 'yaml';
 import type { Document } from 'yaml';
 import Docker from '../docker/Docker';
 import { getState } from '../../../registry';
@@ -347,6 +346,7 @@ class Dockercompose extends Docker {
         containers: Container[],
     ): Promise<Map<string, Container[]>> {
         const groups = new Map<string, Container[]>();
+        const loadedByFile = new Map<string, LoadedCompose>();
 
         for (const container of containers) {
             // Filter on containers running on local host
@@ -377,8 +377,12 @@ class Dockercompose extends Docker {
             }
 
             // Filter on containers that belong to this compose file
-            const compose = await this.getComposeFileAsObject(composeFile);
-            if (!doesContainerBelongToCompose(compose, container)) {
+            let loaded = loadedByFile.get(composeFile);
+            if (!loaded) {
+                loaded = await this.loadComposeFile(composeFile);
+                loadedByFile.set(composeFile, loaded);
+            }
+            if (!doesContainerBelongToCompose(loaded.compose, container)) {
                 continue;
             }
 
@@ -621,22 +625,46 @@ class Dockercompose extends Docker {
     }
 
     /**
-     * Read docker-compose file as an object.
-     * @param file - Optional file path, defaults to configuration file
-     * @returns {Promise<any>}
+     * Read and parse a compose file once. `source` is the exact string the edit
+     * offsets index.
+     * @param composeFile
+     * @returns {Promise<LoadedCompose>}
      */
-    async getComposeFileAsObject(file = null): Promise<ComposeFile> {
-        try {
-            return yaml.parse((await this.getComposeFile(file)).toString(), {
-                maxAliasCount: 10000,
-            });
-        } catch (e) {
-            const filePath = file || this.configuration.file;
+    async loadComposeFile(composeFile: string): Promise<LoadedCompose> {
+        const source: string = (
+            await this.getComposeFile(composeFile)
+        ).toString();
+        const doc: Document.Parsed = parseDocument(source);
+        if (doc.errors.length > 0) {
+            const first = doc.errors[0];
             this.log.error(
-                `Error when parsing the docker-compose yaml file ${filePath} (${e.message})`,
+                `Error when parsing the docker-compose yaml file ${composeFile} (${first.message})`,
+            );
+            throw first;
+        }
+        let parsed: Partial<ComposeFile> | null;
+        try {
+            parsed = doc.toJS({
+                maxAliasCount: 10000,
+            }) as Partial<ComposeFile> | null;
+        } catch (e) {
+            this.log.error(
+                `Error when parsing the docker-compose yaml file ${composeFile} (${e.message})`,
             );
             throw e;
         }
+        const compose: ComposeFile = { services: parsed?.services ?? {} };
+        return { source, doc, compose };
+    }
+
+    /**
+     * Read docker-compose file as an object.
+     * @param file - Optional file path, defaults to configuration file
+     * @returns {Promise<ComposeFile>}
+     */
+    async getComposeFileAsObject(file = null): Promise<ComposeFile> {
+        return (await this.loadComposeFile(file ?? this.configuration.file))
+            .compose;
     }
 }
 

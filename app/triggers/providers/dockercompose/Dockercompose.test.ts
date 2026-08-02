@@ -99,6 +99,19 @@ const composeYamlPrefixOnly = `services:
     image: ghcr.io/stefanprodan/podinfo:5.0.00
 `;
 
+const composeYamlAliasBomb = `services:
+  bomb:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+x-a0: &a0 ['x', 'x']
+x-a1: &a1 [*a0, *a0]
+x-a2: &a2 [*a1, *a1]
+x-a3: &a3 [*a2, *a2]
+x-a4: &a4 [*a3, *a3]
+x-a5: &a5 [*a4, *a4]
+x-a6: &a6 [*a5, *a5]
+x-a7: &a7 [*a6, *a6]
+`;
+
 const baseConfiguration = {
     prune: false,
     dryrun: false,
@@ -1025,4 +1038,56 @@ test('groupByComposeFile should keep an ambiguous container in its group', async
     const container = buildContainer({ id: 'c1', labels: null });
     const groups = await dockercompose.groupByComposeFile([container]);
     expect(groups.get('/default/docker-compose.yml')).toEqual([container]);
+});
+
+test('loadComposeFile should materialize a chained anchor bomb the default limit rejects', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlAliasBomb);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    expect(loaded.compose.services.bomb.image).toBe(
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+    );
+    expect(() => loaded.doc.toJS()).toThrow('Excessive alias count');
+});
+
+test('loadComposeFile should log and rethrow when materializing the document fails', async () => {
+    const errorSpy = jest.spyOn(dockercompose.log, 'error');
+    mockedReadFile.mockResolvedValue('services:\n  a:\n    image: *nope\n');
+    await expect(
+        dockercompose.loadComposeFile('/abs/docker-compose.yml'),
+    ).rejects.toThrow('Unresolved alias');
+    expect(errorSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+            'Error when parsing the docker-compose yaml file /abs/docker-compose.yml',
+        ),
+    );
+});
+
+test('getComposeFileAsObject should return empty services for an empty file', async () => {
+    mockedReadFile.mockResolvedValue('');
+    await expect(
+        dockercompose.getComposeFileAsObject('/abs/docker-compose.yml'),
+    ).resolves.toEqual({ services: {} });
+});
+
+test('getComposeFileAsObject should drop top level keys other than services', async () => {
+    mockedReadFile.mockResolvedValue(
+        "version: '3'\nvolumes:\n  data: {}\nservices:\n  a:\n    image: nginx:1.0\n",
+    );
+    await expect(
+        dockercompose.getComposeFileAsObject('/abs/docker-compose.yml'),
+    ).resolves.toEqual({ services: { a: { image: 'nginx:1.0' } } });
+});
+
+test('groupByComposeFile should read each compose file once', async () => {
+    const containers = ['c1', 'c2', 'c3'].map((id) =>
+        buildContainer({
+            id,
+            labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+        }),
+    );
+    const groups = await dockercompose.groupByComposeFile(containers);
+    expect(groups.get('/abs/docker-compose.yml')).toHaveLength(3);
+    expect(mockedReadFile.mock.calls.length).toBe(1);
 });
