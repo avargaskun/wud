@@ -1,5 +1,7 @@
 import { Given, When, Then } from '@cucumber/cucumber';
 import * as assert from 'assert';
+import * as fs from 'fs/promises';
+import * as path from 'path';
 import registryOracle from '../support/registry_oracle';
 
 interface Container {
@@ -454,4 +456,20 @@ Then(/^the container with image "([^"]*)" should have update available$/, async 
     }
 
     assert.strictEqual(found.updateAvailable, true, `Container ${imageName} should have update available, but got ${found.updateAvailable}`);
+});
+
+Then(/^the compose file "([^"]*)" should pin service "([^"]*)" to "([^"]*)"$/, async function (relativePath: string, service: string, expected: string) {
+    const filePath: string = path.resolve(process.cwd(), relativePath);
+    const content: string = await fs.readFile(filePath, 'utf-8');
+    const lines: string[] = content.split(/\r?\n/);
+    const serviceIndex: number = lines.findIndex((l) => l.trim() === `${service}:`);
+    assert.ok(serviceIndex !== -1, `service ${service} not found in ${filePath}`);
+    const indent: number = lines[serviceIndex].search(/\S/);
+    const rest: string[] = lines.slice(serviceIndex + 1);
+    const endRel: number = rest.findIndex((l) => l.trim() !== '' && l.search(/\S/) <= indent);
+    const block: string[] = endRel === -1 ? rest : rest.slice(0, endRel);
+    const imageLine: string | undefined = block.find((l) => l.trim().startsWith('image:'));
+    assert.ok(imageLine, `service ${service} has no image: line in ${filePath}`);
+    const actual: string = imageLine.trim().replace(/\s+#.*$/, '');
+    assert.strictEqual(actual, `image: ${expected}`);
 });
