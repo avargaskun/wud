@@ -1091,3 +1091,185 @@ test('groupByComposeFile should read each compose file once', async () => {
     expect(groups.get('/abs/docker-compose.yml')).toHaveLength(3);
     expect(mockedReadFile.mock.calls.length).toBe(1);
 });
+
+test('planComposeEdits should plan a single edit for the labelled service', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        id: 'c-twin',
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+    });
+    const { edits, editedIds, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toHaveLength(1);
+    expect(edits[0].serviceName).toBe('svc_twin');
+    expect(loaded.source.slice(edits[0].start, edits[0].end)).toBe(
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+    );
+    expect(edits[0].text).toBe('ghcr.io/stefanprodan/podinfo:6.0.0');
+    expect([...editedIds]).toEqual(['c-twin']);
+    expect([...staleIds]).toEqual([]);
+});
+
+test('planComposeEdits should put a digest update in neither set', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        id: 'c-digest',
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+        updateKind: {
+            kind: 'digest',
+            localValue: 'sha256:aaa',
+            remoteValue: 'sha256:bbb',
+        },
+    });
+    const { edits, editedIds, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toEqual([]);
+    expect(editedIds.has('c-digest')).toBe(false);
+    expect(staleIds.has('c-digest')).toBe(false);
+});
+
+test('planComposeEdits should mark an ambiguous container stale and name every candidate', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({ id: 'c-ambiguous', labels: null });
+    const { edits, editedIds, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toEqual([]);
+    expect([...staleIds]).toEqual(['c-ambiguous']);
+    expect([...editedIds]).toEqual([]);
+    expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('svc_plain, svc_twin, svc_quoted'),
+    );
+});
+
+test('planComposeEdits should mark a container matching no service stale', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        id: 'c-foreign',
+        labels: null,
+        image: {
+            id: 'img-foreign',
+            registry: { name: 'hub', url: 'ghcr.io' },
+            name: 'library/nginx',
+            tag: { value: '5.0.0', semver: true },
+            digest: { watch: false },
+            architecture: 'amd64',
+            os: 'linux',
+        },
+    });
+    const { edits, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toEqual([]);
+    expect([...staleIds]).toEqual(['c-foreign']);
+    expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Could not find a service for container'),
+    );
+});
+
+test('planComposeEdits should refuse to edit an anchored image scalar', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildAnchorContainer('svc_anchor');
+    const { edits, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toEqual([]);
+    expect([...staleIds]).toEqual(['c-anchor']);
+    expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("anchors its image as '&shared_img'"),
+    );
+});
+
+test('planComposeEdits should refuse to edit an aliased image scalar', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildAnchorContainer('svc_alias');
+    const { edits, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toEqual([]);
+    expect([...staleIds]).toEqual(['c-anchor']);
+});
+
+test('planComposeEdits should plan one edit for two containers of the same service', async () => {
+    const debugSpy = jest.spyOn(dockercompose.log, 'debug');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const containers = ['c1', 'c2'].map((id) =>
+        buildContainer({
+            id,
+            labels: { 'com.docker.compose.service': 'svc_twin' },
+        }),
+    );
+    const { edits, editedIds, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        containers,
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toHaveLength(1);
+    expect([...editedIds]).toEqual(['c1', 'c2']);
+    expect([...staleIds]).toEqual([]);
+    expect(debugSpy).toHaveBeenCalledWith(
+        expect.stringContaining('Service svc_twin already planned'),
+    );
+});
+
+test('planComposeEdits should count a service already on the new tag as edited', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        id: 'c-current',
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+        updateKind: {
+            kind: 'tag',
+            localValue: '5.0.0',
+            remoteValue: '5.0.0',
+        },
+    });
+    const { edits, editedIds, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toEqual([]);
+    expect([...editedIds]).toEqual(['c-current']);
+    expect([...staleIds]).toEqual([]);
+});

@@ -1,6 +1,6 @@
 import fs from 'fs/promises';
 import path from 'path';
-import { parseDocument, Scalar } from 'yaml';
+import { parseDocument, isScalar, Scalar } from 'yaml';
 import type { Document } from 'yaml';
 import Docker from '../docker/Docker';
 import { getState } from '../../../registry';
@@ -408,6 +408,142 @@ class Dockercompose extends Docker {
         const groups = await this.groupByComposeFile(containers);
         const batchable = new Set<Container>([...groups.values()].flat());
         return containers.filter((container) => !batchable.has(container));
+    }
+
+    /**
+     * Compute the character-range edits needed to bump each container's own compose service.
+     * @param loaded
+     * @param containers
+     * @param composeFile
+     * @returns {{edits: ComposeEdit[]} & ComposeRewriteOutcome}
+     */
+    planComposeEdits(
+        loaded: LoadedCompose,
+        containers: Container[],
+        composeFile: string,
+    ): { edits: ComposeEdit[] } & ComposeRewriteOutcome {
+        const edits: ComposeEdit[] = [];
+        const editedIds = new Set<string>();
+        const staleIds = new Set<string>();
+        const serviceOutcome = new Map<string, 'edited' | 'stale'>();
+
+        for (const container of containers) {
+            if (container.updateKind?.kind !== 'tag') {
+                this.log.debug(
+                    `Skipping ${container.name}: ${container.updateKind?.kind} update does not change the compose image`,
+                );
+                continue;
+            }
+
+            const currentImageRef: string | undefined =
+                getCurrentImageRef(container);
+            const resolution: ServiceResolution = resolveComposeServiceName(
+                loaded.compose,
+                container,
+                currentImageRef,
+            );
+            if (resolution.status === 'not-found') {
+                this.log.warn(
+                    `Could not find a service for container ${container.name} (image ${currentImageRef ?? 'unknown'}) in ${composeFile}`,
+                );
+                staleIds.add(container.id);
+                continue;
+            }
+            if (resolution.status === 'ambiguous') {
+                this.log.warn(
+                    `Refusing to update ${composeFile} for container ${container.name}: image ${currentImageRef} matches multiple services (${resolution.candidates.join(', ')}) and the container carries no usable '${COMPOSE_SERVICE_LABEL}' label`,
+                );
+                staleIds.add(container.id);
+                continue;
+            }
+
+            const serviceName: string = resolution.serviceName;
+            const planned: 'edited' | 'stale' | undefined =
+                serviceOutcome.get(serviceName);
+            if (planned !== undefined) {
+                this.log.debug(
+                    `Service ${serviceName} already planned (scaled service / duplicate container)`,
+                );
+                if (planned === 'edited') {
+                    editedIds.add(container.id);
+                } else {
+                    staleIds.add(container.id);
+                }
+                continue;
+            }
+
+            const node: unknown = loaded.doc.getIn(
+                ['services', serviceName, 'image'],
+                true,
+            );
+            if (
+                !isScalar(node) ||
+                typeof node.value !== 'string' ||
+                node.value.trim() === '' ||
+                !node.range
+            ) {
+                this.log.warn(
+                    `Service ${serviceName} in ${composeFile} has no literal 'image:' scalar (alias, anchor-inherited, build-only, or empty) — skipping ${container.name}`,
+                );
+                serviceOutcome.set(serviceName, 'stale');
+                staleIds.add(container.id);
+                continue;
+            }
+
+            if (node.anchor) {
+                this.log.warn(
+                    `Service ${serviceName} in ${composeFile} anchors its image as '&${node.anchor}'; other services may alias it, so rewriting it in place could bump them too — skipping ${container.name}`,
+                );
+                serviceOutcome.set(serviceName, 'stale');
+                staleIds.add(container.id);
+                continue;
+            }
+
+            const fileRef: string = node.value;
+            const newRef: string | undefined = buildUpdatedImageRef(
+                fileRef,
+                container.updateKind.remoteValue,
+            );
+            if (newRef === undefined) {
+                this.log.warn(
+                    `Cannot derive an updated reference for ${fileRef} in service ${serviceName} — skipping`,
+                );
+                serviceOutcome.set(serviceName, 'stale');
+                staleIds.add(container.id);
+                continue;
+            }
+            if (newRef === fileRef) {
+                serviceOutcome.set(serviceName, 'edited');
+                editedIds.add(container.id);
+                continue;
+            }
+
+            const text: string | undefined = renderScalarValue(
+                newRef,
+                node.type,
+            );
+            if (text === undefined) {
+                this.log.warn(
+                    `Service ${serviceName} uses an 'image:' scalar style that cannot be rewritten in place — skipping`,
+                );
+                serviceOutcome.set(serviceName, 'stale');
+                staleIds.add(container.id);
+                continue;
+            }
+
+            edits.push({
+                serviceName,
+                start: node.range[0],
+                end: node.range[1],
+                text,
+                from: fileRef,
+                to: newRef,
+            });
+            serviceOutcome.set(serviceName, 'edited');
+            editedIds.add(container.id);
+        }
+
+        return { edits, editedIds, staleIds };
     }
 
     /**
