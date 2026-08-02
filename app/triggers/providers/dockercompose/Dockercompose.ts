@@ -63,6 +63,14 @@ interface ComposeRewriteOutcome {
     staleIds: Set<string>;
 }
 
+/**
+ * Outcome of selecting the single compose file a container is updated through.
+ */
+interface ComposeResolution {
+    file?: string;
+    reason?: string;
+}
+
 const COMPOSE_SERVICE_LABEL = 'com.docker.compose.service';
 
 const HUB_HOSTS = new Set<string>([
@@ -291,32 +299,168 @@ class Dockercompose extends Docker {
     }
 
     /**
-     * Get the compose file path for a specific container.
-     * First checks for a label, then falls back to default configuration.
-     * @param container
-     * @returns {string|null}
+     * Split a compose file source into absolute candidate paths. Docker Compose
+     * writes `config_files` as a comma-joined list.
+     * @param value
+     * @returns {string[]}
      */
-    getComposeFileForContainer(container: Container): string | null {
-        // Check if container has a custom wud compose file label
-        const composeFileLabel = this.configuration.composeFileLabel;
-        if (container.labels && container.labels[composeFileLabel]) {
-            const labelValue = container.labels[composeFileLabel];
-            // Convert relative paths to absolute paths
-            return path.isAbsolute(labelValue)
-                ? labelValue
-                : path.resolve(labelValue);
+    private splitComposeFileList(value: string): string[] {
+        return value
+            .split(',')
+            .map((part) => part.trim())
+            .filter((part) => part.length > 0)
+            .map((part) => (path.isAbsolute(part) ? part : path.resolve(part)));
+    }
+
+    /**
+     * Get the candidate compose file paths for a specific container.
+     * First checks for a label, then falls back to default configuration; the
+     * first source yielding at least one candidate wins outright.
+     * @param container
+     * @returns {string[]}
+     */
+    getComposeFilesForContainer(container: Container): string[] {
+        const labels: Record<string, string> = container.labels ?? {};
+        const sources: (string | undefined)[] = [
+            labels[this.configuration.composeFileLabel],
+            labels['com.docker.compose.project.config_files'],
+            this.configuration.file,
+        ];
+        for (const source of sources) {
+            if (typeof source !== 'string') {
+                continue;
+            }
+            const candidates: string[] = this.splitComposeFileList(source);
+            if (candidates.length > 0) {
+                return candidates;
+            }
+        }
+        return [];
+    }
+
+    /**
+     * Select the single compose file a container is updated through: of the
+     * candidates that exist and declare the container's image, the last one wins
+     * (later compose files override earlier ones).
+     * @param container
+     * @param loadedByFile per-pass cache; a cached parse failure is null
+     * @returns {Promise<ComposeResolution>}
+     */
+    async resolveComposeFileForContainer(
+        container: Container,
+        loadedByFile: Map<string, LoadedCompose | null>,
+    ): Promise<ComposeResolution> {
+        const candidates: string[] =
+            this.getComposeFilesForContainer(container);
+        if (candidates.length === 0) {
+            return {
+                reason: `no compose file could be resolved (no '${this.configuration.composeFileLabel}' label, no 'com.docker.compose.project.config_files' label and no default file configured)`,
+            };
         }
 
-        // Check if container has automatic compose file label
-        if (
-            container.labels &&
-            container.labels['com.docker.compose.project.config_files']
-        ) {
-            return container.labels['com.docker.compose.project.config_files'];
+        const existing: string[] = [];
+        for (const candidate of candidates) {
+            try {
+                await fs.access(candidate);
+                existing.push(candidate);
+            } catch {
+                this.log.debug(
+                    `Compose file ${candidate} for container ${container.name} does not exist`,
+                );
+            }
+        }
+        if (existing.length === 0) {
+            return {
+                reason: `none of its candidate compose files exist (${candidates.join(', ')})`,
+            };
         }
 
-        // Fall back to default configuration file
-        return this.configuration.file || null;
+        const matching: string[] = [];
+        const parseFailed: string[] = [];
+        for (const file of existing) {
+            let loaded: LoadedCompose | null;
+            if (loadedByFile.has(file)) {
+                loaded = loadedByFile.get(file) ?? null;
+            } else {
+                try {
+                    loaded = await this.loadComposeFile(file);
+                } catch (e) {
+                    loaded = null;
+                    this.log.warn(
+                        `Skipping compose file ${file} for container ${container.name} because it could not be parsed (${e.message})`,
+                    );
+                }
+                loadedByFile.set(file, loaded);
+            }
+            if (loaded === null) {
+                parseFailed.push(file);
+            } else if (
+                doesContainerBelongToCompose(loaded.compose, container)
+            ) {
+                matching.push(file);
+            }
+        }
+
+        if (matching.length === 0) {
+            if (parseFailed.length === existing.length) {
+                return {
+                    reason: `none of its candidate compose files could be parsed (${existing.join(', ')})`,
+                };
+            }
+            return {
+                reason: `it does not match any service of ${existing.join(', ')}`,
+            };
+        }
+
+        return { file: matching[matching.length - 1] };
+    }
+
+    /**
+     * Resolve every container to its compose file in one pass, returning both the
+     * grouping and the reason each rejected container cannot be processed.
+     * @param containers the containers
+     * @returns {Promise<{groups: Map<string, Container[]>, unprocessable: {container: Container, reason: string}[]}>}
+     */
+    async classifyContainers(containers: Container[]): Promise<{
+        groups: Map<string, Container[]>;
+        unprocessable: { container: Container; reason: string }[];
+    }> {
+        const groups = new Map<string, Container[]>();
+        const unprocessable: { container: Container; reason: string }[] = [];
+        const loadedByFile = new Map<string, LoadedCompose | null>();
+
+        for (const container of containers) {
+            const { modem } = this.getWatcher(container).dockerApi;
+            if ((modem as { socketPath?: string }).socketPath === '') {
+                const reason = 'it is not running on the local host';
+                this.log.warn(
+                    `Cannot update container ${container.name} because ${reason}`,
+                );
+                unprocessable.push({ container, reason });
+                continue;
+            }
+
+            const resolution: ComposeResolution =
+                await this.resolveComposeFileForContainer(
+                    container,
+                    loadedByFile,
+                );
+            if (!resolution.file) {
+                const reason = resolution.reason ?? 'unknown reason';
+                this.log.warn(
+                    `Cannot update container ${container.name} because ${reason}`,
+                );
+                unprocessable.push({ container, reason });
+                continue;
+            }
+
+            if (!groups.has(resolution.file)) {
+                groups.set(resolution.file, []);
+            }
+            groups.get(resolution.file)!.push(container);
+        }
+
+        return { groups, unprocessable };
     }
 
     /**
@@ -349,59 +493,7 @@ class Dockercompose extends Docker {
     async groupByComposeFile(
         containers: Container[],
     ): Promise<Map<string, Container[]>> {
-        const groups = new Map<string, Container[]>();
-        const loadedByFile = new Map<string, LoadedCompose>();
-
-        for (const container of containers) {
-            // Filter on containers running on local host
-            const { modem } = this.getWatcher(container).dockerApi;
-            if ((modem as { socketPath?: string }).socketPath === '') {
-                this.log.warn(
-                    `Cannot update container ${container.name} because not running on local host`,
-                );
-                continue;
-            }
-
-            const composeFile = this.getComposeFileForContainer(container);
-            if (!composeFile) {
-                this.log.warn(
-                    `No compose file found for container ${container.name} (no label '${this.configuration.composeFileLabel}' and no default file configured)`,
-                );
-                continue;
-            }
-
-            // Check if compose file exists
-            try {
-                await fs.access(composeFile);
-            } catch {
-                this.log.warn(
-                    `Compose file ${composeFile} for container ${container.name} does not exist`,
-                );
-                continue;
-            }
-
-            // Filter on containers that belong to this compose file
-            let loaded = loadedByFile.get(composeFile);
-            if (!loaded) {
-                loaded = await this.loadComposeFile(composeFile);
-                loadedByFile.set(composeFile, loaded);
-            }
-            if (!doesContainerBelongToCompose(loaded.compose, container)) {
-                const currentImageRef: string | undefined =
-                    getCurrentImageRef(container);
-                this.log.warn(
-                    `Cannot update container ${container.name} because no service in ${composeFile} pins its image ${currentImageRef ?? 'unknown'}`,
-                );
-                continue;
-            }
-
-            if (!groups.has(composeFile)) {
-                groups.set(composeFile, []);
-            }
-            groups.get(composeFile)!.push(container);
-        }
-
-        return groups;
+        return (await this.classifyContainers(containers)).groups;
     }
 
     /**

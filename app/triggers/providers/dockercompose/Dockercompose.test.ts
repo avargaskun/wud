@@ -115,6 +115,11 @@ const composeYamlDigestCombined = `services:
     image: ghcr.io/stefanprodan/podinfo:5.0.0@sha256:abc123
 `;
 
+const composeYamlForeign = `services:
+  other:
+    image: docker.io/library/nginx:1.0
+`;
+
 const composeYamlAliasBomb = `services:
   bomb:
     image: ghcr.io/stefanprodan/podinfo:5.0.0
@@ -291,29 +296,71 @@ beforeEach(() => {
     dockercompose.configuration = { ...baseConfiguration };
 });
 
-test('getComposeFileForContainer should return the absolute label path', () => {
+test('getComposeFilesForContainer should return the absolute label path', () => {
     const container = buildContainer({
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
     });
-    expect(dockercompose.getComposeFileForContainer(container)).toBe(
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
         '/abs/docker-compose.yml',
-    );
+    ]);
 });
 
-test('getComposeFileForContainer should fall back to the configuration file', () => {
-    const container = buildContainer();
-    expect(dockercompose.getComposeFileForContainer(container)).toBe(
-        '/default/docker-compose.yml',
-    );
-});
-
-test('getComposeFileForContainer should resolve a relative label path to absolute', () => {
+test('getComposeFilesForContainer should resolve a relative label path to absolute', () => {
     const container = buildContainer({
         labels: { 'wud.compose.file': 'relative/docker-compose.yml' },
     });
-    expect(dockercompose.getComposeFileForContainer(container)).toBe(
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
         path.resolve('relative/docker-compose.yml'),
-    );
+    ]);
+});
+
+test('getComposeFilesForContainer should split a comma-separated label value', () => {
+    const container = buildContainer({
+        labels: {
+            'wud.compose.file': '/abs/docker-compose.yml,relative/override.yml',
+        },
+    });
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/abs/docker-compose.yml',
+        path.resolve('relative/override.yml'),
+    ]);
+});
+
+test('getComposeFilesForContainer should trim and drop empty config_files segments', () => {
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files': ' /a.yml , ,/b.yml,',
+        },
+    });
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/a.yml',
+        '/b.yml',
+    ]);
+});
+
+test('getComposeFilesForContainer should prefer the wud label over config_files', () => {
+    const container = buildContainer({
+        labels: {
+            'wud.compose.file': '/abs/docker-compose.yml',
+            'com.docker.compose.project.config_files': '/a.yml,/b.yml',
+        },
+    });
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/abs/docker-compose.yml',
+    ]);
+});
+
+test('getComposeFilesForContainer should fall back to the configuration file', () => {
+    const container = buildContainer();
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/default/docker-compose.yml',
+    ]);
+});
+
+test('getComposeFilesForContainer should return an empty array without label or configured file', () => {
+    dockercompose.configuration = { ...baseConfiguration, file: undefined };
+    const container = buildContainer();
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([]);
 });
 
 test('groupByComposeFile should skip a non-local-host container', async () => {
@@ -359,6 +406,204 @@ test('groupByComposeFile should group belonging containers and drop non-belongin
     const groups = await dockercompose.groupByComposeFile([c1, c2, other]);
     expect(groups.size).toBe(1);
     expect(groups.get('/abs/docker-compose.yml')).toHaveLength(2);
+});
+
+test('resolveComposeFileForContainer should pick the last candidate that declares the image', async () => {
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/base.yml,/abs/override.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/override.yml' });
+});
+
+test('resolveComposeFileForContainer should pick the only candidate that declares the image', async () => {
+    mockedReadFile.mockImplementation(async (file: string) =>
+        file === '/abs/override.yml' ? composeYamlForeign : composeYaml,
+    );
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/base.yml,/abs/override.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/base.yml' });
+});
+
+test('resolveComposeFileForContainer should skip a candidate that does not exist', async () => {
+    mockedAccess.mockImplementation(async (file: string) => {
+        if (file === '/abs/missing.yml') {
+            throw new Error('missing');
+        }
+    });
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/missing.yml,/abs/base.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/base.yml' });
+});
+
+test('resolveComposeFileForContainer should warn and skip an unparseable candidate', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockImplementation(async (file: string) =>
+        file === '/abs/broken.yml' ? composeYamlTabs : composeYaml,
+    );
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/broken.yml,/abs/base.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/base.yml' });
+    expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+            'Skipping compose file /abs/broken.yml for container zz_batch_compose_1',
+        ),
+    );
+});
+
+test('classifyContainers should read each distinct candidate once', async () => {
+    const containers = ['c1', 'c2', 'c3'].map((id) =>
+        buildContainer({
+            id,
+            labels: {
+                'com.docker.compose.project.config_files':
+                    '/abs/base.yml,/abs/override.yml',
+            },
+        }),
+    );
+    const { groups, unprocessable } =
+        await dockercompose.classifyContainers(containers);
+    expect(unprocessable).toEqual([]);
+    expect(groups.get('/abs/override.yml')).toHaveLength(3);
+    expect(mockedReadFile.mock.calls.length).toBe(2);
+});
+
+test('classifyContainers should group two containers of the same project together', async () => {
+    const c1 = buildContainer({
+        id: 'c1',
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/base.yml,/abs/override.yml',
+        },
+    });
+    const c2 = buildContainer({
+        id: 'c2',
+        labels: {
+            'com.docker.compose.service': 'zz_batch_compose_2',
+            'com.docker.compose.project.config_files':
+                ' /abs/base.yml , /abs/override.yml ',
+        },
+    });
+    const { groups } = await dockercompose.classifyContainers([c1, c2]);
+    expect(groups.size).toBe(1);
+    expect(groups.get('/abs/override.yml')).toEqual([c1, c2]);
+});
+
+test('classifyContainers should reject a non-local-host container with a reason', async () => {
+    const container = buildContainer({
+        watcher: 'remote',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const { groups, unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(groups.size).toBe(0);
+    expect(unprocessable).toEqual([
+        { container, reason: 'it is not running on the local host' },
+    ]);
+});
+
+test('classifyContainers should name both labels when there is no candidate', async () => {
+    dockercompose.configuration = { ...baseConfiguration, file: undefined };
+    const container = buildContainer({ labels: null });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].container).toBe(container);
+    expect(unprocessable[0].reason).toContain("no 'wud.compose.file' label");
+    expect(unprocessable[0].reason).toContain(
+        "no 'com.docker.compose.project.config_files' label",
+    );
+});
+
+test('classifyContainers should list the candidates when none of them exists', async () => {
+    mockedAccess.mockRejectedValue(new Error('missing'));
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/a.yml,/abs/b.yml' },
+    });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].reason).toBe(
+        'none of its candidate compose files exist (/abs/a.yml, /abs/b.yml)',
+    );
+});
+
+test('classifyContainers should list the existing candidates when none declares the image', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlForeign);
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/a.yml,/abs/b.yml' },
+    });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].reason).toBe(
+        'it does not match any service of /abs/a.yml, /abs/b.yml',
+    );
+});
+
+test('classifyContainers should report a parse failure rather than a service mismatch', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlTabs);
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/a.yml,/abs/b.yml' },
+    });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].reason).toBe(
+        'none of its candidate compose files could be parsed (/abs/a.yml, /abs/b.yml)',
+    );
+});
+
+test('classifyContainers should warn when a container matches no service', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlForeign);
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    await dockercompose.classifyContainers([container]);
+    expect(warnSpy).toHaveBeenCalledWith(
+        'Cannot update container zz_batch_compose_1 because it does not match any service of /abs/docker-compose.yml',
+    );
+});
+
+test('classifyContainers should report nothing unprocessable when every container resolves', async () => {
+    const c1 = buildContainer({
+        id: 'c1',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const c2 = buildContainer({
+        id: 'c2',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const { groups, unprocessable } = await dockercompose.classifyContainers([
+        c1,
+        c2,
+    ]);
+    expect(unprocessable).toEqual([]);
+    expect(groups.get('/abs/docker-compose.yml')).toEqual([c1, c2]);
 });
 
 test('rewriteComposeFile should bump only the labelled service and leave its twin untouched', async () => {
