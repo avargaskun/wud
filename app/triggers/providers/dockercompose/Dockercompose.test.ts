@@ -304,41 +304,19 @@ test('groupByComposeFile should group belonging containers and drop non-belongin
     expect(groups.get('/abs/docker-compose.yml')).toHaveLength(2);
 });
 
-test('mapCurrentVersionToUpdateVersion should return the current and update image strings', () => {
-    const compose = {
-        services: { svc: { image: 'ghcr.io/stefanprodan/podinfo:5.0.0' } },
-    };
-    const result = dockercompose.mapCurrentVersionToUpdateVersion(
-        compose,
-        buildContainer(),
-    );
-    expect(result).toEqual({
-        current: 'ghcr.io/stefanprodan/podinfo:5.0.0',
-        update: 'ghcr.io/stefanprodan/podinfo:6.0.0',
-    });
-});
-
-test('mapCurrentVersionToUpdateVersion should return undefined and warn when no service matches', () => {
-    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
-    const compose = { services: { svc: { image: 'nginx:1.0.0' } } };
-    const result = dockercompose.mapCurrentVersionToUpdateVersion(
-        compose,
-        buildContainer(),
-    );
-    expect(result).toBeUndefined();
-    expect(warnSpy).toHaveBeenCalled();
-});
-
-test('rewriteComposeFile should write the file with versions replaced', async () => {
+test('rewriteComposeFile should bump only the labelled service and leave its twin untouched', async () => {
     await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
         buildContainer({ id: 'c1' }),
         buildContainer({ id: 'c2' }),
     ]);
+    const expected = composeYaml.replace(
+        'zz_batch_compose_1:\n    image: ghcr.io/stefanprodan/podinfo:5.0.0',
+        'zz_batch_compose_1:\n    image: ghcr.io/stefanprodan/podinfo:6.0.0',
+    );
     expect(mockedWriteFile).toHaveBeenCalledTimes(1);
     const [file, data] = mockedWriteFile.mock.calls[0];
     expect(file).toBe('/abs/docker-compose.yml');
-    expect(data).toContain('ghcr.io/stefanprodan/podinfo:6.0.0');
-    expect(data).not.toContain('5.0.0');
+    expect(data).toBe(expected);
 });
 
 test('rewriteComposeFile should write a backup copy when backup is enabled', async () => {
@@ -468,9 +446,10 @@ test('triggerBatch should swap only the containers whose pull returned a context
     jest.spyOn(dockercompose, 'pullContainer').mockImplementation(async (c) =>
         c.id === 'gone' ? undefined : ({} as ContainerUpdateContext),
     );
-    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue(
-        undefined,
-    );
+    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue({
+        editedIds: new Set<string>(),
+        staleIds: new Set<string>(),
+    });
     const swapSpy = jest
         .spyOn(dockercompose, 'swapContainer')
         .mockImplementation(async (container) => buildSwapOutcome(container));
@@ -560,9 +539,10 @@ test('triggerBatch should run the post-update epilogue once, after every swap, w
     jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
         {} as ContainerUpdateContext,
     );
-    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue(
-        undefined,
-    );
+    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue({
+        editedIds: new Set<string>(),
+        staleIds: new Set<string>(),
+    });
     jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
         async (container) => {
             order.push('swap');
@@ -617,9 +597,10 @@ test('triggerBatch should report a failed member without aborting the epilogue',
     jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
         {} as ContainerUpdateContext,
     );
-    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue(
-        undefined,
-    );
+    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue({
+        editedIds: new Set<string>(),
+        staleIds: new Set<string>(),
+    });
     jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
         async (container) => {
             if (container.id === 'bad') {
@@ -1272,4 +1253,80 @@ test('planComposeEdits should count a service already on the new tag as edited',
     expect(edits).toEqual([]);
     expect([...editedIds]).toEqual(['c-current']);
     expect([...staleIds]).toEqual([]);
+});
+
+test('rewriteComposeFile should bump only the labelled service in a rich compose file', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const container = buildContainer({
+        id: 'c-twin',
+        labels: { 'com.docker.compose.service': 'svc_twin' },
+    });
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        container,
+    ]);
+    expect(mockedWriteFile).toHaveBeenCalledTimes(1);
+    const [file, data] = mockedWriteFile.mock.calls[0];
+    expect(file).toBe('/abs/docker-compose.yml');
+    expect(data).toBe(
+        composeYamlRich.replace(
+            '  svc_twin:\n    image: ghcr.io/stefanprodan/podinfo:5.0.0\n',
+            '  svc_twin:\n    image: ghcr.io/stefanprodan/podinfo:6.0.0\n',
+        ),
+    );
+});
+
+test('rewriteComposeFile should write nothing and warn for a label-less container matching several services', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const container = buildContainer({ id: 'c-ambiguous', labels: null });
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        container,
+    ]);
+    expect(mockedWriteFile).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining('svc_plain, svc_twin, svc_quoted'),
+    );
+});
+
+test('rewriteComposeFile should preserve the double-quoted image style', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    const container = buildContainer({
+        id: 'c-quoted',
+        labels: { 'com.docker.compose.service': 'svc_quoted' },
+    });
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        container,
+    ]);
+    const [, data] = mockedWriteFile.mock.calls[0];
+    expect(data).toContain('image: "ghcr.io/stefanprodan/podinfo:6.0.0"');
+});
+
+test('rewriteComposeFile should preserve the single-quoted style and the short hub form', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        singleQuoted,
+    ]);
+    const [, data] = mockedWriteFile.mock.calls[0];
+    expect(data).toContain("    image: 'nginx:1.26'");
+    expect(data).not.toContain('docker.io/library/nginx:1.26');
+});
+
+test('rewriteComposeFile should skip a service whose image scalar is anchored', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        buildAnchorContainer('svc_anchor'),
+    ]);
+    expect(mockedWriteFile).not.toHaveBeenCalled();
+    expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining("anchors its image as '&shared_img'"),
+    );
+});
+
+test('rewriteComposeFile should skip a service whose image is an alias', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlRich);
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        buildAnchorContainer('svc_alias'),
+    ]);
+    expect(mockedWriteFile).not.toHaveBeenCalled();
 });

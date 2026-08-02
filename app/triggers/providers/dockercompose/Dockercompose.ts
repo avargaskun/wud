@@ -547,53 +547,47 @@ class Dockercompose extends Docker {
     }
 
     /**
-     * Rewrite a compose file with the update versions of its containers.
+     * Rewrite a compose file, splicing only each container's own service image.
      * Assumes non-dry-run (the caller guards dry-run). Does not swap containers.
      * @param composeFile
      * @param containers
-     * @returns {Promise<void>}
+     * @returns {Promise<ComposeRewriteOutcome>}
      */
     async rewriteComposeFile(
         composeFile: string,
         containers: Container[],
-    ): Promise<void> {
+    ): Promise<ComposeRewriteOutcome> {
         this.log.info(`Processing compose file: ${composeFile}`);
 
-        const compose = await this.getComposeFileAsObject(composeFile);
+        // Deliberate re-read: the pull barrier sits between grouping and rewriting.
+        const loaded: LoadedCompose = await this.loadComposeFile(composeFile);
+        const { edits, editedIds, staleIds } = this.planComposeEdits(
+            loaded,
+            containers,
+            composeFile,
+        );
 
-        // Track which services have already been mapped to avoid duplicates
-        // (multiple containers can share the same image/service)
-        const processedServices = new Set<string>();
+        if (edits.length === 0) {
+            this.log.info(`No compose service to update in ${composeFile}`);
+            return { editedIds, staleIds };
+        }
 
-        // [{ current: '1.0.0', update: '2.0.0' }, {...}]
-        const currentVersionToUpdateVersionArray = containers
-            .map((container) =>
-                this.mapCurrentVersionToUpdateVersion(
-                    compose,
-                    container,
-                    processedServices,
-                ),
-            )
-            .filter((map) => map !== undefined);
-
-        // Backup docker-compose file
         if (this.configuration.backup) {
             const backupFile = `${composeFile}.back`;
             await this.backup(composeFile, backupFile);
         }
 
-        // Read the compose file as a string
-        let composeFileStr = (
-            await this.getComposeFile(composeFile)
-        ).toString();
+        for (const edit of edits) {
+            this.log.info(
+                `Updating service ${edit.serviceName}: ${edit.from} -> ${edit.to}`,
+            );
+        }
 
-        // Replace all versions
-        currentVersionToUpdateVersionArray.forEach(({ current, update }) => {
-            composeFileStr = composeFileStr.replaceAll(current, update);
-        });
-
-        // Write docker-compose.yml file back
-        await this.writeComposeFile(composeFile, composeFileStr);
+        await this.writeComposeFile(
+            composeFile,
+            applyComposeEdits(loaded.source, edits),
+        );
+        return { editedIds, staleIds };
     }
 
     /**
@@ -664,67 +658,6 @@ class Dockercompose extends Docker {
                 `Error when trying to backup file ${file} to ${backupFile} (${e.message})`,
             );
         }
-    }
-
-    /**
-     * Return a map containing the image declaration
-     * with the current version
-     * and the image declaration with the update version.
-     * @param compose
-     * @param container
-     * @param processedServices - Set to track which services have already been processed
-     * @returns {{current, update}|undefined}
-     */
-    mapCurrentVersionToUpdateVersion(
-        compose: ComposeFile,
-        container: Container,
-        processedServices?: Set<string>,
-    ) {
-        // Get registry configuration
-        this.log.debug(`Get ${container.image.registry.name} registry manager`);
-        const registry = getState().registry[container.image.registry.name];
-
-        // Rebuild image definition string
-        const currentImage = registry.getImageFullName(
-            container.image,
-            container.image.tag.value,
-        );
-
-        const serviceKeyToUpdate = Object.keys(compose.services).find(
-            (serviceKey) => {
-                const service = compose.services[serviceKey];
-                return (
-                    Boolean(service.image) &&
-                    service.image.includes(currentImage)
-                );
-            },
-        );
-
-        if (!serviceKeyToUpdate) {
-            this.log.warn(
-                `Could not find service for container ${container.name} with image ${currentImage}`,
-            );
-            return undefined;
-        }
-
-        // Skip if this service has already been processed (duplicate container with same image)
-        if (processedServices && processedServices.has(serviceKeyToUpdate)) {
-            this.log.debug(
-                `Service ${serviceKeyToUpdate} already processed for container ${container.name} (duplicate image)`,
-            );
-            return undefined;
-        }
-
-        // Mark this service as processed
-        if (processedServices) {
-            processedServices.add(serviceKeyToUpdate);
-        }
-
-        // Rebuild image definition string
-        return {
-            current: compose.services[serviceKeyToUpdate].image,
-            update: this.getNewImageFullName(registry, container),
-        };
     }
 
     /**
