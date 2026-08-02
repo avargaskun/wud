@@ -14,6 +14,36 @@ The trigger will:
 - Remove the previous image (optionally)
 - Bounce the dependent containers declared with the `wud.postupdate.restart` label (optionally)
 
+### How the compose file is updated
+
+A container is matched to a compose service by the service's **`image:` pin**: the pin and the container's current image reference must be equal once both are canonicalized, so `image: nginx:1.0` and `image: docker.io/library/nginx:1.0` both match the same Docker Hub container.
+
+When several services in the same file share that pin, the automatic `com.docker.compose.service` label decides which one is updated. The label only disambiguates between services that already match by image; a label naming a service that is absent from the file, or that pins a different image, is ignored and the `image:` pin alone decides.
+
+Only the matched service's `image:` **value** is rewritten, as a targeted replacement of that one scalar. Everything else in the file is preserved byte for byte: the registry prefix you wrote (`docker.io/library/nginx:1.0` becomes `docker.io/library/nginx:1.1`, not `nginx:1.1`), the quoting style, comments, indentation, key order, anchors, line endings and a leading BOM.
+
+?> Only the tag part of the pin is substituted. A service pinned to the same image as another service is no longer co-updated.
+
+### When the compose file is not updated
+
+Some services cannot be rewritten safely. The container is still pulled and updated, but the file is left as-is and a warning is logged:
+
+- several services share the same `image:` pin and the container carries no usable `com.docker.compose.service` label;
+- the service's image is an anchor definition (`image: &shared_img ghcr.io/acme/app:1.0`) — rewriting it would also bump every service aliasing it;
+- the service's image is an alias (`image: *shared_img`).
+
+Other service shapes are never matched to a container at all, so the container is not batchable through this trigger:
+
+- `${VAR}`-interpolated pins (`image: ghcr.io/acme/app:${APP_TAG}`);
+- digest pins, including combined `repo:tag@sha256:...` pins;
+- merge-inherited images (`<<: *base`);
+- `build:`-only services (no `image:` key);
+- untagged pins (`image: nginx`).
+
+!> A batch trigger request that explicitly names a container whose service is never matched returns HTTP 400.
+
+?> The trigger API response reports the outcome per member: `fileUpdated: true` when the service's `image:` line was rewritten, `false` when the container was updated but its compose file could not be. The field is omitted for digest updates, where no file change is expected because the tag does not change.
+
 ### Post-update dependent restart
 
 This trigger inherits the post-update epilogue of the [docker trigger](/configuration/triggers/docker/?id=post-update-dependent-restart): health gate, restart-vs-recreate decision, stopped-dependent handling and single-hop resolution are identical. The epilogue runs once, after every container of the batch has been swapped.
