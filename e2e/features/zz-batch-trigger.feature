@@ -79,3 +79,10 @@ Feature: WUD Batch Trigger API
     And I GET /api/containers
     Then the container with saved name "BKN1" should have version equal to variable "EXPECTED_PATCH_TAG"
     And the container with saved name "BKN2" should have version equal to variable "EXPECTED_PATCH_TAG"
+
+  Scenario: Reject a single compose trigger when the compose file cannot be resolved
+    When I find the container with name "zz_compose_unresolvable" and save its ID as "URID", version as "URV", and name as "URN"
+    And I send POST to /api/containers/`URID`/triggers/dockercompose/update
+    Then response code should be 400
+    And I GET /api/containers/`URID`
+    And response body path $.image.tag.value should be 6.0.0
