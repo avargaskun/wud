@@ -129,7 +129,7 @@ The batch endpoint takes an **array** of container views as its body (a non-arra
 
 ### Response
 
-Both endpoints respond `200` with the trigger run result whenever the local trigger resolved, and `500 { "error": ... }` when it threw.
+Both endpoints respond `200` with the trigger run result whenever the local trigger resolved, and `500 { "error": ... }` when it threw. The single-container endpoint additionally answers `400` when the trigger cannot act on that container at all (body: `error`, `containers`, `details[]`) and `409` when the container no longer exists in Docker (body: `error`, `containers`), with the same bodies as the Container API.
 
 ```json
 {
@@ -142,6 +142,6 @@ Both endpoints respond `200` with the trigger run result whenever the local trig
 }
 ```
 
-`members` is only present for batch runs, and `dependents` only when a container carries the [`wud.postupdate.restart`](/configuration/watchers/?id=restart-dependent-containers-after-an-update) label; the body is `{}` when the trigger reports neither. See the [Container API](/api/container/?id=response) for the field semantics.
+`members` carries one entry per container the update trigger acted on — a single entry for the single-container endpoint — and `dependents` is present only when a container carries the [`wud.postupdate.restart`](/configuration/watchers/?id=restart-dependent-containers-after-an-update) label; the body is `{}` when the trigger reports neither. See the [Container API](/api/container/?id=response) for the field semantics.
 
 > **Note**: A batch where some members failed still responds `200` here — the partial-failure status policy (`500` with the same body) is applied by the Controller, not the Agent.

@@ -3,6 +3,7 @@ import * as component from './component';
 import * as registry from '../registry';
 import * as agent from '../agent';
 import logger from '../log';
+import { ContainerGoneError } from '../triggers/providers/docker/errors';
 import type { TriggerRunResult } from '../triggers/providers/docker/types';
 
 const log = logger.child({ component: 'trigger' });
@@ -52,6 +53,26 @@ export async function runTrigger(req: Request, res: Response): Promise<void> {
                 containerToTrigger,
             )})`,
         );
+        const unprocessable = await triggerToRun.getUnprocessableContainers([
+            containerToTrigger,
+        ]);
+        if (unprocessable.length > 0) {
+            const [{ reason }] = unprocessable;
+            log.warn(
+                `Trigger cannot be applied (type=${triggerType}, name=${triggerName}, container=${containerToTrigger.name}, reason=${reason})`,
+            );
+            res.status(400).json({
+                error: `Container ${containerToTrigger.name} cannot be updated by this trigger (${reason})`,
+                containers: [containerToTrigger.id],
+                details: unprocessable.map((u) => ({
+                    id: u.container.id,
+                    name: u.container.name,
+                    reason: u.reason,
+                })),
+            });
+            return;
+        }
+
         const result = (await triggerToRun.trigger(containerToTrigger)) as
             | TriggerRunResult
             | undefined;
@@ -60,6 +81,16 @@ export async function runTrigger(req: Request, res: Response): Promise<void> {
         );
         res.status(200).json(result ?? {});
     } catch (e) {
+        if (e instanceof ContainerGoneError) {
+            log.warn(
+                `Container gone (type=${triggerType}, name=${triggerName}, container=${containerToTrigger.name})`,
+            );
+            res.status(409).json({
+                error: e.message,
+                containers: [containerToTrigger.id],
+            });
+            return;
+        }
         log.warn(
             `Error when running trigger ${triggerType}.${triggerName} (${e.message})`,
         );

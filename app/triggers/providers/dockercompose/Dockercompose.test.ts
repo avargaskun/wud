@@ -12,6 +12,7 @@ import Dockercompose, {
     applyComposeEdits,
 } from './Dockercompose';
 import type { ComposeEdit, ComposeFile } from './Dockercompose';
+import { ContainerGoneError } from '../docker/errors';
 import log from '../../../log';
 import { Container } from '../../../model/container';
 import type {
@@ -113,6 +114,11 @@ const composeYamlPrefixOnly = `services:
 const composeYamlDigestCombined = `services:
   only_digest:
     image: ghcr.io/stefanprodan/podinfo:5.0.0@sha256:abc123
+`;
+
+const composeYamlForeign = `services:
+  other:
+    image: docker.io/library/nginx:1.0
 `;
 
 const composeYamlAliasBomb = `services:
@@ -291,29 +297,96 @@ beforeEach(() => {
     dockercompose.configuration = { ...baseConfiguration };
 });
 
-test('getComposeFileForContainer should return the absolute label path', () => {
+test('initTrigger should accept a configured file list when at least one exists', async () => {
+    dockercompose.configuration.file = '/abs/a.yml,/abs/b.yml';
+    mockedAccess.mockImplementation(async (file: string) => {
+        if (file === '/abs/b.yml') {
+            return undefined;
+        }
+        throw new Error('missing');
+    });
+    const warn = jest.spyOn(dockercompose.log, 'warn');
+
+    await expect(dockercompose.initTrigger()).resolves.toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+        'The default file /abs/a.yml does not exist',
+    );
+});
+
+test('initTrigger should reject when no configured file exists', async () => {
+    dockercompose.configuration.file = '/abs/a.yml,/abs/b.yml';
+    mockedAccess.mockRejectedValue(new Error('missing'));
+
+    await expect(dockercompose.initTrigger()).rejects.toThrow(
+        'The default file /abs/a.yml,/abs/b.yml does not exist',
+    );
+});
+
+test('getComposeFilesForContainer should return the absolute label path', () => {
     const container = buildContainer({
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
     });
-    expect(dockercompose.getComposeFileForContainer(container)).toBe(
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
         '/abs/docker-compose.yml',
-    );
+    ]);
 });
 
-test('getComposeFileForContainer should fall back to the configuration file', () => {
-    const container = buildContainer();
-    expect(dockercompose.getComposeFileForContainer(container)).toBe(
-        '/default/docker-compose.yml',
-    );
-});
-
-test('getComposeFileForContainer should resolve a relative label path to absolute', () => {
+test('getComposeFilesForContainer should resolve a relative label path to absolute', () => {
     const container = buildContainer({
         labels: { 'wud.compose.file': 'relative/docker-compose.yml' },
     });
-    expect(dockercompose.getComposeFileForContainer(container)).toBe(
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
         path.resolve('relative/docker-compose.yml'),
-    );
+    ]);
+});
+
+test('getComposeFilesForContainer should split a comma-separated label value', () => {
+    const container = buildContainer({
+        labels: {
+            'wud.compose.file': '/abs/docker-compose.yml,relative/override.yml',
+        },
+    });
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/abs/docker-compose.yml',
+        path.resolve('relative/override.yml'),
+    ]);
+});
+
+test('getComposeFilesForContainer should trim and drop empty config_files segments', () => {
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files': ' /a.yml , ,/b.yml,',
+        },
+    });
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/a.yml',
+        '/b.yml',
+    ]);
+});
+
+test('getComposeFilesForContainer should prefer the wud label over config_files', () => {
+    const container = buildContainer({
+        labels: {
+            'wud.compose.file': '/abs/docker-compose.yml',
+            'com.docker.compose.project.config_files': '/a.yml,/b.yml',
+        },
+    });
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/abs/docker-compose.yml',
+    ]);
+});
+
+test('getComposeFilesForContainer should fall back to the configuration file', () => {
+    const container = buildContainer();
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([
+        '/default/docker-compose.yml',
+    ]);
+});
+
+test('getComposeFilesForContainer should return an empty array without label or configured file', () => {
+    dockercompose.configuration = { ...baseConfiguration, file: undefined };
+    const container = buildContainer();
+    expect(dockercompose.getComposeFilesForContainer(container)).toEqual([]);
 });
 
 test('groupByComposeFile should skip a non-local-host container', async () => {
@@ -359,6 +432,204 @@ test('groupByComposeFile should group belonging containers and drop non-belongin
     const groups = await dockercompose.groupByComposeFile([c1, c2, other]);
     expect(groups.size).toBe(1);
     expect(groups.get('/abs/docker-compose.yml')).toHaveLength(2);
+});
+
+test('resolveComposeFileForContainer should pick the last candidate that declares the image', async () => {
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/base.yml,/abs/override.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/override.yml' });
+});
+
+test('resolveComposeFileForContainer should pick the only candidate that declares the image', async () => {
+    mockedReadFile.mockImplementation(async (file: string) =>
+        file === '/abs/override.yml' ? composeYamlForeign : composeYaml,
+    );
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/base.yml,/abs/override.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/base.yml' });
+});
+
+test('resolveComposeFileForContainer should skip a candidate that does not exist', async () => {
+    mockedAccess.mockImplementation(async (file: string) => {
+        if (file === '/abs/missing.yml') {
+            throw new Error('missing');
+        }
+    });
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/missing.yml,/abs/base.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/base.yml' });
+});
+
+test('resolveComposeFileForContainer should warn and skip an unparseable candidate', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockImplementation(async (file: string) =>
+        file === '/abs/broken.yml' ? composeYamlTabs : composeYaml,
+    );
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/broken.yml,/abs/base.yml',
+        },
+    });
+    await expect(
+        dockercompose.resolveComposeFileForContainer(container, new Map()),
+    ).resolves.toEqual({ file: '/abs/base.yml' });
+    expect(warnSpy).toHaveBeenCalledWith(
+        expect.stringContaining(
+            'Skipping compose file /abs/broken.yml for container zz_batch_compose_1',
+        ),
+    );
+});
+
+test('classifyContainers should read each distinct candidate once', async () => {
+    const containers = ['c1', 'c2', 'c3'].map((id) =>
+        buildContainer({
+            id,
+            labels: {
+                'com.docker.compose.project.config_files':
+                    '/abs/base.yml,/abs/override.yml',
+            },
+        }),
+    );
+    const { groups, unprocessable } =
+        await dockercompose.classifyContainers(containers);
+    expect(unprocessable).toEqual([]);
+    expect(groups.get('/abs/override.yml')).toHaveLength(3);
+    expect(mockedReadFile.mock.calls.length).toBe(2);
+});
+
+test('classifyContainers should group two containers of the same project together', async () => {
+    const c1 = buildContainer({
+        id: 'c1',
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/base.yml,/abs/override.yml',
+        },
+    });
+    const c2 = buildContainer({
+        id: 'c2',
+        labels: {
+            'com.docker.compose.service': 'zz_batch_compose_2',
+            'com.docker.compose.project.config_files':
+                ' /abs/base.yml , /abs/override.yml ',
+        },
+    });
+    const { groups } = await dockercompose.classifyContainers([c1, c2]);
+    expect(groups.size).toBe(1);
+    expect(groups.get('/abs/override.yml')).toEqual([c1, c2]);
+});
+
+test('classifyContainers should reject a non-local-host container with a reason', async () => {
+    const container = buildContainer({
+        watcher: 'remote',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const { groups, unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(groups.size).toBe(0);
+    expect(unprocessable).toEqual([
+        { container, reason: 'it is not running on the local host' },
+    ]);
+});
+
+test('classifyContainers should name both labels when there is no candidate', async () => {
+    dockercompose.configuration = { ...baseConfiguration, file: undefined };
+    const container = buildContainer({ labels: null });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].container).toBe(container);
+    expect(unprocessable[0].reason).toContain("no 'wud.compose.file' label");
+    expect(unprocessable[0].reason).toContain(
+        "no 'com.docker.compose.project.config_files' label",
+    );
+});
+
+test('classifyContainers should list the candidates when none of them exists', async () => {
+    mockedAccess.mockRejectedValue(new Error('missing'));
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/a.yml,/abs/b.yml' },
+    });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].reason).toBe(
+        'none of its candidate compose files exist (/abs/a.yml, /abs/b.yml)',
+    );
+});
+
+test('classifyContainers should list the existing candidates when none declares the image', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlForeign);
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/a.yml,/abs/b.yml' },
+    });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].reason).toBe(
+        'no service in /abs/a.yml, /abs/b.yml pins its image ghcr.io/stefanprodan/podinfo:5.0.0',
+    );
+});
+
+test('classifyContainers should report a parse failure rather than a service mismatch', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlTabs);
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/a.yml,/abs/b.yml' },
+    });
+    const { unprocessable } = await dockercompose.classifyContainers([
+        container,
+    ]);
+    expect(unprocessable[0].reason).toBe(
+        'none of its candidate compose files could be read or parsed (/abs/a.yml, /abs/b.yml)',
+    );
+});
+
+test('classifyContainers should warn when a container matches no service', async () => {
+    const warnSpy = jest.spyOn(dockercompose.log, 'warn');
+    mockedReadFile.mockResolvedValue(composeYamlForeign);
+    const container = buildContainer({
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    await dockercompose.classifyContainers([container]);
+    expect(warnSpy).toHaveBeenCalledWith(
+        'Cannot update container zz_batch_compose_1 because no service in /abs/docker-compose.yml pins its image ghcr.io/stefanprodan/podinfo:5.0.0',
+    );
+});
+
+test('classifyContainers should report nothing unprocessable when every container resolves', async () => {
+    const c1 = buildContainer({
+        id: 'c1',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const c2 = buildContainer({
+        id: 'c2',
+        labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
+    });
+    const { groups, unprocessable } = await dockercompose.classifyContainers([
+        c1,
+        c2,
+    ]);
+    expect(unprocessable).toEqual([]);
+    expect(groups.get('/abs/docker-compose.yml')).toEqual([c1, c2]);
 });
 
 test('rewriteComposeFile should bump only the labelled service and leave its twin untouched', async () => {
@@ -519,7 +790,8 @@ test('triggerBatch should swap only the containers whose pull returned a context
             id: 'gone',
             name: 'zz_batch_compose_1',
             status: 'failed',
-            error: 'Container no longer exists',
+            error: 'Container zz_batch_compose_1 no longer exists',
+            gone: true,
         },
     ]);
 });
@@ -547,7 +819,7 @@ test('doesContainerBelongToCompose should return false without throwing when a s
     expect(doesContainerBelongToCompose(compose, buildContainer())).toBe(false);
 });
 
-test('getUnbatchableContainers should return containers that do not belong to a compose file', async () => {
+test('getUnprocessableContainers should return containers that do not belong to a compose file', async () => {
     const belongs = buildContainer({
         id: 'c1',
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
@@ -565,14 +837,16 @@ test('getUnbatchableContainers should return containers that do not belong to a 
             os: 'linux',
         },
     });
-    const result = await dockercompose.getUnbatchableContainers([
+    const result = await dockercompose.getUnprocessableContainers([
         belongs,
         foreign,
     ]);
-    expect(result).toEqual([foreign]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(foreign);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
-test('getUnbatchableContainers should return an empty array when all containers belong', async () => {
+test('getUnprocessableContainers should return an empty array when all containers belong', async () => {
     const c1 = buildContainer({
         id: 'c1',
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
@@ -581,7 +855,7 @@ test('getUnbatchableContainers should return an empty array when all containers 
         id: 'c2',
         labels: { 'wud.compose.file': '/abs/docker-compose.yml' },
     });
-    const result = await dockercompose.getUnbatchableContainers([c1, c2]);
+    const result = await dockercompose.getUnprocessableContainers([c1, c2]);
     expect(result).toEqual([]);
 });
 
@@ -736,6 +1010,43 @@ test('trigger should return the batch result when the sole member was updated', 
     jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue(batchResult);
     await expect(dockercompose.trigger(container)).resolves.toEqual(
         batchResult,
+    );
+});
+
+test('trigger should throw with the resolution reason when the container is unprocessable', async () => {
+    const container = buildContainer({
+        id: 'c1',
+        labels: { 'wud.compose.file': '/missing/docker-compose.yml' },
+    });
+    mockedAccess.mockRejectedValue(new Error('ENOENT'));
+    await expect(dockercompose.trigger(container)).rejects.toThrow(
+        'Container zz_batch_compose_1 was not updated by this trigger (none of its candidate compose files exist (/missing/docker-compose.yml))',
+    );
+});
+
+test('trigger should not throw under dryrun when triggerBatch returns void', async () => {
+    dockercompose.configuration = { ...baseConfiguration, dryrun: true };
+    const container = buildContainer({ id: 'c1' });
+    jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue(undefined);
+    await expect(dockercompose.trigger(container)).resolves.toBeUndefined();
+});
+
+test('trigger should throw ContainerGoneError when the sole member is gone', async () => {
+    const container = buildContainer({ id: 'c1' });
+    jest.spyOn(dockercompose, 'triggerBatch').mockResolvedValue({
+        members: [
+            {
+                id: 'c1',
+                name: 'zz_batch_compose_1',
+                status: 'failed',
+                error: 'Container zz_batch_compose_1 no longer exists',
+                gone: true,
+            },
+        ],
+        dependents: [],
+    });
+    await expect(dockercompose.trigger(container)).rejects.toBeInstanceOf(
+        ContainerGoneError,
     );
 });
 
@@ -1055,31 +1366,33 @@ test('doesContainerBelongToCompose should return true for an ambiguous container
     ).toBe(true);
 });
 
-test('getUnbatchableContainers should return an empty array for an ambiguous container', async () => {
+test('getUnprocessableContainers should return an empty array for an ambiguous container', async () => {
     mockedReadFile.mockResolvedValue(composeYamlRich);
     const container = buildContainer({ id: 'c1', labels: null });
     await expect(
-        dockercompose.getUnbatchableContainers([container]),
+        dockercompose.getUnprocessableContainers([container]),
     ).resolves.toEqual([]);
 });
 
-test('getUnbatchableContainers should return a container whose only compose pin is a longer tag', async () => {
+test('getUnprocessableContainers should return a container whose only compose pin is a longer tag', async () => {
     mockedReadFile.mockResolvedValue(composeYamlPrefixOnly);
     const container = buildContainer({ id: 'c1' });
-    await expect(
-        dockercompose.getUnbatchableContainers([container]),
-    ).resolves.toEqual([container]);
+    const result = await dockercompose.getUnprocessableContainers([container]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(container);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
-test('getUnbatchableContainers should return a container whose only compose pin combines a tag and a digest', async () => {
+test('getUnprocessableContainers should return a container whose only compose pin combines a tag and a digest', async () => {
     mockedReadFile.mockResolvedValue(composeYamlDigestCombined);
     const container = buildContainer({ id: 'c1' });
-    await expect(
-        dockercompose.getUnbatchableContainers([container]),
-    ).resolves.toEqual([container]);
+    const result = await dockercompose.getUnprocessableContainers([container]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(container);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
-test('getUnbatchableContainers should return a container with an unknown registry without throwing', async () => {
+test('getUnprocessableContainers should return a container with an unknown registry without throwing', async () => {
     mockedReadFile.mockResolvedValue(composeYaml);
     const container = buildContainer({
         id: 'c1',
@@ -1093,9 +1406,10 @@ test('getUnbatchableContainers should return a container with an unknown registr
             os: 'linux',
         },
     });
-    await expect(
-        dockercompose.getUnbatchableContainers([container]),
-    ).resolves.toEqual([container]);
+    const result = await dockercompose.getUnprocessableContainers([container]);
+    expect(result).toHaveLength(1);
+    expect(result[0].container).toBe(container);
+    expect(result[0].reason).toMatch(/pins its image/);
 });
 
 test('groupByComposeFile should keep an ambiguous container in its group', async () => {

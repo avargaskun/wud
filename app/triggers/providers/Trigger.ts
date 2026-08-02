@@ -22,6 +22,11 @@ export interface TriggerConfiguration extends ComponentConfiguration {
     includebydefault?: boolean;
 }
 
+export interface UnprocessableContainer {
+    container: Container;
+    reason: string;
+}
+
 export interface ParsedIncludeOrExcludeTrigger {
     id: string;
     threshold: string;
@@ -627,16 +632,15 @@ class Trigger extends Component {
     }
 
     /**
-     * Return the subset of containers this trigger cannot process as part of a
-     * lockstep batch. Default: none. Overridden by providers (e.g. docker-compose)
-     * that can only act on containers belonging to a managed resource.
-     * @param containers
-     * @returns {Promise<Container[]>}
+     * Return the containers this trigger cannot act on, with the reason for each.
+     * Default: none. Overridden by providers that can only act on containers
+     * belonging to a managed resource (e.g. docker-compose).
+     * @param _containers
+     * @returns {Promise<UnprocessableContainer[]>}
      */
-
-    async getUnbatchableContainers(
-        containers: Container[],
-    ): Promise<Container[]> {
+    async getUnprocessableContainers(
+        _containers: Container[],
+    ): Promise<UnprocessableContainer[]> {
         return [];
     }
 

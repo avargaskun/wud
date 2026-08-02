@@ -25,6 +25,7 @@ export interface SwapOutcome {
     startedAfterSwap: boolean;
     oldContainerId: string;
     error?: string;
+    gone?: boolean;
 }
 
 export type DependentOutcomeStatus = 'bounced' | 'skipped' | 'failed';
@@ -49,6 +50,7 @@ export interface MemberOutcome {
     status: 'updated' | 'failed';
     error?: string;
     fileUpdated?: boolean; // omitted unless a compose image line was expected to change
+    gone?: boolean; // omitted unless the container no longer exists in Docker
 }
 
 /**
