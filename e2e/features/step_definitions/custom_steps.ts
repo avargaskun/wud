@@ -1,8 +1,10 @@
 import { Given, When, Then } from '@cucumber/cucumber';
+import type { Apickli } from 'apickli';
 import * as assert from 'assert';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import registryOracle from '../support/registry_oracle';
+import type { ApickliWorld } from '../support/world';
 
 interface Container {
     id: string;
@@ -17,7 +19,7 @@ interface Container {
     updateAvailable: boolean;
 }
 
-Given(/^I resolve the latest version for image "([^"]*)" on registry "([^"]*)" with strategy "([^"]*)" and pattern "([^"]*)" and value "([^"]*)" as "([^"]*)"$/, async function (this: any, imageName: string, registry: string, strategy: string, pattern: string, value: string, varName: string) {
+Given(/^I resolve the latest version for image "([^"]*)" on registry "([^"]*)" with strategy "([^"]*)" and pattern "([^"]*)" and value "([^"]*)" as "([^"]*)"$/, async function (this: ApickliWorld, imageName: string, registry: string, strategy: string, pattern: string, value: string, varName: string) {
     let version;
     if (strategy === 'static') {
         version = value;
@@ -27,17 +29,17 @@ Given(/^I resolve the latest version for image "([^"]*)" on registry "([^"]*)" w
     this.apickli.setGlobalVariable(varName, version);
 });
 
-Given(/^I get the latest version for image "([^"]*)" on registry "([^"]*)" with pattern "([^"]*)" and store it in "([^"]*)"$/, async function (this: any, imageName: string, registry: string, pattern: string, varName: string) {
+Given(/^I get the latest version for image "([^"]*)" on registry "([^"]*)" with pattern "([^"]*)" and store it in "([^"]*)"$/, async function (this: ApickliWorld, imageName: string, registry: string, pattern: string, varName: string) {
     const version = await registryOracle.getLatestVersion(registry, imageName, pattern);
     this.apickli.setGlobalVariable(varName, version);
 });
 
-Given(/^I get the latest digest for image "([^"]*)" on registry "([^"]*)" with tag "([^"]*)" and store it in "([^"]*)"$/, async function (this: any, imageName: string, registry: string, tag: string, varName: string) {
+Given(/^I get the latest digest for image "([^"]*)" on registry "([^"]*)" with tag "([^"]*)" and store it in "([^"]*)"$/, async function (this: ApickliWorld, imageName: string, registry: string, tag: string, varName: string) {
     const digest = await registryOracle.getLatestDigest(registry, imageName, tag);
     this.apickli.setGlobalVariable(varName, digest);
 });
 
-Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this: any, path: string, varName: string) {
+Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this: ApickliWorld, path: string, varName: string) {
     const expectedValue = this.apickli.getGlobalVariable(varName);
     const actualValue = this.apickli.evaluatePathInResponseBody(path);
     assert.strictEqual(String(actualValue), String(expectedValue), `Expected ${expectedValue} at ${path}, but got ${actualValue}`);
@@ -49,7 +51,7 @@ Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this
 // instead and report absence with a sentinel.
 const ABSENT = Symbol('absent');
 
-function resolveDotPath(apickli: any, path: string): any {
+function resolveDotPath(apickli: Apickli, path: string): any {
     const { body } = apickli.getResponseObject();
     let parsed;
     try {
@@ -74,34 +76,34 @@ function describeValue(value: any): string {
 
 // "must be" rather than "should be": apickli already owns /^response body path (.*) should be (.*)$/
 // and cucumber fails on an ambiguous match.
-Then(/^response body path (.*) must be absent$/, function (this: any, path: string) {
+Then(/^response body path (.*) must be absent$/, function (this: ApickliWorld, path: string) {
     const actual = resolveDotPath(this.apickli, path);
     assert.strictEqual(actual, ABSENT, `Expected ${path} to be absent, got ${describeValue(actual)}`);
 });
 
-Then(/^response body path (.*) must be exactly null$/, function (this: any, path: string) {
+Then(/^response body path (.*) must be exactly null$/, function (this: ApickliWorld, path: string) {
     const actual = resolveDotPath(this.apickli, path);
     assert.strictEqual(actual, null, `Expected ${path} to be null, got ${describeValue(actual)}`);
 });
 
-Given(/^I set variable "([^"]*)" to "([^"]*)"$/, function (this: any, varName: string, value: string) {
+Given(/^I set variable "([^"]*)" to "([^"]*)"$/, function (this: ApickliWorld, varName: string, value: string) {
     const substitutedValue = substituteVariables(value, this.apickli);
     this.apickli.setGlobalVariable(varName, substitutedValue);
 });
 
-Then('response body should have substituted {string}', function (this: any, expectedContent: string) {
+Then('response body should have substituted {string}', function (this: ApickliWorld, expectedContent: string) {
     const safeExpectedContent = substituteVariables(expectedContent, this.apickli);
     const responseBody = this.apickli.getResponseObject().body;
     assert.ok(responseBody.includes(safeExpectedContent), `Response body should contain ${safeExpectedContent}`);
 });
 
-Then(/^response body should have substituted string:$/, function (this: any, expectedString: string) {
+Then(/^response body should have substituted string:$/, function (this: ApickliWorld, expectedString: string) {
     const safeExpectedString = substituteVariables(expectedString, this.apickli);
     const responseBody = this.apickli.getResponseObject().body;
     assert.ok(responseBody.includes(safeExpectedString), `Response body should contain ${safeExpectedString}`);
 });
 
-When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (this: any, remoteArg: string, imageName: string, idVar: string, versionVar: string, nameVar: string) {
+When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (this: ApickliWorld, remoteArg: string, imageName: string, idVar: string, versionVar: string, nameVar: string) {
     await new Promise<void>((resolve, reject) => {
         this.apickli.get('/api/containers', (error: any, response: any) => {
             if (error) reject(error);
@@ -116,7 +118,7 @@ When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "(
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', e);
+            this.attach('Failed to parse response body:', String(e));
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -160,7 +162,7 @@ When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "(
     this.apickli.setGlobalVariable(nameVar, found.name);
 });
 
-When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (this: any, remoteArg: string, name: string, idVar: string, versionVar: string, nameVar: string) {
+When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (this: ApickliWorld, remoteArg: string, name: string, idVar: string, versionVar: string, nameVar: string) {
     await new Promise<void>((resolve, reject) => {
         this.apickli.get('/api/containers', (error: any, response: any) => {
             if (error) reject(error);
@@ -175,7 +177,7 @@ When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', e);
+            this.attach('Failed to parse response body:', String(e));
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -211,7 +213,7 @@ Then(/^I wait for (\d+) seconds$/, async (seconds: string) => {
     await new Promise((resolve) => setTimeout(resolve, parseInt(seconds) * 1000));
 });
 
-Then(/^the container with saved name "([^"]*)" should have a version different than "([^"]*)"$/, async function (this: any, nameVar: string, oldVersionVar: string) {
+Then(/^the container with saved name "([^"]*)" should have a version different than "([^"]*)"$/, async function (this: ApickliWorld, nameVar: string, oldVersionVar: string) {
     const name = this.apickli.getGlobalVariable(nameVar);
     const oldVersion = this.apickli.getGlobalVariable(oldVersionVar);
 
@@ -230,7 +232,7 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', e);
+            this.attach('Failed to parse response body:', String(e));
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -267,7 +269,7 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
     assert.notStrictEqual(currentVersion, oldVersion, `Container version expected to change from ${oldVersion}, but is still ${currentVersion}`);
 });
 
-Then(/^the container with saved name "([^"]*)" should have version equal to variable "([^"]*)"$/, async function (this: any, nameVar: string, versionVar: string) {
+Then(/^the container with saved name "([^"]*)" should have version equal to variable "([^"]*)"$/, async function (this: ApickliWorld, nameVar: string, versionVar: string) {
     const name = this.apickli.getGlobalVariable(nameVar);
     const expectedVersion = this.apickli.getGlobalVariable(versionVar);
 
@@ -286,7 +288,7 @@ Then(/^the container with saved name "([^"]*)" should have version equal to vari
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', e);
+            this.attach('Failed to parse response body:', String(e));
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -321,7 +323,7 @@ Then(/^the container with saved name "([^"]*)" should have version equal to vari
     assert.strictEqual(currentVersion, expectedVersion, `Container version expected to be ${expectedVersion}, but is ${currentVersion}`);
 });
 
-Then(/^the container with saved ID "([^"]*)" should have a version different than "([^"]*)"$/, async function (this: any, idVar: string, oldVersionVar: string) {
+Then(/^the container with saved ID "([^"]*)" should have a version different than "([^"]*)"$/, async function (this: ApickliWorld, idVar: string, oldVersionVar: string) {
     const id = this.apickli.getGlobalVariable(idVar);
     const oldVersion = this.apickli.getGlobalVariable(oldVersionVar);
 
@@ -340,7 +342,7 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', e);
+            this.attach('Failed to parse response body:', String(e));
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -359,11 +361,11 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
     assert.notStrictEqual(currentVersion, oldVersion, `Container version expected to change from ${oldVersion}, but is still ${currentVersion}`);
 });
 
-function substituteVariables(str: string, apickli: any): string {
+function substituteVariables(str: string, apickli: Apickli): string {
     return str.replace(/`([^`]*)`/g, (match, p1) => apickli.getGlobalVariable(p1) || match);
 }
 
-When(/^I send POST to (\S+)$/, async function (this: any, url: string) {
+When(/^I send POST to (\S+)$/, async function (this: ApickliWorld, url: string) {
     const safeUrl = substituteVariables(url, this.apickli);
     await new Promise<void>((resolve, reject) => {
         this.apickli.post(safeUrl, (error: any, response: any) => {
@@ -373,7 +375,7 @@ When(/^I send POST to (\S+)$/, async function (this: any, url: string) {
     });
 });
 
-When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this: any, url: string, idVars: string) {
+When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this: ApickliWorld, url: string, idVars: string) {
     const containerIds = idVars.split(',').map((v) => this.apickli.getGlobalVariable(v.trim()));
     const body = { containerIds };
     this.apickli.setRequestBody(JSON.stringify(body));
@@ -387,7 +389,7 @@ When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this:
     });
 });
 
-When(/^I send POST to (.*) with container IDs "([^"]*)" and bucket "([^"]*)"$/, async function (this: any, url: string, idVars: string, bucket: string) {
+When(/^I send POST to (.*) with container IDs "([^"]*)" and bucket "([^"]*)"$/, async function (this: ApickliWorld, url: string, idVars: string, bucket: string) {
     const containerIds = idVars.split(',').map((v) => this.apickli.getGlobalVariable(v.trim()));
     const body = { containerIds, bucket };
     this.apickli.setRequestBody(JSON.stringify(body));
@@ -401,7 +403,7 @@ When(/^I send POST to (.*) with container IDs "([^"]*)" and bucket "([^"]*)"$/, 
     });
 });
 
-When(/^I send POST to (.*) with bucket "([^"]*)"$/, async function (this: any, url: string, bucket: string) {
+When(/^I send POST to (.*) with bucket "([^"]*)"$/, async function (this: ApickliWorld, url: string, bucket: string) {
     const body = { bucket };
     this.apickli.setRequestBody(JSON.stringify(body));
     this.apickli.addRequestHeader('Content-Type', 'application/json');
@@ -414,7 +416,7 @@ When(/^I send POST to (.*) with bucket "([^"]*)"$/, async function (this: any, u
     });
 });
 
-Then(/^the container with image "([^"]*)" should have update available$/, async function (this: any, imageName: string) {
+Then(/^the container with image "([^"]*)" should have update available$/, async function (this: ApickliWorld, imageName: string) {
     const response = this.apickli.getResponseObject();
     let containers: Container[] | any = response.body;
 
@@ -422,7 +424,7 @@ Then(/^the container with image "([^"]*)" should have update available$/, async 
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', e);
+            this.attach('Failed to parse response body:', String(e));
             throw new Error('Response body is not valid JSON');
         }
     }
