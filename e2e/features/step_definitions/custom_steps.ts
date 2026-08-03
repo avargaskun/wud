@@ -1,5 +1,5 @@
 import { Given, When, Then } from '@cucumber/cucumber';
-import type { Apickli } from 'apickli';
+import type { Apickli, ResponseObject } from 'apickli';
 import * as assert from 'assert';
 import * as fs from 'fs/promises';
 import * as path from 'path';
@@ -10,7 +10,7 @@ interface Container {
     id: string;
     name: string;
     status: string;
-    agent?: any;
+    agent?: string;
     image: {
         registry: { name: string };
         name: string;
@@ -51,26 +51,26 @@ Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this
 // instead and report absence with a sentinel.
 const ABSENT = Symbol('absent');
 
-function resolveDotPath(apickli: Apickli, path: string): any {
+function resolveDotPath(apickli: Apickli, path: string): unknown {
     const { body } = apickli.getResponseObject();
-    let parsed;
+    let parsed: unknown;
     try {
         parsed = typeof body === 'string' ? JSON.parse(body) : body;
     } catch (e) {
         throw new Error(`Response body is not valid JSON: ${body}`);
     }
     const segments = path.replace(/^\$\.?/, '').split('.').filter((segment: string) => segment !== '');
-    let current = parsed;
+    let current: unknown = parsed;
     for (const segment of segments) {
         if (current === null || typeof current !== 'object' || !(segment in current)) {
             return ABSENT;
         }
-        current = current[segment];
+        current = (current as Record<string, unknown>)[segment];
     }
     return current;
 }
 
-function describeValue(value: any): string {
+function describeValue(value: unknown): string {
     return value === ABSENT ? 'absent' : JSON.stringify(value);
 }
 
@@ -104,15 +104,15 @@ Then(/^response body should have substituted string:$/, function (this: ApickliW
 });
 
 When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (this: ApickliWorld, remoteArg: string, imageName: string, idVar: string, versionVar: string, nameVar: string) {
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.get('/api/containers', (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.get('/api/containers', (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
     });
     const response = this.apickli.getResponseObject();
 
-    let containers: Container[] | any = response.body;
+    let containers: unknown = response.body;
 
     if (typeof containers === 'string') {
         try {
@@ -163,15 +163,15 @@ When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "(
 });
 
 When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([^"]*)", version as "([^"]*)", and name as "([^"]*)"$/, async function (this: ApickliWorld, remoteArg: string, name: string, idVar: string, versionVar: string, nameVar: string) {
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.get('/api/containers', (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.get('/api/containers', (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
     });
     const response = this.apickli.getResponseObject();
 
-    let containers: Container[] | any = response.body;
+    let containers: unknown = response.body;
 
     if (typeof containers === 'string') {
         try {
@@ -218,15 +218,15 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
     const oldVersion = this.apickli.getGlobalVariable(oldVersionVar);
 
     // Refresh containers
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.get('/api/containers', (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.get('/api/containers', (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
     });
     const response = this.apickli.getResponseObject();
 
-    let containers: Container[] | any = response.body;
+    let containers: unknown = response.body;
 
     if (typeof containers === 'string') {
         try {
@@ -274,15 +274,15 @@ Then(/^the container with saved name "([^"]*)" should have version equal to vari
     const expectedVersion = this.apickli.getGlobalVariable(versionVar);
 
     // Refresh containers
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.get('/api/containers', (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.get('/api/containers', (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
     });
     const response = this.apickli.getResponseObject();
 
-    let containers: Container[] | any = response.body;
+    let containers: unknown = response.body;
 
     if (typeof containers === 'string') {
         try {
@@ -328,15 +328,15 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
     const oldVersion = this.apickli.getGlobalVariable(oldVersionVar);
 
     // Refresh containers
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.get('/api/containers', (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.get('/api/containers', (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
     });
     const response = this.apickli.getResponseObject();
 
-    let containers: Container[] | any = response.body;
+    let containers: unknown = response.body;
 
     if (typeof containers === 'string') {
         try {
@@ -367,8 +367,8 @@ function substituteVariables(str: string, apickli: Apickli): string {
 
 When(/^I send POST to (\S+)$/, async function (this: ApickliWorld, url: string) {
     const safeUrl = substituteVariables(url, this.apickli);
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.post(safeUrl, (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.post(safeUrl, (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
@@ -381,8 +381,8 @@ When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this:
     this.apickli.setRequestBody(JSON.stringify(body));
     this.apickli.addRequestHeader('Content-Type', 'application/json');
     const safeUrl = substituteVariables(url, this.apickli);
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.post(safeUrl, (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.post(safeUrl, (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
@@ -395,8 +395,8 @@ When(/^I send POST to (.*) with container IDs "([^"]*)" and bucket "([^"]*)"$/, 
     this.apickli.setRequestBody(JSON.stringify(body));
     this.apickli.addRequestHeader('Content-Type', 'application/json');
     const safeUrl = substituteVariables(url, this.apickli);
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.post(safeUrl, (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.post(safeUrl, (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
@@ -408,8 +408,8 @@ When(/^I send POST to (.*) with bucket "([^"]*)"$/, async function (this: Apickl
     this.apickli.setRequestBody(JSON.stringify(body));
     this.apickli.addRequestHeader('Content-Type', 'application/json');
     const safeUrl = substituteVariables(url, this.apickli);
-    await new Promise<void>((resolve, reject) => {
-        this.apickli.post(safeUrl, (error: any, response: any) => {
+    await new Promise<ResponseObject>((resolve, reject) => {
+        this.apickli.post(safeUrl, (error, response) => {
             if (error) reject(error);
             else resolve(response);
         });
@@ -418,7 +418,7 @@ When(/^I send POST to (.*) with bucket "([^"]*)"$/, async function (this: Apickl
 
 Then(/^the container with image "([^"]*)" should have update available$/, async function (this: ApickliWorld, imageName: string) {
     const response = this.apickli.getResponseObject();
-    let containers: Container[] | any = response.body;
+    let containers: unknown = response.body;
 
     if (typeof containers === 'string') {
         try {
