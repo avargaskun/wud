@@ -57,6 +57,10 @@ function excerpt(body: string): string {
     return redact(body).replace(/\s+/g, ' ').slice(0, BODY_EXCERPT_LENGTH);
 }
 
+export function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+}
+
 /**
  * Wall-clock guard for a single resolution, plus a per-process budget shared by all of them.
  */
@@ -150,9 +154,10 @@ async function requestWithRetry(url: string, options: https.RequestOptions, ctx:
         let res: HttpResult | null = null;
         try {
             res = await request(url, opts);
-        } catch (e: any) {
-            if (!RETRYABLE_NETWORK.test(e.message) || attempt >= MAX_ATTEMPTS) {
-                throw new Error(`${ctx.label}: request failed after ${attempt} attempt(s) for ${url}: ${e.message}`);
+        } catch (e) {
+            const message = errorMessage(e);
+            if (!RETRYABLE_NETWORK.test(message) || attempt >= MAX_ATTEMPTS) {
+                throw new Error(`${ctx.label}: request failed after ${attempt} attempt(s) for ${url}: ${message}`);
             }
         }
 
@@ -181,7 +186,7 @@ async function requestWithRetry(url: string, options: https.RequestOptions, ctx:
 function parseJson<T>(res: HttpResult, url: string, label: string): T {
     try {
         return JSON.parse(res.data) as T;
-    } catch (e: any) {
+    } catch (e) {
         throw new Error(`${label}: invalid JSON from ${url} (status ${res.statusCode}): ${excerpt(res.data)}`);
     }
 }
@@ -390,8 +395,9 @@ async function resolveLatestVersion(registry: string, image: string, pattern: st
         }
 
         return sortedTags[0];
-    } catch (e: any) {
-        console.error(`Error fetching latest version for ${image} on ${registry}: ${e.message}`);
+    } catch (e) {
+        const message = errorMessage(e);
+        console.error(`Error fetching latest version for ${image} on ${registry}: ${message}`);
         throw e;
     } finally {
         deadline.settle();
@@ -434,8 +440,9 @@ async function resolveLatestDigest(registry: string, image: string, tag: string)
             throw new Error(`Digest header not found for ${image}:${tag} on ${registry} (status ${head.statusCode})`);
         }
         return digest as string;
-    } catch (e: any) {
-        console.error(`Error fetching latest digest for ${image}:${tag} on ${registry}: ${e.message}`);
+    } catch (e) {
+        const message = errorMessage(e);
+        console.error(`Error fetching latest digest for ${image}:${tag} on ${registry}: ${message}`);
         throw e;
     } finally {
         deadline.settle();
