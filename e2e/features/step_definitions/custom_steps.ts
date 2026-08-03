@@ -39,10 +39,10 @@ Given(/^I get the latest digest for image "([^"]*)" on registry "([^"]*)" with t
     this.apickli.setGlobalVariable(varName, digest);
 });
 
-Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this: ApickliWorld, path: string, varName: string) {
+Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this: ApickliWorld, bodyPath: string, varName: string) {
     const expectedValue = this.apickli.getGlobalVariable(varName);
-    const actualValue = this.apickli.evaluatePathInResponseBody(path);
-    assert.strictEqual(String(actualValue), String(expectedValue), `Expected ${expectedValue} at ${path}, but got ${actualValue}`);
+    const actualValue = this.apickli.evaluatePathInResponseBody(bodyPath);
+    assert.strictEqual(String(actualValue), String(expectedValue), `Expected ${expectedValue} at ${bodyPath}, but got ${actualValue}`);
 });
 
 // apickli's evaluatePathInResponseBody() collapses "no match" to null (evaluateJsonPath returns
@@ -51,7 +51,7 @@ Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this
 // instead and report absence with a sentinel.
 const ABSENT = Symbol('absent');
 
-function resolveDotPath(apickli: Apickli, path: string): unknown {
+function resolveDotPath(apickli: Apickli, bodyPath: string): unknown {
     const { body } = apickli.getResponseObject();
     let parsed: unknown;
     try {
@@ -59,9 +59,10 @@ function resolveDotPath(apickli: Apickli, path: string): unknown {
     } catch (e) {
         throw new Error(`Response body is not valid JSON: ${body}`);
     }
-    const segments = path.replace(/^\$\.?/, '').split('.').filter((segment: string) => segment !== '');
+    const segments = bodyPath.replace(/^\$\.?/, '').split('.').filter((segment: string) => segment !== '');
     let current: unknown = parsed;
-    for (const segment of segments) {
+    for (let i = 0; i < segments.length; i += 1) {
+        const segment = segments[i];
         if (current === null || typeof current !== 'object' || !(segment in current)) {
             return ABSENT;
         }
@@ -74,17 +75,21 @@ function describeValue(value: unknown): string {
     return value === ABSENT ? 'absent' : JSON.stringify(value);
 }
 
-// "must be" rather than "should be": apickli already owns /^response body path (.*) should be (.*)$/
-// and cucumber fails on an ambiguous match.
-Then(/^response body path (.*) must be absent$/, function (this: ApickliWorld, path: string) {
-    const actual = resolveDotPath(this.apickli, path);
-    assert.strictEqual(actual, ABSENT, `Expected ${path} to be absent, got ${describeValue(actual)}`);
+// "must be" rather than "should be": apickli already owns
+// /^response body path (.*) should be (.*)$/ and cucumber fails on an ambiguous match.
+Then(/^response body path (.*) must be absent$/, function (this: ApickliWorld, bodyPath: string) {
+    const actual = resolveDotPath(this.apickli, bodyPath);
+    assert.strictEqual(actual, ABSENT, `Expected ${bodyPath} to be absent, got ${describeValue(actual)}`);
 });
 
-Then(/^response body path (.*) must be exactly null$/, function (this: ApickliWorld, path: string) {
-    const actual = resolveDotPath(this.apickli, path);
-    assert.strictEqual(actual, null, `Expected ${path} to be null, got ${describeValue(actual)}`);
+Then(/^response body path (.*) must be exactly null$/, function (this: ApickliWorld, bodyPath: string) {
+    const actual = resolveDotPath(this.apickli, bodyPath);
+    assert.strictEqual(actual, null, `Expected ${bodyPath} to be null, got ${describeValue(actual)}`);
 });
+
+function substituteVariables(str: string, apickli: Apickli): string {
+    return str.replace(/`([^`]*)`/g, (match, p1) => apickli.getGlobalVariable(p1) || match);
+}
 
 Given(/^I set variable "([^"]*)" to "([^"]*)"$/, function (this: ApickliWorld, varName: string, value: string) {
     const substitutedValue = substituteVariables(value, this.apickli);
@@ -210,7 +215,7 @@ When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([
 });
 
 Then(/^I wait for (\d+) seconds$/, async (seconds: string) => {
-    await new Promise((resolve) => setTimeout(resolve, parseInt(seconds) * 1000));
+    await new Promise((resolve) => { setTimeout(resolve, parseInt(seconds, 10) * 1000); });
 });
 
 Then(/^the container with saved name "([^"]*)" should have a version different than "([^"]*)"$/, async function (this: ApickliWorld, nameVar: string, oldVersionVar: string) {
@@ -258,11 +263,11 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
             this.attach(`Found ${matches.length} containers with name ${name}. Selected running container (id=${container.id})`);
         } else {
             // Fallback to the first one
-            container = matches[0];
+            [container] = matches;
             this.attach(`Found ${matches.length} containers with name ${name}, none are running. Selected first (id=${container.id})`);
         }
     } else {
-        container = matches[0];
+        [container] = matches;
     }
 
     const currentVersion = container.image.tag.value;
@@ -312,11 +317,11 @@ Then(/^the container with saved name "([^"]*)" should have version equal to vari
             container = running;
             this.attach(`Found ${matches.length} containers with name ${name}. Selected running container (id=${container.id})`);
         } else {
-            container = matches[0];
+            [container] = matches;
             this.attach(`Found ${matches.length} containers with name ${name}, none are running. Selected first (id=${container.id})`);
         }
     } else {
-        container = matches[0];
+        [container] = matches;
     }
 
     const currentVersion = container.image.tag.value;
@@ -360,10 +365,6 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
     const currentVersion = container.image.tag.value;
     assert.notStrictEqual(currentVersion, oldVersion, `Container version expected to change from ${oldVersion}, but is still ${currentVersion}`);
 });
-
-function substituteVariables(str: string, apickli: Apickli): string {
-    return str.replace(/`([^`]*)`/g, (match, p1) => apickli.getGlobalVariable(p1) || match);
-}
 
 When(/^I send POST to (\S+)$/, async function (this: ApickliWorld, url: string) {
     const safeUrl = substituteVariables(url, this.apickli);
@@ -434,7 +435,8 @@ Then(/^the container with image "([^"]*)" should have update available$/, async 
         throw new Error(`Failed to retrieve containers or invalid response format. Status: ${response ? response.statusCode : 'unknown'}`);
     }
 
-    // Reuse the find logic (simplified here or extracted if possible, but copy-paste is safer for now to avoid breaking existing step if I refactor incorrectly)
+    // Reuse the find logic (simplified here or extracted if possible, but copy-paste is safer
+    // for now to avoid breaking existing step if I refactor incorrectly)
     const found = (containers as Container[]).find((c) => {
         const fullImageName = `${c.image.registry.name !== 'hub' ? `${c.image.registry.name}/` : ''}${c.image.name}:${c.image.tag.value}`;
         const nameAndTag = `${c.image.name}:${c.image.tag.value}`;

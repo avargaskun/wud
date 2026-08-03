@@ -6,6 +6,7 @@
  * Run manually: cd e2e && npx ts-node features/support/oracle_selfcheck.ts
  * It monkeypatches https, so it must never be part of a real cucumber run.
  */
+/* eslint-disable max-classes-per-file -- three co-located test-only stub classes */
 import * as assert from 'assert';
 import * as https from 'https';
 import { OutgoingHttpHeaders } from 'http';
@@ -28,6 +29,7 @@ type Router = (url: string, method: string) => StubResponse;
 
 // A TS namespace import is a getter-only view of the module, so the stubs have to be
 // installed on the underlying module object that every importer delegates to.
+// eslint-disable-next-line @typescript-eslint/no-var-requires -- needs the mutable module object
 const httpsModule: { get: unknown; request: unknown } = require('https');
 
 const realGet = httpsModule.get;
@@ -47,8 +49,10 @@ class FakeResponse extends EventEmitter {
         this.headers = spec.headers || {};
     }
 
+    // eslint-disable-next-line class-methods-use-this -- stub satisfying the https response shape
     setEncoding(): void { /* no-op */ }
 
+    // eslint-disable-next-line class-methods-use-this -- stub satisfying the https response shape
     resume(): void { /* no-op */ }
 }
 
@@ -357,8 +361,16 @@ async function main(): Promise<void> {
             assert.deepStrictEqual(leaked, [], 'credentials must never reach the log');
             return 'anonymous without env; Basic when set; nothing leaked to logs';
         } finally {
-            if (savedUser === undefined) delete process.env.GITHUB_USERNAME; else process.env.GITHUB_USERNAME = savedUser;
-            if (savedToken === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = savedToken;
+            if (savedUser === undefined) {
+                delete process.env.GITHUB_USERNAME;
+            } else {
+                process.env.GITHUB_USERNAME = savedUser;
+            }
+            if (savedToken === undefined) {
+                delete process.env.GITHUB_TOKEN;
+            } else {
+                process.env.GITHUB_TOKEN = savedToken;
+            }
         }
     });
 
