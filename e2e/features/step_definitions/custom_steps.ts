@@ -50,7 +50,7 @@ Then(/^response body path (.*) should equal variable "([^"]*)"$/, function (this
 const ABSENT = Symbol('absent');
 
 function resolveDotPath(apickli: any, path: string): any {
-    const body = apickli.getResponseObject().body;
+    const { body } = apickli.getResponseObject();
     let parsed;
     try {
         parsed = typeof body === 'string' ? JSON.parse(body) : body;
@@ -127,7 +127,7 @@ When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "(
 
     const isRemote = !!remoteArg;
 
-    const found = (containers as Container[]).find(c => {
+    const found = (containers as Container[]).find((c) => {
         // Filter by Agent context
         if (isRemote && !c.agent) return false;
         if (!isRemote && c.agent) return false;
@@ -137,22 +137,22 @@ When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "(
             return false;
         }
         // Construct possible representations
-        const fullImageName = `${c.image.registry.name !== 'hub' ? c.image.registry.name + '/' : ''}${c.image.name}:${c.image.tag.value}`;
+        const fullImageName = `${c.image.registry.name !== 'hub' ? `${c.image.registry.name}/` : ''}${c.image.name}:${c.image.tag.value}`;
         const nameAndTag = `${c.image.name}:${c.image.tag.value}`;
         const simpleName = c.image.name;
 
         // Try to match exact or partial
         return (
-            fullImageName === imageName ||
-            nameAndTag === imageName ||
-            simpleName === imageName ||
+            fullImageName === imageName
+            || nameAndTag === imageName
+            || simpleName === imageName
             // Fallback: check if imageName is contained in full string
-            fullImageName.includes(imageName)
+            || fullImageName.includes(imageName)
         );
     });
 
     if (!found) {
-        throw new Error(`Container with image "${imageName}" (remote=${isRemote}) not found. Available: ${(containers as Container[]).map(c => `${c.image.name}:${c.image.tag.value} [${c.agent || 'local'}]`).join(', ')}`);
+        throw new Error(`Container with image "${imageName}" (remote=${isRemote}) not found. Available: ${(containers as Container[]).map((c) => `${c.image.name}:${c.image.tag.value} [${c.agent || 'local'}]`).join(', ')}`);
     }
 
     this.apickli.setGlobalVariable(idVar, found.id);
@@ -186,7 +186,7 @@ When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([
 
     const isRemote = !!remoteArg;
 
-    const found = (containers as Container[]).find(c => {
+    const found = (containers as Container[]).find((c) => {
         // Filter by Agent context
         if (isRemote && !c.agent) return false;
         if (!isRemote && c.agent) return false;
@@ -199,7 +199,7 @@ When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([
     });
 
     if (!found) {
-        throw new Error(`Container with name "${name}" (remote=${isRemote}) not found. Available: ${(containers as Container[]).map(c => `${c.name} [${c.agent || 'local'}]`).join(', ')}`);
+        throw new Error(`Container with name "${name}" (remote=${isRemote}) not found. Available: ${(containers as Container[]).map((c) => `${c.name} [${c.agent || 'local'}]`).join(', ')}`);
     }
 
     this.apickli.setGlobalVariable(idVar, found.id);
@@ -207,8 +207,8 @@ When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([
     this.apickli.setGlobalVariable(nameVar, found.name);
 });
 
-Then(/^I wait for (\d+) seconds$/, async function (seconds: string) {
-    await new Promise(resolve => setTimeout(resolve, parseInt(seconds) * 1000));
+Then(/^I wait for (\d+) seconds$/, async (seconds: string) => {
+    await new Promise((resolve) => setTimeout(resolve, parseInt(seconds) * 1000));
 });
 
 Then(/^the container with saved name "([^"]*)" should have a version different than "([^"]*)"$/, async function (this: any, nameVar: string, oldVersionVar: string) {
@@ -223,7 +223,7 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
         });
     });
     const response = this.apickli.getResponseObject();
-    
+
     let containers: Container[] | any = response.body;
 
     if (typeof containers === 'string') {
@@ -236,12 +236,12 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
     }
 
     if (!response || !Array.isArray(containers)) {
-         throw new Error('Failed to retrieve containers or invalid response format');
+        throw new Error('Failed to retrieve containers or invalid response format');
     }
 
     // Find containers matching the name
-    const matches = (containers as Container[]).filter(c => c.name === name);
-    
+    const matches = (containers as Container[]).filter((c) => c.name === name);
+
     if (matches.length === 0) {
         throw new Error(`Container with name ${name} not found in current list`);
     }
@@ -249,7 +249,7 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
     let container: Container;
     if (matches.length > 1) {
         // If multiple containers found (e.g. old exited + new running), prefer the running one
-        const running = matches.find(c => c.status && c.status.toLowerCase() === 'running');
+        const running = matches.find((c) => c.status && c.status.toLowerCase() === 'running');
         if (running) {
             container = running;
             // Optionally log that we found multiple but picked running
@@ -292,11 +292,11 @@ Then(/^the container with saved name "([^"]*)" should have version equal to vari
     }
 
     if (!response || !Array.isArray(containers)) {
-         throw new Error('Failed to retrieve containers or invalid response format');
+        throw new Error('Failed to retrieve containers or invalid response format');
     }
 
     // Find containers matching the name
-    const matches = (containers as Container[]).filter(c => c.name === name);
+    const matches = (containers as Container[]).filter((c) => c.name === name);
 
     if (matches.length === 0) {
         throw new Error(`Container with name ${name} not found in current list`);
@@ -305,7 +305,7 @@ Then(/^the container with saved name "([^"]*)" should have version equal to vari
     let container: Container;
     if (matches.length > 1) {
         // If multiple containers found (e.g. old exited + new running), prefer the running one
-        const running = matches.find(c => c.status && c.status.toLowerCase() === 'running');
+        const running = matches.find((c) => c.status && c.status.toLowerCase() === 'running');
         if (running) {
             container = running;
             this.attach(`Found ${matches.length} containers with name ${name}. Selected running container (id=${container.id})`);
@@ -333,7 +333,7 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
         });
     });
     const response = this.apickli.getResponseObject();
-    
+
     let containers: Container[] | any = response.body;
 
     if (typeof containers === 'string') {
@@ -346,11 +346,11 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
     }
 
     if (!response || !Array.isArray(containers)) {
-         throw new Error('Failed to retrieve containers or invalid response format');
+        throw new Error('Failed to retrieve containers or invalid response format');
     }
 
-    const container = (containers as Container[]).find(c => c.id === id);
-    
+    const container = (containers as Container[]).find((c) => c.id === id);
+
     if (!container) {
         throw new Error(`Container with ID ${id} not found in current list`);
     }
@@ -360,9 +360,7 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
 });
 
 function substituteVariables(str: string, apickli: any): string {
-    return str.replace(/`([^`]*)`/g, (match, p1) => {
-        return apickli.getGlobalVariable(p1) || match;
-    });
+    return str.replace(/`([^`]*)`/g, (match, p1) => apickli.getGlobalVariable(p1) || match);
 }
 
 When(/^I send POST to (\S+)$/, async function (this: any, url: string) {
@@ -376,7 +374,7 @@ When(/^I send POST to (\S+)$/, async function (this: any, url: string) {
 });
 
 When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this: any, url: string, idVars: string) {
-    const containerIds = idVars.split(',').map(v => this.apickli.getGlobalVariable(v.trim()));
+    const containerIds = idVars.split(',').map((v) => this.apickli.getGlobalVariable(v.trim()));
     const body = { containerIds };
     this.apickli.setRequestBody(JSON.stringify(body));
     this.apickli.addRequestHeader('Content-Type', 'application/json');
@@ -390,7 +388,7 @@ When(/^I send POST to (.*) with container IDs "([^"]*)"$/, async function (this:
 });
 
 When(/^I send POST to (.*) with container IDs "([^"]*)" and bucket "([^"]*)"$/, async function (this: any, url: string, idVars: string, bucket: string) {
-    const containerIds = idVars.split(',').map(v => this.apickli.getGlobalVariable(v.trim()));
+    const containerIds = idVars.split(',').map((v) => this.apickli.getGlobalVariable(v.trim()));
     const body = { containerIds, bucket };
     this.apickli.setRequestBody(JSON.stringify(body));
     this.apickli.addRequestHeader('Content-Type', 'application/json');
@@ -416,9 +414,6 @@ When(/^I send POST to (.*) with bucket "([^"]*)"$/, async function (this: any, u
     });
 });
 
-
-
-
 Then(/^the container with image "([^"]*)" should have update available$/, async function (this: any, imageName: string) {
     const response = this.apickli.getResponseObject();
     let containers: Container[] | any = response.body;
@@ -431,34 +426,34 @@ Then(/^the container with image "([^"]*)" should have update available$/, async 
             throw new Error('Response body is not valid JSON');
         }
     }
-    
+
     if (!response || !Array.isArray(containers)) {
         this.attach('Invalid Response:', JSON.stringify(response, null, 2));
         throw new Error(`Failed to retrieve containers or invalid response format. Status: ${response ? response.statusCode : 'unknown'}`);
     }
 
     // Reuse the find logic (simplified here or extracted if possible, but copy-paste is safer for now to avoid breaking existing step if I refactor incorrectly)
-    const found = (containers as Container[]).find(c => {
-         const fullImageName = `${c.image.registry.name !== 'hub' ? c.image.registry.name + '/' : ''}${c.image.name}:${c.image.tag.value}`;
-         const nameAndTag = `${c.image.name}:${c.image.tag.value}`;
-         const simpleName = c.image.name; // e.g. 'library/nginx' or 'nginx'
- 
-         return (
-             fullImageName === imageName ||
-             nameAndTag === imageName ||
-             simpleName === imageName ||
-             fullImageName.includes(imageName)
-         );
+    const found = (containers as Container[]).find((c) => {
+        const fullImageName = `${c.image.registry.name !== 'hub' ? `${c.image.registry.name}/` : ''}${c.image.name}:${c.image.tag.value}`;
+        const nameAndTag = `${c.image.name}:${c.image.tag.value}`;
+        const simpleName = c.image.name; // e.g. 'library/nginx' or 'nginx'
+
+        return (
+            fullImageName === imageName
+             || nameAndTag === imageName
+             || simpleName === imageName
+             || fullImageName.includes(imageName)
+        );
     });
 
     if (!found) {
-         throw new Error(`Container with image "${imageName}" not found.`);
+        throw new Error(`Container with image "${imageName}" not found.`);
     }
 
     assert.strictEqual(found.updateAvailable, true, `Container ${imageName} should have update available, but got ${found.updateAvailable}`);
 });
 
-Then(/^the compose file "([^"]*)" should pin service "([^"]*)" to "([^"]*)"$/, async function (relativePath: string, service: string, expected: string) {
+Then(/^the compose file "([^"]*)" should pin service "([^"]*)" to "([^"]*)"$/, async (relativePath: string, service: string, expected: string) => {
     const filePath: string = path.resolve(process.cwd(), relativePath);
     const content: string = await fs.readFile(filePath, 'utf-8');
     const lines: string[] = content.split(/\r?\n/);

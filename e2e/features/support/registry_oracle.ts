@@ -34,11 +34,11 @@ interface RequestContext {
 function getDockerArchitecture(): string {
     const arch = os.arch();
     switch (arch) {
-        case 'arm64': return 'arm64';
-        case 'x64': return 'amd64';
-        case 'arm': return 'arm';
-        case 'ia32': return '386';
-        default: return 'amd64';
+    case 'arm64': return 'arm64';
+    case 'x64': return 'amd64';
+    case 'arm': return 'arm';
+    case 'ia32': return '386';
+    default: return 'amd64';
     }
 }
 
@@ -312,23 +312,23 @@ function sortTags(tags: string[]): string[] {
  */
 function versionEndpoint(registry: string, image: string): string {
     switch (registry) {
-        case 'hub.public': return `hub.docker.com/v2/${hubRepo(image)}`;
-        case 'ghcr.public':
-        case 'ghcr.private':
-        case 'lscr.private': return `ghcr.io/v2/${image}`;
-        case 'gitlab.private': return `registry.gitlab.com/v2/${image}`;
-        case 'quay.public': return `quay.io/v2/${image}`;
-        default: return `${registry}/v2/${image}`;
+    case 'hub.public': return `hub.docker.com/v2/${hubRepo(image)}`;
+    case 'ghcr.public':
+    case 'ghcr.private':
+    case 'lscr.private': return `ghcr.io/v2/${image}`;
+    case 'gitlab.private': return `registry.gitlab.com/v2/${image}`;
+    case 'quay.public': return `quay.io/v2/${image}`;
+    default: return `${registry}/v2/${image}`;
     }
 }
 
 function digestEndpoint(registry: string, image: string): string {
     switch (registry) {
-        case 'hub.public': return `registry-1.docker.io/v2/${hubRepo(image)}`;
-        case 'ghcr.public':
-        case 'ghcr.private':
-        case 'lscr.private': return `ghcr.io/v2/${image}`;
-        default: return `${registry}/v2/${image}`;
+    case 'hub.public': return `registry-1.docker.io/v2/${hubRepo(image)}`;
+    case 'ghcr.public':
+    case 'ghcr.private':
+    case 'lscr.private': return `ghcr.io/v2/${image}`;
+    default: return `${registry}/v2/${image}`;
     }
 }
 
@@ -461,7 +461,7 @@ const registryOracle = {
      */
     async getLatestDigest(registry: string, image: string, tag: string = 'latest'): Promise<string> {
         return cached(`d|${digestEndpoint(registry, image)}|${tag}`, () => resolveLatestDigest(registry, image, tag));
-    }
+    },
 };
 
 export default registryOracle;

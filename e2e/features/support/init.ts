@@ -1,6 +1,7 @@
 import { Before, setDefaultTimeout } from '@cucumber/cucumber';
-const apickli = require('apickli');
 import configuration from '../../config';
+
+const apickli = require('apickli');
 
 setDefaultTimeout(60 * 1000);
 

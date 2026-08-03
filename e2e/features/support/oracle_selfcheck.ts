@@ -129,7 +129,7 @@ function tagsPage(tags: string[], next?: string): StubResponse {
     return {
         statusCode: 200,
         headers: next ? { link: `<${next}>; rel="next"` } : {},
-        body: JSON.stringify({ tags })
+        body: JSON.stringify({ tags }),
     };
 }
 
@@ -159,9 +159,13 @@ async function runCase(n: number, name: string, fn: () => Promise<string>): Prom
     captureConsole();
     try {
         const detail = await fn();
-        results.push({ n, name, ok: true, detail });
+        results.push({
+            n, name, ok: true, detail,
+        });
     } catch (e: any) {
-        results.push({ n, name, ok: false, detail: e && e.message ? e.message : String(e) });
+        results.push({
+            n, name, ok: false, detail: e && e.message ? e.message : String(e),
+        });
     } finally {
         releaseConsole();
         restore();
