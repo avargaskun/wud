@@ -34,7 +34,11 @@ A candidate whose YAML cannot be parsed is skipped with a warning and the remain
 
 A container is matched to a compose service by the service's **`image:` pin**: the pin and the container's current image reference must be equal once both are canonicalized, so `image: nginx:1.0` and `image: docker.io/library/nginx:1.0` both match the same Docker Hub container.
 
-When several services in the same file share that pin, the automatic `com.docker.compose.service` label decides which one is updated. The label only disambiguates between services that already match by image; a label naming a service that is absent from the file, or that pins a different image, is ignored and the `image:` pin alone decides.
+A pin also matches when it is that same reference **behind a pull-through mirror or registry-cache prefix**, as long as the first extra path segment looks like a registry host — it contains a dot or a port colon, or is exactly `localhost`. So `image: mirror.local/ghcr.io/user/app:1.0`, `image: mirror.local:5000/ghcr.io/user/app:1.0` and `image: harbor.local/proxy/ghcr.io/user/app:1.0` all match a container resolved to `ghcr.io/user/app:1.0`, and the rewrite keeps the prefix you wrote (`mirror.local/ghcr.io/user/app:1.1`). A plain namespace prefix is not a mirror: `image: myorg/ghcr.io/user/app:1.0` is still never matched. Only the file's pin may carry the extra prefix — the container's own reference is never treated as a superset of the pin.
+
+When several services in the same file match, the automatic `com.docker.compose.service` label decides which one is updated — including when one service pins the image directly and another pins it behind a mirror. Without a usable label, a single exact pin wins over a mirror-prefixed one, and a mirror-prefixed pin is chosen on its own only when it is the file's only match. The label otherwise only disambiguates between services that already match by image: a label naming a service that is absent from the file, or that pins a different image, is ignored and the `image:` pin alone decides. The one exception is that single mirror-prefixed match — a label naming a different service that does exist in the file blocks it, and the file is left alone.
+
+?> Docker Hub references are host-less once canonicalized (`user/app:1.0`), so for a **label-less** container running a Hub image, a registry-hosted pin with the identical path and tag (`image: ghcr.io/user/app:1.0`) counts as a mirror pin of it. That is the same shape that makes `image: mirror.local/library/nginx:1.25` match a container on `nginx:1.25`, so the two cannot be told apart from the text alone. Containers started by Compose always carry a `com.docker.compose.service` label, which settles it.
 
 Only the matched service's `image:` **value** is rewritten, as a targeted replacement of that one scalar. Everything else in the file is preserved byte for byte: the registry prefix you wrote (`docker.io/library/nginx:1.0` becomes `docker.io/library/nginx:1.1`, not `nginx:1.1`), the quoting style, comments, indentation, key order, anchors, line endings and a leading BOM.
 
@@ -44,7 +48,7 @@ Only the matched service's `image:` **value** is rewritten, as a targeted replac
 
 Some services cannot be rewritten safely. The container is still pulled and updated, but the file is left as-is and a warning is logged:
 
-- several services share the same `image:` pin and the container carries no usable `com.docker.compose.service` label;
+- several services match the container's image — sharing the same `image:` pin, or pinning it behind different mirror prefixes — and the container carries no usable `com.docker.compose.service` label;
 - the service's image is an anchor definition (`image: &shared_img ghcr.io/acme/app:1.0`) — rewriting it would also bump every service aliasing it;
 - the service's image is an alias (`image: *shared_img`).
 
