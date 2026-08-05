@@ -4,6 +4,7 @@ import * as registry from '../registry';
 import * as agent from '../agent';
 import logger from '../log';
 import { ContainerGoneError } from '../triggers/providers/docker/errors';
+import { RemoteTriggerError } from '../agent/errors';
 import type { TriggerRunResult } from '../triggers/providers/docker/types';
 
 const log = logger.child({ component: 'trigger' });
@@ -138,6 +139,10 @@ async function runRemoteTrigger(
         );
         res.status(200).json({});
     } catch (e) {
+        if (e instanceof RemoteTriggerError && e.status < 500) {
+            res.status(e.status).json(e.body);
+            return;
+        }
         log.warn(
             `Error when running remote trigger ${triggerType}.${triggerName} on agent ${agentName} (${e.message})`,
         );
