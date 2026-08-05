@@ -255,6 +255,9 @@ export async function runTrigger(req: Request, res: Response): Promise<void> {
         res.status(200).json(result ?? {});
     } catch (e) {
         if (e instanceof RemoteTriggerError && e.status < 500) {
+            log.warn(
+                `Remote trigger rejected (type=${triggerType}, name=${triggerName}, status=${e.status}): ${e.message}`,
+            );
             res.status(e.status).json(e.body);
             return;
         }
