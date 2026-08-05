@@ -42,6 +42,10 @@ echo "📦 Starting compose stack..."
 cp "$SCRIPT_DIR/../test/compose-stack/docker-compose.yml" "$SCRIPT_DIR/../test/compose-stack/docker-compose.active.yml"
 docker compose -f "$SCRIPT_DIR/../test/compose-stack/docker-compose.active.yml" up -d
 
+# Mirror-prefixed pin fixture: never composed up (mirror.local is not pullable), only mounted
+# so the trigger can rewrite it for the zz_mirror_app container started by docker run.
+cp "$SCRIPT_DIR/../test/compose-stack/docker-compose.mirror.yml" "$SCRIPT_DIR/../test/compose-stack/docker-compose.mirror.active.yml"
+
 docker build -t wud --build-arg WUD_VERSION=local "$SCRIPT_DIR/.."
 
 # 6. Start Agent
@@ -66,6 +70,7 @@ docker run -d \
   --publish 3000:3000 \
   --volume /var/run/docker.sock:/var/run/docker.sock \
   --volume "$SCRIPT_DIR/../test/compose-stack/docker-compose.active.yml:/compose/docker-compose.yml" \
+  --volume "$SCRIPT_DIR/../test/compose-stack/docker-compose.mirror.active.yml:/compose/mirror.yml" \
   --env WUD_LOG_LEVEL=debug \
   --env WUD_WATCHER_DOCKER_LOCAL_ENABLE=true \
   --env WUD_WATCHER_LOCAL_WATCHBYDEFAULT=false \

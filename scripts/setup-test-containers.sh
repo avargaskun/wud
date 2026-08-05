@@ -147,6 +147,17 @@ else
         --label 'wud.compose.file=/compose/does-not-exist.yml' \
         ghcr.io/stefanprodan/podinfo:6.0.0
 
+    # MIRROR-PREFIXED COMPOSE PIN (issue #25)
+    # The compose file also holds an exact upstream pin, so com.docker.compose.service is
+    # load-bearing: without it resolution would pick the bystander.
+    echo "Starting mirror-prefixed compose test container ..."
+    $DOCKER_CMD run -d --name zz_mirror_app \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.0\.0$' \
+        --label 'wud.compose.file=/compose/mirror.yml' \
+        --label 'com.docker.compose.service=zz_mirror_app' \
+        ghcr.io/stefanprodan/podinfo:5.0.0
+
     # POST-UPDATE DEPENDENT RESTART (issue #19)
     echo "Starting post-update restart test containers ..."
     $DOCKER_CMD run -d --name zz_postupdate_main \
@@ -170,7 +181,7 @@ else
         --label 'wud.tag.include=^6\.0\.0$' \
         ghcr.io/stefanprodan/podinfo:5.0.0
 
-    echo "✅ Test containers started (22 containers)"
-    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_batch_|zz_bucket_|zz_compose_|zz_mv_|zz_postupdate_)"
+    echo "✅ Test containers started (23 containers)"
+    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_batch_|zz_bucket_|zz_compose_|zz_mirror_|zz_mv_|zz_postupdate_)"
 fi
 
