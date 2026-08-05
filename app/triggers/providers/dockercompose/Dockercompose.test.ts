@@ -6,6 +6,7 @@ import Dockercompose, {
     resolveComposeServiceName,
     canonicalizeImageRef,
     imageRefsMatch,
+    isMirrorPrefixedRef,
     getCurrentImageRef,
     buildUpdatedImageRef,
     renderScalarValue,
@@ -146,6 +147,32 @@ const composeYamlCascadeExpected = `services:
     image: ghcr.io/stefanprodan/podinfo:6.0.0
   svc_b:
     image: ghcr.io/stefanprodan/podinfo:6.1.0
+`;
+
+const composeYamlMirror = `services:
+  svc_mirror:
+    image: mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0
+  svc_upstream:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+`;
+
+const composeYamlMirrorOnly = `services:
+  svc_mirror:
+    image: mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0
+`;
+
+const composeYamlTwoMirrors = `services:
+  svc_mirror_a:
+    image: mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0
+  svc_mirror_b:
+    image: cache.local:5000/ghcr.io/stefanprodan/podinfo:5.0.0
+`;
+
+const composeYamlHubCoarse = `services:
+  svc_own:
+    image: ghcr.io/acme/other:\${OTHER_TAG}
+  svc_other:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
 `;
 
 const baseConfiguration = {
@@ -1094,6 +1121,67 @@ test('imageRefsMatch should match the short and long hub forms', () => {
     );
 });
 
+test.each<[string, string, boolean]>([
+    [
+        'mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        true,
+    ],
+    [
+        'mirror.local:5000/ghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        true,
+    ],
+    [
+        'localhost:5000/ghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        true,
+    ],
+    [
+        'harbor.local/proxy/ghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        true,
+    ],
+    ['mirror.local/library/nginx:1.25', 'nginx:1.25', true],
+    ['ghcr.io/stefanprodan/podinfo:5.0.0', 'stefanprodan/podinfo:5.0.0', true],
+    ['quay.io/nginx:1.25', 'nginx:1.25', true],
+    [
+        'xghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        false,
+    ],
+    [
+        'mirror.local/ghcr.io/stefanprodan/podinfo:5.0.00',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        false,
+    ],
+    [
+        'myorg/ghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        false,
+    ],
+    [
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        false,
+    ],
+    [
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        'mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0',
+        false,
+    ],
+    [
+        '/ghcr.io/stefanprodan/podinfo:5.0.0',
+        'ghcr.io/stefanprodan/podinfo:5.0.0',
+        false,
+    ],
+])(
+    'isMirrorPrefixedRef should judge file %s against computed %s as %s',
+    (fileRef, computedRef, expected) => {
+        expect(isMirrorPrefixedRef(fileRef, computedRef)).toBe(expected);
+    },
+);
+
 test('buildUpdatedImageRef should return undefined for a digest pin', () => {
     expect(
         buildUpdatedImageRef(
@@ -1359,11 +1447,142 @@ test('resolveComposeServiceName should return not-found without throwing when se
     ).toEqual({ status: 'not-found' });
 });
 
+test('resolveComposeServiceName should resolve a label-less container against a lone mirror pin', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlMirrorOnly);
+    const compose = await dockercompose.getComposeFileAsObject(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({ labels: null });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'resolved',
+        serviceName: 'svc_mirror',
+        source: 'image',
+    });
+});
+
+test('resolveComposeServiceName should let the label pick a mirror pin over a unique exact pin', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlMirror);
+    const compose = await dockercompose.getComposeFileAsObject(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        labels: { 'com.docker.compose.service': 'svc_mirror' },
+    });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'resolved',
+        serviceName: 'svc_mirror',
+        source: 'label',
+    });
+});
+
+test('resolveComposeServiceName should prefer a unique exact pin over a mirror pin without a label', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlMirror);
+    const compose = await dockercompose.getComposeFileAsObject(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({ labels: null });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'resolved',
+        serviceName: 'svc_upstream',
+        source: 'image',
+    });
+});
+
+test('resolveComposeServiceName should return ambiguous for a label-less container with two mirror pins', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlTwoMirrors);
+    const compose = await dockercompose.getComposeFileAsObject(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({ labels: null });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            getCurrentImageRef(container),
+        ),
+    ).toEqual({
+        status: 'ambiguous',
+        candidates: ['svc_mirror_a', 'svc_mirror_b'],
+    });
+});
+
+test('resolveComposeServiceName should return not-found when the label names another service than the lone mirror candidate', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlHubCoarse);
+    const compose = await dockercompose.getComposeFileAsObject(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        labels: { 'com.docker.compose.service': 'svc_own' },
+    });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            'stefanprodan/podinfo:5.0.0',
+        ),
+    ).toEqual({ status: 'not-found' });
+});
+
+test('resolveComposeServiceName should resolve a label-less hub container against a same-named registry pin', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlHubCoarse);
+    const compose = await dockercompose.getComposeFileAsObject(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({ labels: null });
+    expect(
+        resolveComposeServiceName(
+            compose,
+            container,
+            'stefanprodan/podinfo:5.0.0',
+        ),
+    ).toEqual({
+        status: 'resolved',
+        serviceName: 'svc_other',
+        source: 'image',
+    });
+});
+
 test('doesContainerBelongToCompose should return true for an ambiguous container', async () => {
     const compose = await loadRichCompose();
     expect(
         doesContainerBelongToCompose(compose, buildContainer({ labels: null })),
     ).toBe(true);
+});
+
+test('doesContainerBelongToCompose should return true for a mirror-pinned container', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlMirrorOnly);
+    const compose = await dockercompose.getComposeFileAsObject(
+        '/abs/docker-compose.yml',
+    );
+    expect(
+        doesContainerBelongToCompose(compose, buildContainer({ labels: null })),
+    ).toBe(true);
+});
+
+test('getUnprocessableContainers should return an empty array for a mirror-pinned container', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlMirrorOnly);
+    const container = buildContainer({ id: 'c-mirror', labels: null });
+    await expect(
+        dockercompose.getUnprocessableContainers([container]),
+    ).resolves.toEqual([]);
 });
 
 test('getUnprocessableContainers should return an empty array for an ambiguous container', async () => {
@@ -1506,6 +1725,54 @@ test('planComposeEdits should plan a single edit for the labelled service', asyn
     expect(edits[0].text).toBe('ghcr.io/stefanprodan/podinfo:6.0.0');
     expect([...editedIds]).toEqual(['c-twin']);
     expect([...staleIds]).toEqual([]);
+});
+
+test('planComposeEdits should keep the mirror prefix when bumping the labelled mirror service', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlMirror);
+    const loaded = await dockercompose.loadComposeFile(
+        '/abs/docker-compose.yml',
+    );
+    const container = buildContainer({
+        id: 'c-mirror',
+        labels: { 'com.docker.compose.service': 'svc_mirror' },
+    });
+    const { edits, editedIds, staleIds } = dockercompose.planComposeEdits(
+        loaded,
+        [container],
+        '/abs/docker-compose.yml',
+    );
+    expect(edits).toHaveLength(1);
+    expect(edits[0].serviceName).toBe('svc_mirror');
+    expect(loaded.source.slice(edits[0].start, edits[0].end)).toBe(
+        'mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0',
+    );
+    expect(edits[0].text).toBe(
+        'mirror.local/ghcr.io/stefanprodan/podinfo:6.0.0',
+    );
+    expect([...editedIds]).toEqual(['c-mirror']);
+    expect([...staleIds]).toEqual([]);
+});
+
+test('rewriteComposeFile should bump the mirror pin and leave the exact-pinned bystander untouched', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlMirror);
+    const container = buildContainer({
+        id: 'c-mirror',
+        labels: { 'com.docker.compose.service': 'svc_mirror' },
+    });
+    await dockercompose.rewriteComposeFile('/abs/docker-compose.yml', [
+        container,
+    ]);
+    expect(mockedWriteFile).toHaveBeenCalledTimes(1);
+    const [, data] = mockedWriteFile.mock.calls[0];
+    expect(data).toBe(
+        composeYamlMirror.replace(
+            'image: mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0',
+            'image: mirror.local/ghcr.io/stefanprodan/podinfo:6.0.0',
+        ),
+    );
+    expect(data).toContain(
+        '  svc_upstream:\n    image: ghcr.io/stefanprodan/podinfo:5.0.0\n',
+    );
 });
 
 test('planComposeEdits should put a digest update in neither set', async () => {

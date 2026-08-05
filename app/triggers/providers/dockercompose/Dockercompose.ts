@@ -110,6 +110,34 @@ function imageRefsMatch(a: string, b: string): boolean {
 }
 
 /**
+ * A path segment that Docker itself would treat as a registry host:
+ * contains a dot or a port colon, or is exactly `localhost`.
+ */
+function looksLikeRegistryHost(segment: string): boolean {
+    return (
+        segment === 'localhost' ||
+        segment.includes('.') ||
+        segment.includes(':')
+    );
+}
+
+/**
+ * True when the file's ref is the computed ref behind a pull-through
+ * mirror prefix: canonical(file) ends with `/` + canonical(computed) and
+ * the first leftover leading segment looks like a registry host.
+ */
+function isMirrorPrefixedRef(fileRef: string, computedRef: string): boolean {
+    const file: string = canonicalizeImageRef(fileRef);
+    const computed: string = canonicalizeImageRef(computedRef);
+    if (!file.endsWith(`/${computed}`)) {
+        return false;
+    }
+    const prefix: string = file.slice(0, file.length - computed.length - 1);
+    const firstSegment: string = prefix.split('/')[0];
+    return firstSegment.length > 0 && looksLikeRegistryHost(firstSegment);
+}
+
+/**
  * The image reference WUD believes the container is currently running, in
  * registry-normalized form. Returns undefined instead of throwing when the
  * registry is unknown.
@@ -210,12 +238,22 @@ function resolveComposeServiceName(
         return { status: 'not-found' };
     }
 
-    const candidates: string[] = Object.keys(services).filter((key) => {
+    const serviceKeys: string[] = Object.keys(services);
+    const exact: string[] = serviceKeys.filter((key) => {
         const image: string | undefined = services[key]?.image;
         return (
             typeof image === 'string' && imageRefsMatch(image, currentImageRef)
         );
     });
+    const mirror: string[] = serviceKeys.filter((key) => {
+        const image: string | undefined = services[key]?.image;
+        return (
+            typeof image === 'string' &&
+            !exact.includes(key) &&
+            isMirrorPrefixedRef(image, currentImageRef)
+        );
+    });
+    const candidates: string[] = [...exact, ...mirror];
 
     const serviceLabel: string | undefined = (container.labels ?? {})[
         COMPOSE_SERVICE_LABEL
@@ -232,7 +270,21 @@ function resolveComposeServiceName(
         };
     }
 
+    if (exact.length === 1) {
+        return {
+            status: 'resolved',
+            serviceName: exact[0],
+            source: 'image',
+        };
+    }
     if (candidates.length === 1) {
+        const labelsAnotherService: boolean =
+            typeof serviceLabel === 'string' &&
+            serviceLabel.length > 0 &&
+            serviceKeys.includes(serviceLabel);
+        if (labelsAnotherService) {
+            return { status: 'not-found' };
+        }
         return {
             status: 'resolved',
             serviceName: candidates[0],
@@ -899,6 +951,7 @@ export {
     resolveComposeServiceName,
     canonicalizeImageRef,
     imageRefsMatch,
+    isMirrorPrefixedRef,
     getCurrentImageRef,
     buildUpdatedImageRef,
     renderScalarValue,
