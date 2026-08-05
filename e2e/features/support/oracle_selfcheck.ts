@@ -6,10 +6,12 @@
  * Run manually: cd e2e && npx ts-node features/support/oracle_selfcheck.ts
  * It monkeypatches https, so it must never be part of a real cucumber run.
  */
+/* eslint-disable max-classes-per-file -- three co-located test-only stub classes */
 import * as assert from 'assert';
 import * as https from 'https';
+import { OutgoingHttpHeaders } from 'http';
 import { EventEmitter } from 'events';
-import registryOracle from './registry_oracle';
+import registryOracle, { errorMessage } from './registry_oracle';
 
 interface StubResponse {
     statusCode: number;
@@ -20,17 +22,18 @@ interface StubResponse {
 interface Recorded {
     method: string;
     url: string;
-    headers: Record<string, any>;
+    headers: OutgoingHttpHeaders;
 }
 
 type Router = (url: string, method: string) => StubResponse;
 
 // A TS namespace import is a getter-only view of the module, so the stubs have to be
 // installed on the underlying module object that every importer delegates to.
-const httpsModule: { get: typeof https.get; request: typeof https.request } = require('https');
+// eslint-disable-next-line @typescript-eslint/no-var-requires -- needs the mutable module object
+const httpsModule: { get: unknown; request: unknown } = require('https');
 
-const realGet = httpsModule.get;
-const realRequest = httpsModule.request;
+const realGet: typeof https.get = https.get;
+const realRequest: typeof https.request = https.request;
 
 let router: Router = () => ({ statusCode: 500, body: 'no route installed' });
 let recorded: Recorded[] = [];
@@ -46,8 +49,10 @@ class FakeResponse extends EventEmitter {
         this.headers = spec.headers || {};
     }
 
+    // eslint-disable-next-line class-methods-use-this -- stub satisfying the https response shape
     setEncoding(): void { /* no-op */ }
 
+    // eslint-disable-next-line class-methods-use-this -- stub satisfying the https response shape
     resume(): void { /* no-op */ }
 }
 
@@ -57,8 +62,19 @@ class FakeRequest extends EventEmitter {
     }
 }
 
-function dispatch(method: string, url: string, options: any, cb: (res: any) => void): FakeRequest {
-    recorded.push({ method, url, headers: (options && options.headers) || {} });
+type ResponseCallback = (res: FakeResponse) => void;
+
+function isHeaderBag(headers: https.RequestOptions['headers']): headers is OutgoingHttpHeaders {
+    return !!headers && !Array.isArray(headers);
+}
+
+function dispatch(
+    method: string,
+    url: string,
+    options: https.RequestOptions,
+    cb: ResponseCallback,
+): FakeRequest {
+    recorded.push({ method, url, headers: isHeaderBag(options.headers) ? options.headers : {} });
     const spec = router(url, method);
     const req = new FakeRequest();
     setImmediate(() => {
@@ -74,39 +90,49 @@ function dispatch(method: string, url: string, options: any, cb: (res: any) => v
     return req;
 }
 
-function normalize(args: any[]): { url: string; options: any; cb: (res: any) => void } {
+interface NormalizedArgs {
+    url: string;
+    options: https.RequestOptions;
+    cb: ResponseCallback;
+}
+
+function normalize(args: unknown[]): NormalizedArgs {
     const [url, second, third] = args;
     if (typeof second === 'function') {
-        return { url: String(url), options: {}, cb: second };
+        return { url: String(url), options: {}, cb: second as ResponseCallback };
     }
-    return { url: String(url), options: second || {}, cb: third };
+    return {
+        url: String(url),
+        options: (second as https.RequestOptions) || {},
+        cb: third as ResponseCallback,
+    };
 }
 
 function install(r: Router): void {
     router = r;
     recorded = [];
-    (httpsModule as any).get = (...args: any[]) => {
+    httpsModule.get = (...args: unknown[]) => {
         const { url, options, cb } = normalize(args);
         return dispatch('GET', url, options, cb);
     };
-    (httpsModule as any).request = (...args: any[]) => {
+    httpsModule.request = (...args: unknown[]) => {
         const { url, options, cb } = normalize(args);
         return dispatch(String(options.method || 'GET').toUpperCase(), url, options, cb);
     };
 }
 
 function restore(): void {
-    (httpsModule as any).get = realGet;
-    (httpsModule as any).request = realRequest;
+    httpsModule.get = realGet;
+    httpsModule.request = realRequest;
 }
 
 const captured: string[] = [];
 const realConsole = { log: console.log, warn: console.warn, error: console.error };
 
 function captureConsole(): void {
-    console.log = (...a: any[]) => { captured.push(`log ${a.join(' ')}`); };
-    console.warn = (...a: any[]) => { captured.push(`warn ${a.join(' ')}`); };
-    console.error = (...a: any[]) => { captured.push(`error ${a.join(' ')}`); };
+    console.log = (...a: unknown[]) => { captured.push(`log ${a.join(' ')}`); };
+    console.warn = (...a: unknown[]) => { captured.push(`warn ${a.join(' ')}`); };
+    console.error = (...a: unknown[]) => { captured.push(`error ${a.join(' ')}`); };
 }
 
 function releaseConsole(): void {
@@ -129,7 +155,7 @@ function tagsPage(tags: string[], next?: string): StubResponse {
     return {
         statusCode: 200,
         headers: next ? { link: `<${next}>; rel="next"` } : {},
-        body: JSON.stringify({ tags })
+        body: JSON.stringify({ tags }),
     };
 }
 
@@ -159,9 +185,13 @@ async function runCase(n: number, name: string, fn: () => Promise<string>): Prom
     captureConsole();
     try {
         const detail = await fn();
-        results.push({ n, name, ok: true, detail });
-    } catch (e: any) {
-        results.push({ n, name, ok: false, detail: e && e.message ? e.message : String(e) });
+        results.push({
+            n, name, ok: true, detail,
+        });
+    } catch (e) {
+        results.push({
+            n, name, ok: false, detail: errorMessage(e),
+        });
     } finally {
         releaseConsole();
         restore();
@@ -331,8 +361,16 @@ async function main(): Promise<void> {
             assert.deepStrictEqual(leaked, [], 'credentials must never reach the log');
             return 'anonymous without env; Basic when set; nothing leaked to logs';
         } finally {
-            if (savedUser === undefined) delete process.env.GITHUB_USERNAME; else process.env.GITHUB_USERNAME = savedUser;
-            if (savedToken === undefined) delete process.env.GITHUB_TOKEN; else process.env.GITHUB_TOKEN = savedToken;
+            if (savedUser === undefined) {
+                delete process.env.GITHUB_USERNAME;
+            } else {
+                process.env.GITHUB_USERNAME = savedUser;
+            }
+            if (savedToken === undefined) {
+                delete process.env.GITHUB_TOKEN;
+            } else {
+                process.env.GITHUB_TOKEN = savedToken;
+            }
         }
     });
 

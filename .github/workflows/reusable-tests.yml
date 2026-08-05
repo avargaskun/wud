@@ -27,6 +27,13 @@ jobs:
           npm ci
           npm test
 
+      - name: Lint & Typecheck E2E
+        working-directory: ./e2e
+        run: |
+          npm ci
+          npm run lint
+          npx tsc --noEmit
+
       - name: Configure AWS credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:

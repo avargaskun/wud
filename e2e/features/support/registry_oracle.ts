@@ -57,6 +57,10 @@ function excerpt(body: string): string {
     return redact(body).replace(/\s+/g, ' ').slice(0, BODY_EXCERPT_LENGTH);
 }
 
+export function errorMessage(e: unknown): string {
+    return e instanceof Error ? e.message : String(e);
+}
+
 /**
  * Wall-clock guard for a single resolution, plus a per-process budget shared by all of them.
  */
@@ -91,7 +95,8 @@ function request(url: string, options: https.RequestOptions = {}): Promise<HttpR
         const onResponse = (res: IncomingMessage) => {
             let data = '';
             res.setEncoding('utf8');
-            // A HEAD response carries no body; the data listener still puts it in flowing mode so 'end' fires.
+            // A HEAD response carries no body; the data listener still puts it in flowing mode
+            // so 'end' fires.
             res.on('data', (chunk) => { data += chunk; });
             res.on('end', () => resolve({ data, headers: res.headers, statusCode: res.statusCode || 0 }));
         };
@@ -136,7 +141,11 @@ function backoffDelay(attempt: number, headers: IncomingHttpHeaders): number {
  * Perform a request with bounded retries. Throws (never returns a partial or non-2xx result)
  * with the observed status and a redacted body excerpt once the policy is exhausted.
  */
-async function requestWithRetry(url: string, options: https.RequestOptions, ctx: RequestContext): Promise<HttpResult> {
+async function requestWithRetry(
+    url: string,
+    options: https.RequestOptions,
+    ctx: RequestContext,
+): Promise<HttpResult> {
     const opts: https.RequestOptions = { ...options, headers: { ...(options.headers || {}) } };
     let attempt = 0;
     let authRenewed = false;
@@ -149,10 +158,12 @@ async function requestWithRetry(url: string, options: https.RequestOptions, ctx:
 
         let res: HttpResult | null = null;
         try {
+            // eslint-disable-next-line no-await-in-loop -- retries must be sequential
             res = await request(url, opts);
-        } catch (e: any) {
-            if (!RETRYABLE_NETWORK.test(e.message) || attempt >= MAX_ATTEMPTS) {
-                throw new Error(`${ctx.label}: request failed after ${attempt} attempt(s) for ${url}: ${e.message}`);
+        } catch (e) {
+            const message = errorMessage(e);
+            if (!RETRYABLE_NETWORK.test(message) || attempt >= MAX_ATTEMPTS) {
+                throw new Error(`${ctx.label}: request failed after ${attempt} attempt(s) for ${url}: ${message}`);
             }
         }
 
@@ -160,11 +171,14 @@ async function requestWithRetry(url: string, options: https.RequestOptions, ctx:
             if (res.statusCode >= 200 && res.statusCode < 300) {
                 return res;
             }
-            // A long traversal can outlive an anonymous registry token; re-mint it once before giving up.
+            // A long traversal can outlive an anonymous registry token; re-mint it once before
+            // giving up.
             if (res.statusCode === 401 && ctx.renewAuth && !authRenewed) {
                 authRenewed = true;
+                // eslint-disable-next-line no-await-in-loop -- retries must be sequential
                 (opts.headers as Record<string, string>).Authorization = await ctx.renewAuth();
                 console.warn(`[oracle] ${ctx.label}: attempt ${attempt} got 401, re-minted token and retrying ${url}`);
+                // eslint-disable-next-line no-continue -- retry immediately with the fresh token
                 continue;
             }
             if (!isRetryableStatus(res.statusCode, res.data) || attempt >= MAX_ATTEMPTS) {
@@ -174,6 +188,7 @@ async function requestWithRetry(url: string, options: https.RequestOptions, ctx:
 
         const delay = res ? backoffDelay(attempt, res.headers) : backoffDelay(attempt, {});
         console.warn(`[oracle] ${ctx.label}: attempt ${attempt} ${res ? `status ${res.statusCode}` : 'network error'}, retrying in ${delay}ms - ${url}`);
+        // eslint-disable-next-line no-await-in-loop -- retries must be sequential
         await sleep(delay);
     }
 }
@@ -181,12 +196,16 @@ async function requestWithRetry(url: string, options: https.RequestOptions, ctx:
 function parseJson<T>(res: HttpResult, url: string, label: string): T {
     try {
         return JSON.parse(res.data) as T;
-    } catch (e: any) {
+    } catch (e) {
         throw new Error(`${label}: invalid JSON from ${url} (status ${res.statusCode}): ${excerpt(res.data)}`);
     }
 }
 
-async function requestJson<T>(url: string, options: https.RequestOptions, ctx: RequestContext): Promise<T> {
+async function requestJson<T>(
+    url: string,
+    options: https.RequestOptions,
+    ctx: RequestContext,
+): Promise<T> {
     const res = await requestWithRetry(url, options, ctx);
     return parseJson<T>(res, url, ctx.label);
 }
@@ -238,10 +257,21 @@ function nextPageUrl(link: string | string[] | undefined, currentUrl: string): s
     return next.startsWith('/') ? `${currentUrl.split('/v2')[0]}${next}` : next;
 }
 
+interface TagPage {
+    tags: string[];
+    pages: number;
+}
+
 /**
  * Walk a Docker Registry v2 /tags/list endpoint to completion. Any incomplete enumeration throws.
  */
-async function collectV2Tags(host: string, image: string, label: string, mintToken: (ctx: RequestContext) => Promise<string>, deadline: Deadline): Promise<{ tags: string[]; pages: number }> {
+async function collectV2Tags(
+    host: string,
+    image: string,
+    label: string,
+    mintToken: (ctx: RequestContext) => Promise<string>,
+    deadline: Deadline,
+): Promise<TagPage> {
     const ctx: RequestContext = { label, deadline };
     let auth = await mintToken(ctx);
     ctx.renewAuth = async () => {
@@ -258,6 +288,7 @@ async function collectV2Tags(host: string, image: string, label: string, mintTok
             throw new Error(`Pagination cap (${PAGE_CAP}) reached for ${image} on ${host}; last=${url}`);
         }
         deadline.check(pages);
+        // eslint-disable-next-line no-await-in-loop -- pagination is necessarily sequential
         const res = await requestWithRetry(url, { headers: { Authorization: auth } }, ctx);
         const body = parseJson<{ tags?: string[] | null }>(res, url, label);
         // GHCR answers {"tags": null} for an empty repository.
@@ -269,7 +300,12 @@ async function collectV2Tags(host: string, image: string, label: string, mintTok
     return { tags, pages };
 }
 
-async function collectQuayTags(image: string, label: string, deadline: Deadline): Promise<{ tags: string[]; pages: number }> {
+interface QuayTagPage {
+    tags?: { name: string }[] | null;
+    has_additional?: boolean;
+}
+
+async function collectQuayTags(image: string, label: string, deadline: Deadline): Promise<TagPage> {
     const ctx: RequestContext = { label, deadline };
     let url: string | null = `https://quay.io/api/v1/repository/${image}/tag/?limit=100`;
     let tags: string[] = [];
@@ -281,7 +317,8 @@ async function collectQuayTags(image: string, label: string, deadline: Deadline)
         }
         deadline.check(pages);
         const pageUrl: string = url;
-        const data = await requestJson<{ tags?: { name: string }[] | null; has_additional?: boolean }>(pageUrl, {}, ctx);
+        // eslint-disable-next-line no-await-in-loop -- pagination is necessarily sequential
+        const data = await requestJson<QuayTagPage>(pageUrl, {}, ctx);
         tags = tags.concat((data.tags || []).map((t) => t.name));
         pages += 1;
         url = data.has_additional ? `https://quay.io/api/v1/repository/${image}/tag/?limit=100&page=${pages + 1}` : null;
@@ -349,7 +386,15 @@ function cached(key: string, work: () => Promise<string>): Promise<string> {
     return pending;
 }
 
-async function resolveLatestVersion(registry: string, image: string, pattern: string): Promise<string> {
+interface HubTagPage {
+    results?: { name: string }[] | null;
+}
+
+async function resolveLatestVersion(
+    registry: string,
+    image: string,
+    pattern: string,
+): Promise<string> {
     const label = `${image}@${registry}`;
     const regex = new RegExp(pattern);
     const deadline = new Deadline(label);
@@ -361,7 +406,7 @@ async function resolveLatestVersion(registry: string, image: string, pattern: st
             // ordering=last_updated is newest-first; the DRF-looking ordering=-last_updated is
             // inverted here and returns oldest-first.
             const url = `https://hub.docker.com/v2/repositories/${hubRepo(image)}/tags?page_size=100&ordering=last_updated`;
-            const data = await requestJson<{ results?: { name: string }[] | null }>(url, {}, { label, deadline });
+            const data = await requestJson<HubTagPage>(url, {}, { label, deadline });
             tags = (data.results || []).map((r) => r.name);
         } else if (registry === 'ghcr.public' || registry === 'lscr.private') {
             const collected = await collectV2Tags('ghcr.io', image, label, (ctx) => mintGhcrToken(image, ctx), deadline);
@@ -390,12 +435,20 @@ async function resolveLatestVersion(registry: string, image: string, pattern: st
         }
 
         return sortedTags[0];
-    } catch (e: any) {
-        console.error(`Error fetching latest version for ${image} on ${registry}: ${e.message}`);
+    } catch (e) {
+        const message = errorMessage(e);
+        console.error(`Error fetching latest version for ${image} on ${registry}: ${message}`);
         throw e;
     } finally {
         deadline.settle();
     }
+}
+
+interface ManifestIndex {
+    manifests?: {
+        digest: string;
+        platform?: { architecture?: string; os?: string };
+    }[];
 }
 
 async function resolveLatestDigest(registry: string, image: string, tag: string): Promise<string> {
@@ -415,9 +468,11 @@ async function resolveLatestDigest(registry: string, image: string, tag: string)
             throw new Error(`getLatestDigest not implemented for registry: ${registry}`);
         }
 
-        const options: https.RequestOptions = { headers: { Authorization: auth, Accept: MANIFEST_ACCEPT } };
+        const options: https.RequestOptions = {
+            headers: { Authorization: auth, Accept: MANIFEST_ACCEPT },
+        };
         const ctx: RequestContext = { label, deadline };
-        const manifest = await requestJson<{ manifests?: { digest: string; platform?: { architecture?: string; os?: string } }[] }>(url, options, ctx);
+        const manifest = await requestJson<ManifestIndex>(url, options, ctx);
 
         // For a manifest list / index, pick the manifest matching the relevant architecture.
         if (manifest.manifests) {
@@ -434,8 +489,9 @@ async function resolveLatestDigest(registry: string, image: string, tag: string)
             throw new Error(`Digest header not found for ${image}:${tag} on ${registry} (status ${head.statusCode})`);
         }
         return digest as string;
-    } catch (e: any) {
-        console.error(`Error fetching latest digest for ${image}:${tag} on ${registry}: ${e.message}`);
+    } catch (e) {
+        const message = errorMessage(e);
+        console.error(`Error fetching latest digest for ${image}:${tag} on ${registry}: ${message}`);
         throw e;
     } finally {
         deadline.settle();
@@ -461,7 +517,7 @@ const registryOracle = {
      */
     async getLatestDigest(registry: string, image: string, tag: string = 'latest'): Promise<string> {
         return cached(`d|${digestEndpoint(registry, image)}|${tag}`, () => resolveLatestDigest(registry, image, tag));
-    }
+    },
 };
 
 export default registryOracle;
