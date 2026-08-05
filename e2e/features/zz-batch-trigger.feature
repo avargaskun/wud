@@ -84,5 +84,7 @@ Feature: WUD Batch Trigger API
     When I find the container with name "zz_compose_unresolvable" and save its ID as "URID", version as "URV", and name as "URN"
     And I send POST to /api/containers/`URID`/triggers/dockercompose/update
     Then response code should be 400
+    And response body path $.error should be Container zz_compose_unresolvable cannot be updated by this trigger.*
+    And response body path $.details[0].reason should be none of its candidate compose files exist.*
     And I GET /api/containers/`URID`
     And response body path $.image.tag.value should be 6.0.0
