@@ -32,8 +32,8 @@ type Router = (url: string, method: string) => StubResponse;
 // eslint-disable-next-line @typescript-eslint/no-var-requires -- needs the mutable module object
 const httpsModule: { get: unknown; request: unknown } = require('https');
 
-const realGet = httpsModule.get;
-const realRequest = httpsModule.request;
+const realGet: typeof https.get = https.get;
+const realRequest: typeof https.request = https.request;
 
 let router: Router = () => ({ statusCode: 500, body: 'no route installed' });
 let recorded: Recorded[] = [];

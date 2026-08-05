@@ -123,7 +123,7 @@ When(/^I find the (remote )?container with image "([^"]*)" and save its ID as "(
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', String(e));
+            this.attach(`Failed to parse response body: ${String(e)}`);
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -182,7 +182,7 @@ When(/^I find the (remote )?container with name "([^"]*)" and save its ID as "([
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', String(e));
+            this.attach(`Failed to parse response body: ${String(e)}`);
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -237,7 +237,7 @@ Then(/^the container with saved name "([^"]*)" should have a version different t
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', String(e));
+            this.attach(`Failed to parse response body: ${String(e)}`);
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -293,7 +293,7 @@ Then(/^the container with saved name "([^"]*)" should have version equal to vari
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', String(e));
+            this.attach(`Failed to parse response body: ${String(e)}`);
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -347,7 +347,7 @@ Then(/^the container with saved ID "([^"]*)" should have a version different tha
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', String(e));
+            this.attach(`Failed to parse response body: ${String(e)}`);
             throw new Error('Response body is not valid JSON');
         }
     }
@@ -425,13 +425,13 @@ Then(/^the container with image "([^"]*)" should have update available$/, async 
         try {
             containers = JSON.parse(containers);
         } catch (e) {
-            this.attach('Failed to parse response body:', String(e));
+            this.attach(`Failed to parse response body: ${String(e)}`);
             throw new Error('Response body is not valid JSON');
         }
     }
 
     if (!response || !Array.isArray(containers)) {
-        this.attach('Invalid Response:', JSON.stringify(response, null, 2));
+        this.attach(`Invalid Response: ${JSON.stringify(response, null, 2)}`);
         throw new Error(`Failed to retrieve containers or invalid response format. Status: ${response ? response.statusCode : 'unknown'}`);
     }
 
