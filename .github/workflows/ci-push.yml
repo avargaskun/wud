@@ -13,6 +13,7 @@ jobs:
 
   docker_image:
     needs: test_validation
+    if: github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -40,8 +41,10 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository }}
           tags: |
-            type=raw,value=dev,enable=${{ github.ref == 'refs/heads/dev' }}
-            type=raw,value=latest,enable=${{ github.ref == 'refs/heads/main' }}
+            type=raw,value=dev
+
+      - name: Compute version
+        run: echo "VERSION=dev-${GITHUB_SHA::7}" >> "$GITHUB_ENV"
 
       - name: Build and push
         uses: docker/build-push-action@v5
@@ -49,5 +52,7 @@ jobs:
           context: .
           file: Dockerfile
           push: true
+          build-args: |
+            WUD_VERSION=${{ env.VERSION }}
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
