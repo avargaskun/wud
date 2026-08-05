@@ -5,6 +5,7 @@ import * as registry from '../registry';
 import * as component from './component';
 import express from 'express';
 import { ContainerGoneError } from '../triggers/providers/docker/errors';
+import { RemoteTriggerError } from '../agent/errors';
 
 jest.mock('express', () => ({
     Router: jest.fn(),
@@ -483,6 +484,94 @@ describe('Trigger API', () => {
         expect(mockRes.json).toHaveBeenCalledWith(
             expect.objectContaining({
                 error: expect.stringContaining('Remote error'),
+            }),
+        );
+    });
+
+    test('should mirror the agent 400 status and body for runRemoteTrigger', async () => {
+        const container = { id: '123' };
+        mockReq = {
+            params: {
+                agent: 'my-agent',
+                type: 'dockercompose',
+                name: 'default',
+            },
+            body: container,
+        };
+
+        const body = {
+            error: 'Container c1 cannot be updated by this trigger (no compose file could be resolved)',
+            containers: ['c1'],
+            details: [
+                {
+                    id: 'c1',
+                    name: 'container-1',
+                    reason: 'no compose file could be resolved',
+                },
+            ],
+        };
+        const mockAgentClient = {
+            runRemoteTrigger: jest
+                .fn()
+                .mockRejectedValue(new RemoteTriggerError(400, body)),
+        };
+        // @ts-ignore
+        agent.getAgent.mockReturnValue(mockAgentClient);
+
+        await runRemoteTrigger(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(400);
+        expect(mockRes.json).toHaveBeenCalledWith(body);
+    });
+
+    test('should mirror the agent 409 status and body for runRemoteTrigger', async () => {
+        const container = { id: '123' };
+        mockReq = {
+            params: { agent: 'my-agent', type: 'docker', name: 'default' },
+            body: container,
+        };
+
+        const body = {
+            error: 'Container c1 no longer exists',
+            containers: ['c1'],
+        };
+        const mockAgentClient = {
+            runRemoteTrigger: jest
+                .fn()
+                .mockRejectedValue(new RemoteTriggerError(409, body)),
+        };
+        // @ts-ignore
+        agent.getAgent.mockReturnValue(mockAgentClient);
+
+        await runRemoteTrigger(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(409);
+        expect(mockRes.json).toHaveBeenCalledWith(body);
+    });
+
+    test('should wrap an agent 500 into the generic 500 carrying the agent error text', async () => {
+        const container = { id: '123' };
+        mockReq = {
+            params: { agent: 'my-agent', type: 'docker', name: 'default' },
+            body: container,
+        };
+
+        const mockAgentClient = {
+            runRemoteTrigger: jest
+                .fn()
+                .mockRejectedValue(
+                    new RemoteTriggerError(500, { error: 'agent exploded' }),
+                ),
+        };
+        // @ts-ignore
+        agent.getAgent.mockReturnValue(mockAgentClient);
+
+        await runRemoteTrigger(mockReq, mockRes);
+
+        expect(mockRes.status).toHaveBeenCalledWith(500);
+        expect(mockRes.json).toHaveBeenCalledWith(
+            expect.objectContaining({
+                error: expect.stringContaining('agent exploded'),
             }),
         );
     });

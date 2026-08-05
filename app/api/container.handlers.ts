@@ -12,6 +12,7 @@ import {
 } from '../model/container';
 import Trigger from '../triggers/providers/Trigger';
 import { ContainerGoneError } from '../triggers/providers/docker/errors';
+import { RemoteTriggerError } from '../agent/errors';
 import type { TriggerRunResult } from '../triggers/providers/docker/types';
 import { BatchTriggerRequestBody, TriggerRequestBody } from './types';
 
@@ -253,6 +254,13 @@ export async function runTrigger(req: Request, res: Response): Promise<void> {
         );
         res.status(200).json(result ?? {});
     } catch (e) {
+        if (e instanceof RemoteTriggerError && e.status < 500) {
+            log.warn(
+                `Remote trigger rejected (type=${triggerType}, name=${triggerName}, status=${e.status}): ${e.message}`,
+            );
+            res.status(e.status).json(e.body);
+            return;
+        }
         if (e instanceof ContainerGoneError) {
             log.warn(
                 `Container gone (type=${triggerType}, name=${triggerName}, container=${containerToTrigger.name})`,

@@ -8,6 +8,7 @@ import * as storeContainer from '../store/container';
 import * as registry from '../registry';
 import Trigger from '../triggers/providers/Trigger';
 import { ContainerGoneError } from '../triggers/providers/docker/errors';
+import { RemoteTriggerError } from '../agent/errors';
 import { Container } from '../model/container';
 
 jest.mock('../store/container');
@@ -625,6 +626,32 @@ describe('Container API', () => {
                     error: expect.stringContaining('boom'),
                 }),
             );
+        });
+
+        test('should mirror the agent status and body when the trigger rejects with a RemoteTriggerError', async () => {
+            (storeContainer.getContainer as jest.Mock).mockReturnValue(
+                buildContainer(),
+            );
+            const body = {
+                error: 'Container c1 cannot be updated by this trigger (no compose file could be resolved)',
+                containers: ['c1'],
+                details: [
+                    {
+                        id: 'c1',
+                        name: 'c1',
+                        reason: 'no compose file could be resolved',
+                    },
+                ],
+            };
+            mockTrigger.mockRejectedValue(new RemoteTriggerError(400, body));
+
+            await callHandler(
+                { id: 'c1', triggerType: 'docker', triggerName: 'update' },
+                {},
+            );
+
+            expect(mockRes.status).toHaveBeenCalledWith(400);
+            expect(mockRes.json).toHaveBeenCalledWith(body);
         });
     });
 

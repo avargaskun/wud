@@ -8,11 +8,12 @@ import {
 } from '@/services/container';
 
 // Mock fetch globally
-global.fetch = jest.fn();
+const fetchMock = jest.fn();
+global.fetch = fetchMock as unknown as typeof fetch;
 
 describe('Container Service', () => {
   beforeEach(() => {
-    fetch.mockClear();
+    fetchMock.mockClear();
   });
 
   describe('getAllContainers', () => {
@@ -21,7 +22,7 @@ describe('Container Service', () => {
         { id: '1', name: 'container1' },
         { id: '2', name: 'container2' }
       ];
-      fetch.mockResolvedValueOnce({
+      fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => mockContainers
       });
@@ -38,7 +39,7 @@ describe('Container Service', () => {
   describe('refreshAllContainers', () => {
     it('refreshes all containers successfully', async () => {
       const mockResult = { refreshed: 10 };
-      fetch.mockResolvedValueOnce({
+      fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => mockResult
       });
@@ -56,7 +57,7 @@ describe('Container Service', () => {
   describe('refreshContainer', () => {
     it('refreshes specific container successfully', async () => {
       const mockResult = { id: 'container1', refreshed: true };
-      fetch.mockResolvedValueOnce({
+      fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => mockResult
       });
@@ -71,7 +72,7 @@ describe('Container Service', () => {
     });
 
     it('returns undefined when container not found', async () => {
-      fetch.mockResolvedValueOnce({
+      fetchMock.mockResolvedValueOnce({
         status: 404
       });
 
@@ -83,7 +84,7 @@ describe('Container Service', () => {
 
   describe('deleteContainer', () => {
     it('deletes container successfully', async () => {
-      fetch.mockResolvedValueOnce({
+      fetchMock.mockResolvedValueOnce({
         ok: true
       });
 
@@ -103,7 +104,7 @@ describe('Container Service', () => {
         { type: 'webhook', name: 'trigger1' },
         { type: 'email', name: 'trigger2' }
       ];
-      fetch.mockResolvedValueOnce({
+      fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => mockTriggers
       });
@@ -120,7 +121,7 @@ describe('Container Service', () => {
   describe('runTrigger', () => {
     it('runs trigger successfully', async () => {
       const mockResult = { success: true, message: 'Trigger executed' };
-      fetch.mockResolvedValueOnce({
+      fetchMock.mockResolvedValueOnce({
         ok: true,
         json: async () => mockResult
       });
@@ -140,6 +141,43 @@ describe('Container Service', () => {
         }
       );
       expect(result).toEqual(mockResult);
+    });
+
+    it('rejects with the reason carried by the error body', async () => {
+      const reason =
+        'Container c1 cannot be updated by this trigger (no compose file could be resolved)';
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        status: 400,
+        statusText: 'Bad Request',
+        json: async () => ({ error: reason })
+      });
+
+      await expect(
+        runTrigger({
+          containerId: 'container1',
+          triggerType: 'webhook',
+          triggerName: 'trigger1'
+        })
+      ).rejects.toThrow(new Error(reason));
+    });
+
+    it('falls back to the status text when the error body is not JSON', async () => {
+      fetchMock.mockResolvedValueOnce({
+        ok: false,
+        statusText: 'Bad Gateway',
+        json: jest.fn().mockRejectedValue(new Error('not json'))
+      });
+
+      await expect(
+        runTrigger({
+          containerId: 'container1',
+          triggerType: 'webhook',
+          triggerName: 'trigger1'
+        })
+      ).rejects.toThrow(
+        new Error('Failed to run trigger webhook/trigger1: Bad Gateway')
+      );
     });
   });
 });
