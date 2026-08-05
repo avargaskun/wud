@@ -10,5 +10,8 @@
     "resolveJsonModule": true,
     "types": ["node", "semver"]
   },
-  "include": ["features/**/*.ts", "config/**/*.ts", "typings/**/*.d.ts"]
+  "include": ["features/**/*.ts", "config/**/*.ts", "typings/**/*.d.ts"],
+  "ts-node": {
+    "files": true
+  }
 }
