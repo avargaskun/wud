@@ -1,5 +1,6 @@
 // @ts-nocheck
 import { AgentClient } from './AgentClient';
+import { RemoteTriggerError } from './errors';
 import axios from 'axios';
 import * as storeContainer from '../store/container';
 import logger from '../log';
@@ -358,6 +359,73 @@ describe('AgentClient', () => {
         await expect(
             client.runRemoteTriggerBatch([{ id: '1' }], 'docker', 'restart'),
         ).resolves.toEqual({});
+    });
+
+    test('runRemoteTrigger should throw a RemoteTriggerError when the agent rejects with a reason', async () => {
+        const data = {
+            error: 'Container c1 cannot be updated by this trigger (no compose file could be resolved)',
+            containers: ['c1'],
+            details: [
+                {
+                    id: 'c1',
+                    name: 'container1',
+                    reason: 'no compose file could be resolved',
+                },
+            ],
+        };
+        axios.post.mockRejectedValue({ response: { status: 400, data } });
+
+        const err = await client
+            .runRemoteTrigger({ id: '1' }, 'docker', 'restart')
+            .catch((e) => e);
+
+        expect(err).toBeInstanceOf(RemoteTriggerError);
+        expect(err.status).toEqual(400);
+        expect(err.body).toEqual(data);
+        expect(err.message).toEqual(data.error);
+    });
+
+    test('runRemoteTrigger should preserve a 409 body from the agent', async () => {
+        const data = {
+            error: 'Container c1 no longer exists',
+            containers: ['c1'],
+        };
+        axios.post.mockRejectedValue({ response: { status: 409, data } });
+
+        const err = await client
+            .runRemoteTrigger({ id: '1' }, 'docker', 'restart')
+            .catch((e) => e);
+
+        expect(err).toBeInstanceOf(RemoteTriggerError);
+        expect(err.status).toEqual(409);
+        expect(err.body).toEqual(data);
+    });
+
+    test('runRemoteTrigger should rethrow network errors unchanged', async () => {
+        const original = new Error('ECONNREFUSED');
+        axios.post.mockRejectedValue(original);
+
+        const err = await client
+            .runRemoteTrigger({ id: '1' }, 'docker', 'restart')
+            .catch((e) => e);
+
+        expect(err).toBe(original);
+        expect(err).not.toBeInstanceOf(RemoteTriggerError);
+    });
+
+    test('runRemoteTrigger should rethrow when the agent body is not JSON', async () => {
+        const original = {
+            message: 'Request failed with status code 502',
+            response: { status: 502, data: '<html>Bad Gateway</html>' },
+        };
+        axios.post.mockRejectedValue(original);
+
+        const err = await client
+            .runRemoteTrigger({ id: '1' }, 'docker', 'restart')
+            .catch((e) => e);
+
+        expect(err).toBe(original);
+        expect(err).not.toBeInstanceOf(RemoteTriggerError);
     });
 
     test('deleteContainer should delete to /api/containers/...', async () => {

@@ -8,6 +8,7 @@ import { emitContainerReport } from '../event';
 import { Container, ContainerReport } from '../model/container';
 import * as registry from '../registry';
 import type { TriggerRunResult } from '../triggers/providers/docker/types';
+import { RemoteTriggerError } from './errors';
 
 export interface AgentClientConfig {
     host: string;
@@ -294,6 +295,11 @@ export class AgentClient {
             );
             return response?.data as TriggerRunResult | undefined;
         } catch (e: any) {
+            const data = e.response?.data;
+            if (typeof data?.error === 'string') {
+                this.log.error(`Error running remote trigger: ${data.error}`);
+                throw new RemoteTriggerError(e.response.status, data);
+            }
             this.log.error(`Error running remote trigger: ${e.message}`);
             throw e;
         }
