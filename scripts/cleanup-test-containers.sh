@@ -23,6 +23,7 @@ docker rm -f \
     zz_bucket_batch_2 \
     zz_bucket_single \
     zz_compose_unresolvable \
+    zz_mirror_app \
     zz_mv_buckets \
     zz_mv_semver_digest \
     zz_postupdate_sidecar \
@@ -44,6 +45,7 @@ docker rm -f \
 # Tear down the compose stack and remove the disposable runtime copy
 docker compose -f "$(dirname "$0")/../test/compose-stack/docker-compose.active.yml" down --remove-orphans 2>/dev/null || true
 rm -f "$(dirname "$0")/../test/compose-stack/docker-compose.active.yml"
+rm -f "$(dirname "$0")/../test/compose-stack/docker-compose.mirror.active.yml"
 
 # Remove network
 docker network rm wud-e2e-net 2>/dev/null || true

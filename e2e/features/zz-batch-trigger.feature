@@ -80,6 +80,18 @@ Feature: WUD Batch Trigger API
     Then the container with saved name "BKN1" should have version equal to variable "EXPECTED_PATCH_TAG"
     And the container with saved name "BKN2" should have version equal to variable "EXPECTED_PATCH_TAG"
 
+  Scenario: Update a container whose compose pin routes through a mirror prefix
+    When I find the container with name "zz_mirror_app" and save its ID as "MRID", version as "MRV", and name as "MRN"
+    And I set variable "EXPECTED_MIRROR_TAG" to "6.0.0"
+    And I send POST to /api/containers/`MRID`/triggers/dockercompose/update
+    Then response code should be 200
+    And I wait for 30 seconds
+    And I send POST to /api/containers/watch
+    And I GET /api/containers
+    Then the container with saved name "MRN" should have version equal to variable "EXPECTED_MIRROR_TAG"
+    And the compose file "../test/compose-stack/docker-compose.mirror.active.yml" should pin service "zz_mirror_app" to "mirror.local/ghcr.io/stefanprodan/podinfo:6.0.0"
+    And the compose file "../test/compose-stack/docker-compose.mirror.active.yml" should pin service "zz_mirror_bystander" to "ghcr.io/stefanprodan/podinfo:5.0.0"
+
   Scenario: Reject a single compose trigger when the compose file cannot be resolved
     When I find the container with name "zz_compose_unresolvable" and save its ID as "URID", version as "URV", and name as "URN"
     And I send POST to /api/containers/`URID`/triggers/dockercompose/update
