@@ -117,7 +117,7 @@ describe('ContainerTrigger', () => {
 
     expect(wrapper.vm.$eventBus.emit).toHaveBeenCalledWith(
       'notify',
-      expect.stringContaining('boom'),
+      'Trigger executed with error (boom)',
       'error'
     );
     expect(wrapper.emitted('trigger-executed')).toBeUndefined();

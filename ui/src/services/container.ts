@@ -55,11 +55,20 @@ async function getContainerTriggers(containerId) {
   return response.json();
 }
 
+interface TriggerErrorBody {
+  error?: string;
+}
+
 async function runTrigger({
   containerId,
   triggerType,
   triggerName,
   triggerAgent,
+}: {
+  containerId: string;
+  triggerType: string;
+  triggerName: string;
+  triggerAgent?: string;
 }) {
   const path = triggerAgent
     ? `api/containers/${containerId}/triggers/${triggerAgent}/${triggerType}/${triggerName}`
@@ -70,7 +79,10 @@ async function runTrigger({
     headers: { "Content-Type": "application/json" },
   });
   if (!response.ok) {
-    throw new Error(`Failed to run trigger ${triggerType}/${triggerName}: ${response.statusText}`);
+    const json: TriggerErrorBody = await response.json().catch(() => ({}));
+    throw new Error(
+      json.error ?? `Failed to run trigger ${triggerType}/${triggerName}: ${response.statusText}`,
+    );
   }
   return response.json();
 }

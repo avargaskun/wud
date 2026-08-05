@@ -67,7 +67,7 @@ export default defineComponent({
       } catch (err: any) {
         (this as any).$eventBus.emit(
           "notify",
-          `Trigger executed with error (${err.message}})`,
+          `Trigger executed with error (${err.message})`,
           "error",
         );
       } finally {
