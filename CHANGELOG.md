@@ -1,5 +1,17 @@
 # Changelog
 
+## [9.1.0](https://github.com/avargaskun/wud/compare/v9.0.0...v9.1.0) (2026-08-06)
+
+
+### Features
+
+* Surface trigger rejection reasons to every caller (fixes [#28](https://github.com/avargaskun/wud/issues/28)) ([6611164](https://github.com/avargaskun/wud/commit/6611164a3ce548f892fae203e342548d29e9efd7))
+
+
+### Bug Fixes
+
+* Match mirror-prefixed compose pins in the dockercompose trigger (fixes [#25](https://github.com/avargaskun/wud/issues/25)) ([24e24f7](https://github.com/avargaskun/wud/commit/24e24f7a03ef9d80caab60121991d373b79cb41e))
+
 ## [9.0.0](https://github.com/avargaskun/wud/compare/v8.3.1...v9.0.0) (2026-08-05)
 
 
