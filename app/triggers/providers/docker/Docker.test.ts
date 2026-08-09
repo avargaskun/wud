@@ -1,7 +1,7 @@
 // @ts-nocheck
 import { ValidationError } from 'joi';
 import Docker from './Docker';
-import { ContainerGoneError } from './errors';
+import { ContainerGoneError, SwapFailedError } from './errors';
 import log from '../../../log';
 
 const configurationValid = {
@@ -1219,6 +1219,7 @@ const buildLogger = () => {
         info: jest.fn(),
         warn: jest.fn(),
         debug: jest.fn(),
+        error: jest.fn(),
     };
     logger.child = () => logger;
     return logger;
@@ -2154,4 +2155,571 @@ test('swapAll should mark a context-less member gone and toMemberOutcomes should
         { id: 'live', name: 'live', status: 'updated' },
     ]);
     jest.restoreAllMocks();
+});
+
+const ORIGINAL_IMAGE = 'my-registry/test/test:1.2.3';
+
+const buildRollbackCtx = ({
+    currentContainer,
+    dockerApi,
+    hostConfig = {},
+    running = true,
+}) => ({
+    dockerApi,
+    registry: { getImageFullName: () => ORIGINAL_IMAGE },
+    newImage: 'my-registry/test/test:4.5.6',
+    currentContainer,
+    currentContainerSpec: {
+        Name: '/container-name',
+        Id: '123456789',
+        Config: { Image: ORIGINAL_IMAGE },
+        HostConfig: hostConfig,
+        NetworkSettings: { Networks: {} },
+        State: { Running: running },
+    },
+    state: { Running: running },
+});
+
+const swapAndCatch = (
+    ctx,
+    container = { name: 'container-name', id: '123456789' },
+) =>
+    docker.swapContainer(container, ctx).then(
+        () => undefined,
+        (e) => e,
+    );
+
+const useLogger = () => {
+    const logger = buildLogger();
+    jest.spyOn(docker.log, 'child').mockReturnValue(logger);
+    return logger;
+};
+
+afterEach(() => {
+    jest.restoreAllMocks();
+});
+
+test('swapContainer should remove the replacement before renaming the aside back when the start fails', async () => {
+    const logger = useLogger();
+    const calls = [];
+    const stop = jest.fn(async () => {
+        calls.push('stop');
+    });
+    const rename = jest.fn(async () => {
+        calls.push('rename');
+    });
+    const originalStart = jest.fn(async () => {
+        calls.push('original-start');
+    });
+    const removeNew = jest.fn(async () => {
+        calls.push('remove-new');
+    });
+    const dockerApi = {
+        createContainer: jest.fn(async () => {
+            calls.push('create');
+            return {
+                id: 'new-container-id',
+                start: jest.fn(async () => {
+                    calls.push('new-start');
+                    throw new Error('start exploded');
+                }),
+                remove: removeNew,
+            };
+        }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop,
+            rename,
+            remove: jest.fn().mockResolvedValue(undefined),
+            start: originalStart,
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('rolled_back');
+    expect(error.message).toContain('start exploded');
+    expect(calls).toEqual([
+        'stop',
+        'rename',
+        'create',
+        'new-start',
+        'remove-new',
+        'rename',
+        'original-start',
+    ]);
+    expect(removeNew).toHaveBeenCalledWith({ force: true });
+    expect(rename).toHaveBeenNthCalledWith(2, { name: 'container-name' });
+    expect(logger.error).not.toHaveBeenCalled();
+});
+
+test('swapContainer should fall back to the legacy remove order when rename is unavailable', async () => {
+    useLogger();
+    const calls = [];
+    const stop = jest.fn(async () => {
+        calls.push('stop');
+    });
+    const rename = jest.fn(async () => {
+        calls.push('rename');
+        throw new Error('rename unsupported');
+    });
+    const remove = jest.fn(async () => {
+        calls.push('remove');
+    });
+    const newStart = jest.fn(async () => {
+        calls.push('start');
+    });
+    const dockerApi = {
+        createContainer: jest.fn(async () => {
+            calls.push('create');
+            return { id: 'new-container-id', start: newStart };
+        }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: { stop, rename, remove },
+    });
+
+    await expect(
+        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
+    ).resolves.toMatchObject({
+        success: true,
+        newContainerId: 'new-container-id',
+    });
+
+    expect(calls).toEqual(['stop', 'rename', 'remove', 'create', 'start']);
+    expect(remove).toHaveBeenCalledTimes(1);
+});
+
+test('swapContainer should recreate the original from its spec when rename is unavailable and the create fails', async () => {
+    useLogger();
+    const restoredStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockRejectedValueOnce(new Error('create exploded'))
+            .mockResolvedValue({ id: 'restored-id', start: restoredStart }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest
+                .fn()
+                .mockRejectedValue(new Error('rename unsupported')),
+            remove: jest.fn().mockResolvedValue(undefined),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('rolled_back');
+    expect(dockerApi.createContainer).toHaveBeenCalledTimes(2);
+    expect(dockerApi.createContainer.mock.calls[0][0]._body.Image).toBe(
+        'my-registry/test/test:4.5.6',
+    );
+    expect(dockerApi.createContainer.mock.calls[1][0]._body.Image).toBe(
+        ORIGINAL_IMAGE,
+    );
+    expect(restoredStart).toHaveBeenCalled();
+});
+
+test('swapContainer should recreate the original from its spec when AutoRemove is set and the create fails', async () => {
+    useLogger();
+    const rename = jest.fn().mockResolvedValue(undefined);
+    const restoredStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockRejectedValueOnce(new Error('create exploded'))
+            .mockResolvedValue({ id: 'restored-id', start: restoredStart }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        hostConfig: { AutoRemove: true },
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename,
+            remove: jest.fn().mockResolvedValue(undefined),
+            wait: jest.fn().mockResolvedValue(undefined),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('rolled_back');
+    expect(rename).not.toHaveBeenCalled();
+    expect(dockerApi.createContainer).toHaveBeenCalledTimes(2);
+    expect(dockerApi.createContainer.mock.calls[1][0]._body.Image).toBe(
+        ORIGINAL_IMAGE,
+    );
+    expect(restoredStart).toHaveBeenCalled();
+});
+
+test('swapContainer should restart the original when both rename and remove fail', async () => {
+    useLogger();
+    const originalStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = { createContainer: jest.fn() };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest
+                .fn()
+                .mockRejectedValue(new Error('rename unsupported')),
+            remove: jest.fn().mockRejectedValue(new Error('remove exploded')),
+            start: originalStart,
+            inspect: jest.fn().mockResolvedValue({}),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('rolled_back');
+    expect(error.message).toContain('remove exploded');
+    expect(dockerApi.createContainer).not.toHaveBeenCalled();
+    expect(originalStart).toHaveBeenCalled();
+});
+
+test('swapContainer should report left_stopped when the original cannot be started again after a failed remove', async () => {
+    const logger = useLogger();
+    const dockerApi = { createContainer: jest.fn() };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest
+                .fn()
+                .mockRejectedValue(new Error('rename unsupported')),
+            remove: jest.fn().mockRejectedValue(new Error('remove exploded')),
+            start: jest.fn().mockRejectedValue(new Error('start exploded')),
+            inspect: jest.fn().mockResolvedValue({}),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('left_stopped');
+    expect(error.message).toContain('could not be started');
+    expect(dockerApi.createContainer).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled();
+});
+
+test('swapContainer should still succeed when the aside container cannot be removed', async () => {
+    const logger = useLogger();
+    const remove = jest.fn().mockRejectedValue(new Error('remove exploded'));
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({
+            id: 'new-container-id',
+            start: jest.fn().mockResolvedValue(undefined),
+        }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
+            remove,
+        },
+    });
+
+    await expect(
+        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
+    ).resolves.toMatchObject({
+        success: true,
+        newContainerId: 'new-container-id',
+    });
+
+    expect(remove).toHaveBeenCalledWith({ force: true });
+    expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+            'container-name_wud_old_123456789 could not be removed',
+        ),
+    );
+});
+
+test('swapContainer should still succeed when pruning the previous image fails', async () => {
+    docker.configuration = { ...configurationValid, prune: true };
+    const logger = useLogger();
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({
+            id: 'new-container-id',
+            start: jest.fn().mockResolvedValue(undefined),
+        }),
+        getImage: jest.fn().mockResolvedValue({
+            remove: jest.fn().mockRejectedValue(new Error('image in use')),
+        }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
+            remove: jest.fn().mockResolvedValue(undefined),
+        },
+    });
+
+    await expect(
+        docker.swapContainer(
+            {
+                name: 'container-name',
+                id: '123456789',
+                image: { name: 'test/test', tag: { value: '1.2.3' } },
+                updateKind: { kind: 'tag' },
+            },
+            ctx,
+        ),
+    ).resolves.toMatchObject({ success: true });
+
+    expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+            `Image ${ORIGINAL_IMAGE} could not be removed after a successful update`,
+        ),
+    );
+    docker.configuration = configurationValid;
+});
+
+test('swapAll should carry the swap disposition without leaking it into the member outcomes', async () => {
+    const member = { id: 'boom', name: 'boom', watcher: 'test' };
+    jest.spyOn(docker, 'swapContainer').mockRejectedValue(
+        new SwapFailedError('boom', 'destroyed'),
+    );
+
+    const swaps = await docker.swapAll(
+        [member],
+        [{ currentContainerSpec: { Id: 'spec-boom' } }],
+    );
+
+    expect(swaps[0]).toEqual({
+        container: member,
+        success: false,
+        startedAfterSwap: false,
+        oldContainerId: 'spec-boom',
+        error: 'boom',
+        disposition: 'destroyed',
+    });
+    expect(docker.toMemberOutcomes(swaps)).toEqual([
+        { id: 'boom', name: 'boom', status: 'failed', error: 'boom' },
+    ]);
+    expect(docker.toMemberOutcomes(swaps)[0]).not.toHaveProperty('disposition');
+});
+
+test('swapContainer should not start the original when it was not running before a failed create', async () => {
+    useLogger();
+    const rename = jest.fn().mockResolvedValue(undefined);
+    const originalStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockRejectedValue(new Error('create exploded')),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        running: false,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename,
+            remove: jest.fn().mockResolvedValue(undefined),
+            start: originalStart,
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('rolled_back');
+    expect(rename).toHaveBeenNthCalledWith(2, { name: 'container-name' });
+    expect(originalStart).not.toHaveBeenCalled();
+});
+
+test('swapContainer should report destroyed when the aside cannot be renamed back', async () => {
+    const logger = useLogger();
+    const rename = jest
+        .fn()
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValue(new Error('rename back exploded'));
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockRejectedValue(new Error('create exploded')),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename,
+            remove: jest.fn().mockResolvedValue(undefined),
+            start: jest.fn().mockResolvedValue(undefined),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('destroyed');
+    expect(error.message).toContain('could NOT be restored');
+    expect(error.message).toContain('create exploded');
+    expect(error.message).toContain('(rollback: rename back exploded)');
+    expect(logger.error).toHaveBeenCalled();
+});
+
+test('swapContainer should report destroyed when the replacement cannot be removed during rollback', async () => {
+    const logger = useLogger();
+    const rename = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({
+            id: 'new-container-id',
+            start: jest.fn().mockRejectedValue(new Error('start exploded')),
+            remove: jest.fn().mockRejectedValue(new Error('replacement stuck')),
+        }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename,
+            remove: jest.fn().mockResolvedValue(undefined),
+            start: jest.fn().mockResolvedValue(undefined),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('destroyed');
+    expect(rename).toHaveBeenCalledTimes(1);
+    expect(error.message).toContain('(rollback: replacement stuck)');
+    expect(logger.error).toHaveBeenCalled();
+});
+
+test('swapContainer should report destroyed when the recreate-from-spec rung also fails', async () => {
+    const logger = useLogger();
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockRejectedValueOnce(new Error('create exploded'))
+            .mockRejectedValue(new Error('recreate exploded')),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        hostConfig: { AutoRemove: true },
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
+            remove: jest.fn().mockResolvedValue(undefined),
+            wait: jest.fn().mockResolvedValue(undefined),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('destroyed');
+    expect(error.message).toContain('create exploded');
+    expect(error.message).toContain('(rollback: recreate exploded)');
+    expect(logger.error).toHaveBeenCalled();
+});
+
+test('swapContainer should report left_stopped when the aside is renamed back but cannot start', async () => {
+    const logger = useLogger();
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockRejectedValue(new Error('create exploded')),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
+            remove: jest.fn().mockResolvedValue(undefined),
+            start: jest.fn().mockRejectedValue(new Error('start exploded')),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('left_stopped');
+    expect(error.message).toContain('restored but could not be started');
+    expect(error.message).toContain('create exploded');
+    expect(logger.error).toHaveBeenCalled();
+});
+
+test('swapContainer should leave everything untouched when the stop fails', async () => {
+    useLogger();
+    const rename = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = { createContainer: jest.fn() };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        currentContainer: {
+            stop: jest.fn().mockRejectedValue(new Error('stop exploded')),
+            rename,
+            remove,
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error).toBeInstanceOf(SwapFailedError);
+    expect(error.disposition).toBe('unchanged');
+    expect(error.message).toBe('stop exploded');
+    expect(rename).not.toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+    expect(dockerApi.createContainer).not.toHaveBeenCalled();
+});
+
+test('swapContainer should restart the original when the auto-removal wait fails but the container survived', async () => {
+    useLogger();
+    const originalStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = { createContainer: jest.fn() };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        hostConfig: { AutoRemove: true },
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
+            remove: jest.fn().mockResolvedValue(undefined),
+            wait: jest.fn().mockRejectedValue(new Error('wait timed out')),
+            inspect: jest.fn().mockResolvedValue({}),
+            start: originalStart,
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('rolled_back');
+    expect(error.message).toContain('wait timed out');
+    expect(dockerApi.createContainer).not.toHaveBeenCalled();
+    expect(originalStart).toHaveBeenCalled();
+});
+
+test('swapContainer should recreate the original when the auto-removal wait fails and the container is gone', async () => {
+    useLogger();
+    const restoredStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockResolvedValue({ id: 'restored-id', start: restoredStart }),
+    };
+    const ctx = buildRollbackCtx({
+        dockerApi,
+        hostConfig: { AutoRemove: true },
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
+            remove: jest.fn().mockResolvedValue(undefined),
+            wait: jest.fn().mockRejectedValue(new Error('wait timed out')),
+            inspect: jest
+                .fn()
+                .mockRejectedValue(new Error('no such container')),
+        },
+    });
+
+    const error = await swapAndCatch(ctx);
+
+    expect(error.disposition).toBe('rolled_back');
+    expect(dockerApi.createContainer).toHaveBeenCalledTimes(1);
+    expect(dockerApi.createContainer.mock.calls[0][0]._body.Image).toBe(
+        ORIGINAL_IMAGE,
+    );
+    expect(restoredStart).toHaveBeenCalled();
 });
