@@ -63,6 +63,12 @@ interface ComposeEdit {
 interface ComposeRewriteOutcome {
     editedIds: Set<string>;
     staleIds: Set<string>;
+    revert?: {
+        source: string;
+        written: string;
+        edits: ComposeEdit[];
+        containerIdsByEdit: string[][];
+    };
 }
 
 /**
@@ -599,14 +605,19 @@ class Dockercompose extends Docker {
      * @param loaded
      * @param containers
      * @param composeFile
-     * @returns {{edits: ComposeEdit[]} & ComposeRewriteOutcome}
+     * @returns {{edits: ComposeEdit[], containerIdsByEdit: string[][]} & ComposeRewriteOutcome}
      */
     planComposeEdits(
         loaded: LoadedCompose,
         containers: Container[],
         composeFile: string,
-    ): { edits: ComposeEdit[] } & ComposeRewriteOutcome {
+    ): {
+        edits: ComposeEdit[];
+        containerIdsByEdit: string[][];
+    } & ComposeRewriteOutcome {
         const edits: ComposeEdit[] = [];
+        const containerIdsByEdit: string[][] = [];
+        const editIndexByService = new Map<string, number>();
         const editedIds = new Set<string>();
         const staleIds = new Set<string>();
         const serviceOutcome = new Map<string, 'edited' | 'stale'>();
@@ -650,6 +661,11 @@ class Dockercompose extends Docker {
                 );
                 if (planned === 'edited') {
                     editedIds.add(container.id);
+                    const editIndex: number | undefined =
+                        editIndexByService.get(serviceName);
+                    if (editIndex !== undefined) {
+                        containerIdsByEdit[editIndex].push(container.id);
+                    }
                 } else {
                     staleIds.add(container.id);
                 }
@@ -723,11 +739,13 @@ class Dockercompose extends Docker {
                 from: fileRef,
                 to: newRef,
             });
+            editIndexByService.set(serviceName, edits.length - 1);
+            containerIdsByEdit.push([container.id]);
             serviceOutcome.set(serviceName, 'edited');
             editedIds.add(container.id);
         }
 
-        return { edits, editedIds, staleIds };
+        return { edits, containerIdsByEdit, editedIds, staleIds };
     }
 
     /**
@@ -745,11 +763,8 @@ class Dockercompose extends Docker {
 
         // Deliberate re-read: the pull barrier sits between grouping and rewriting.
         const loaded: LoadedCompose = await this.loadComposeFile(composeFile);
-        const { edits, editedIds, staleIds } = this.planComposeEdits(
-            loaded,
-            containers,
-            composeFile,
-        );
+        const { edits, containerIdsByEdit, editedIds, staleIds } =
+            this.planComposeEdits(loaded, containers, composeFile);
 
         if (edits.length === 0) {
             this.log.info(`No compose service to update in ${composeFile}`);
@@ -767,11 +782,18 @@ class Dockercompose extends Docker {
             );
         }
 
-        await this.writeComposeFile(
-            composeFile,
-            applyComposeEdits(loaded.source, edits),
-        );
-        return { editedIds, staleIds };
+        const written: string = applyComposeEdits(loaded.source, edits);
+        await this.writeComposeFile(composeFile, written);
+        return {
+            editedIds,
+            staleIds,
+            revert: {
+                source: loaded.source,
+                written,
+                edits,
+                containerIdsByEdit,
+            },
+        };
     }
 
     /**
@@ -810,6 +832,10 @@ class Dockercompose extends Docker {
         // Rewrite phase — images are local now; rewrite each compose file.
         const editedIds = new Set<string>();
         const staleIds = new Set<string>();
+        const revertsByFile = new Map<
+            string,
+            NonNullable<ComposeRewriteOutcome['revert']>
+        >();
         for (const [composeFile, groupContainers] of groups) {
             const outcome = await this.rewriteComposeFile(
                 composeFile,
@@ -817,6 +843,9 @@ class Dockercompose extends Docker {
             );
             outcome.editedIds.forEach((id) => editedIds.add(id));
             outcome.staleIds.forEach((id) => staleIds.add(id));
+            if (outcome.revert) {
+                revertsByFile.set(composeFile, outcome.revert);
+            }
         }
 
         // Swap phase — barrier across ALL containers. A member that vanished fails.
@@ -824,6 +853,62 @@ class Dockercompose extends Docker {
             valid,
             valid.map((container) => ctxByContainer.get(container)),
         );
+
+        // Revert phase — put back every image line whose containers all failed.
+        const succeededIds = new Set(
+            swaps
+                .filter((swap) => swap.success)
+                .map((swap) => swap.container.id),
+        );
+        for (const [composeFile, revert] of revertsByFile) {
+            const keptIndexes: number[] = revert.edits
+                .map((_edit, index) => index)
+                .filter((index) =>
+                    (revert.containerIdsByEdit[index] ?? []).some((id) =>
+                        succeededIds.has(id),
+                    ),
+                );
+            if (keptIndexes.length === revert.edits.length) {
+                continue;
+            }
+            const desired: string = applyComposeEdits(
+                revert.source,
+                keptIndexes.map((index) => revert.edits[index]),
+            );
+            let current: string;
+            try {
+                current = (await this.getComposeFile(composeFile)).toString();
+            } catch (e) {
+                this.log.warn(
+                    `Could not re-read ${composeFile} to revert it (${e.message})`,
+                );
+                continue;
+            }
+            if (current !== revert.written) {
+                this.log.warn(
+                    `${composeFile} changed on disk since the rewrite, not reverting`,
+                );
+                continue;
+            }
+            if (desired === current) {
+                continue;
+            }
+            try {
+                await this.writeComposeFile(composeFile, desired);
+            } catch (e) {
+                this.log.warn(`Could not revert ${composeFile} (${e.message})`);
+                continue;
+            }
+            revert.edits.forEach((_edit, index) => {
+                if (keptIndexes.includes(index)) {
+                    return;
+                }
+                (revert.containerIdsByEdit[index] ?? []).forEach((id) => {
+                    editedIds.delete(id);
+                    staleIds.add(id);
+                });
+            });
+        }
 
         // Post-update epilogue — once, after the global swap barrier, over the
         // filtered member set.

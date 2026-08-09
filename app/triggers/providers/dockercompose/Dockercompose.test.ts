@@ -2315,3 +2315,124 @@ test('triggerBatch should annotate by container id when two members share a name
     expect(byId.get('c-stale').fileUpdated).toBe(false);
     expect(byId.get('c-edited').fileUpdated).toBe(true);
 });
+
+const bumpedFirst = composeYaml.replace(
+    'zz_batch_compose_1:\n    image: ghcr.io/stefanprodan/podinfo:5.0.0',
+    'zz_batch_compose_1:\n    image: ghcr.io/stefanprodan/podinfo:6.0.0',
+);
+
+const bumpedBoth = bumpedFirst.replace(
+    'zz_batch_compose_2:\n    image: ghcr.io/stefanprodan/podinfo:5.0.0',
+    'zz_batch_compose_2:\n    image: ghcr.io/stefanprodan/podinfo:6.0.0',
+);
+
+const composeFilePath = '/abs/docker-compose.yml';
+
+function stubBatchWithFailedSwaps(
+    containers: Container[],
+    failedIds: string[],
+): void {
+    const failed = new Set(failedIds);
+    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
+        new Map([[composeFilePath, containers]]),
+    );
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
+        {} as ContainerUpdateContext,
+    );
+    jest.spyOn(dockercompose, 'swapContainer').mockImplementation(
+        async (container: Container) => {
+            if (failed.has(container.id)) {
+                throw new Error('swap failed');
+            }
+            return buildSwapOutcome(container);
+        },
+    );
+}
+
+test('triggerBatch should revert the compose image line when every container on it failed', async () => {
+    const container = buildContainer({ id: 'c-failed' });
+    mockedReadFile
+        .mockReset()
+        .mockResolvedValueOnce(composeYaml)
+        .mockResolvedValueOnce(bumpedFirst);
+    stubBatchWithFailedSwaps([container], ['c-failed']);
+
+    const result = await dockercompose.triggerBatch([container]);
+
+    expect(mockedWriteFile).toHaveBeenCalledTimes(2);
+    expect(mockedWriteFile.mock.calls[0]).toEqual([
+        composeFilePath,
+        bumpedFirst,
+    ]);
+    expect(mockedWriteFile.mock.calls[1]).toEqual([
+        composeFilePath,
+        composeYaml,
+    ]);
+    expect(result?.members).toEqual([
+        {
+            id: 'c-failed',
+            name: 'zz_batch_compose_1',
+            status: 'failed',
+            error: 'swap failed',
+            fileUpdated: false,
+        },
+    ]);
+});
+
+test('triggerBatch should keep the bumped line when one container of a scaled service succeeded', async () => {
+    const first = buildContainer({ id: 'c1' });
+    const second = buildContainer({ id: 'c2' });
+    mockedReadFile.mockReset().mockResolvedValue(composeYaml);
+    stubBatchWithFailedSwaps([first, second], ['c2']);
+
+    const result = await dockercompose.triggerBatch([first, second]);
+
+    expect(mockedWriteFile).toHaveBeenCalledTimes(1);
+    expect(mockedWriteFile.mock.calls[0][1]).toBe(bumpedFirst);
+    const byId = new Map(result.members.map((member) => [member.id, member]));
+    expect(byId.get('c1').status).toBe('updated');
+    expect(byId.get('c1').fileUpdated).toBe(true);
+});
+
+test('triggerBatch should revert only the failed service line of a mixed compose file', async () => {
+    const good = buildContainer({ id: 'c-good' });
+    const bad = buildContainer({
+        id: 'c-bad',
+        name: 'zz_batch_compose_2',
+        labels: { 'com.docker.compose.service': 'zz_batch_compose_2' },
+    });
+    mockedReadFile
+        .mockReset()
+        .mockResolvedValueOnce(composeYaml)
+        .mockResolvedValueOnce(bumpedBoth);
+    stubBatchWithFailedSwaps([good, bad], ['c-bad']);
+
+    const result = await dockercompose.triggerBatch([good, bad]);
+
+    expect(mockedWriteFile).toHaveBeenCalledTimes(2);
+    expect(mockedWriteFile.mock.calls[0][1]).toBe(bumpedBoth);
+    expect(mockedWriteFile.mock.calls[1][1]).toBe(bumpedFirst);
+    const byId = new Map(result.members.map((member) => [member.id, member]));
+    expect(byId.get('c-good').fileUpdated).toBe(true);
+    expect(byId.get('c-bad').fileUpdated).toBe(false);
+});
+
+test('triggerBatch should not revert a compose file that changed on disk since the rewrite', async () => {
+    const container = buildContainer({ id: 'c-failed' });
+    mockedReadFile
+        .mockReset()
+        .mockResolvedValueOnce(composeYaml)
+        .mockResolvedValueOnce(
+            'services:\n  zz_batch_compose_1:\n    image: ghcr.io/stefanprodan/podinfo:9.9.9\n',
+        );
+    const warn = jest.spyOn(dockercompose.log, 'warn');
+    stubBatchWithFailedSwaps([container], ['c-failed']);
+
+    const result = await dockercompose.triggerBatch([container]);
+
+    expect(mockedWriteFile).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(
+        `${composeFilePath} changed on disk since the rewrite, not reverting`,
+    );
+    expect(result.members[0].fileUpdated).toBe(true);
+});
