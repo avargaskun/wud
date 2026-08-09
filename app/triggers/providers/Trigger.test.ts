@@ -42,6 +42,33 @@ test('validateConfiguration should return validated configuration when valid', a
     expect(validatedConfiguration).toStrictEqual(configurationValid);
 });
 
+test('validateConfiguration should accept the digest threshold', () => {
+    expect(
+        trigger.validateConfiguration({
+            ...configurationValid,
+            threshold: 'digest',
+        }).threshold,
+    ).toEqual('digest');
+});
+
+test('validateConfiguration should normalise an upper-case digest threshold', () => {
+    expect(
+        trigger.validateConfiguration({
+            ...configurationValid,
+            threshold: 'DIGEST',
+        }).threshold,
+    ).toEqual('digest');
+});
+
+test('validateConfiguration should reject the digest-only threshold', () => {
+    expect(() =>
+        trigger.validateConfiguration({
+            ...configurationValid,
+            threshold: 'digest-only',
+        }),
+    ).toThrowError(ValidationError);
+});
+
 test('validateConfiguration should throw error when invalid', async () => {
     const configuration = {
         url: 'git://xxx.com',
@@ -948,6 +975,8 @@ describe('bucket selection', () => {
         { threshold: 'major-only', buckets: ['major', 'digest'] },
         { threshold: 'minor-only', buckets: ['minor', 'digest'] },
         { threshold: 'pacth', buckets: ['major', 'minor', 'patch', 'digest'] },
+        { threshold: 'digest', buckets: ['digest'] },
+        { threshold: 'DIGEST', buckets: ['digest'] },
     ];
 
     test.each(getEligibleBucketsTestCases)(
@@ -1414,7 +1443,15 @@ describe('threshold label validation', () => {
         expect(parsed.threshold).toEqual('all');
     });
 
-    test.each(['all', 'major', 'minor', 'patch', 'major-only', 'minor-only'])(
+    test.each([
+        'all',
+        'major',
+        'minor',
+        'patch',
+        'major-only',
+        'minor-only',
+        'digest',
+    ])(
         'parseIncludeOrIncludeTriggerString should accept the %s threshold token',
         (token) => {
             const parsed = Trigger.parseIncludeOrIncludeTriggerString(
@@ -1433,6 +1470,7 @@ describe('threshold label validation', () => {
         ['PATCH', 'patch'],
         ['Major-Only', 'major-only'],
         ['ALL', 'all'],
+        ['DIGEST', 'digest'],
     ])(
         'parseIncludeOrIncludeTriggerString should accept the %s threshold token case-insensitively',
         (token, expected) => {
@@ -1448,6 +1486,16 @@ describe('threshold label validation', () => {
             expect(parsed.thresholdToken).toEqual(token);
         },
     );
+
+    test('parseIncludeOrIncludeTriggerString should reject the digest-only threshold token', () => {
+        const parsed = Trigger.parseIncludeOrIncludeTriggerString(
+            'docker.update:digest-only',
+        );
+        expect(parsed.thresholdPresent).toBe(true);
+        expect(parsed.thresholdInvalid).toBe(true);
+        expect(parsed.thresholdToken).toEqual('digest-only');
+        expect(parsed.threshold).toEqual('all');
+    });
 
     test.each([
         ['docker.t1:', ''],
