@@ -1197,6 +1197,13 @@ class Docker extends Trigger {
                 NetworkMode: `container:${swap.newContainerId}`,
             };
 
+            const depAutoRemove = depSpec.HostConfig?.AutoRemove === true;
+            const failedReason = (cause: string, restored: boolean) =>
+                restored
+                    ? `recreate failed, dependent rolled back: ${cause}`
+                    : `recreate failed and the dependent could NOT be restored: ${cause}`;
+            let depAsideName: string | undefined;
+
             if (running) {
                 await this.stopContainer(
                     dependent,
@@ -1205,37 +1212,112 @@ class Docker extends Trigger {
                     logContainer,
                 );
             }
-            if (depSpec.HostConfig?.AutoRemove !== true) {
-                await this.removeContainer(
-                    dependent,
-                    resolved.name,
-                    resolved.id,
-                    logContainer,
-                );
-            } else {
+            if (depAutoRemove) {
                 await this.waitContainerRemoved(
                     dependent,
                     resolved.name,
                     resolved.id,
                     logContainer,
                 );
+            } else {
+                const candidate = this.buildAsideName(
+                    resolved.name,
+                    resolved.id,
+                );
+                try {
+                    await this.renameContainer(
+                        dependent,
+                        resolved.name,
+                        candidate,
+                        resolved.id,
+                        logContainer,
+                    );
+                    depAsideName = candidate;
+                } catch {
+                    await this.removeContainer(
+                        dependent,
+                        resolved.name,
+                        resolved.id,
+                        logContainer,
+                    );
+                }
             }
 
-            const newDependent =
-                await this.createContainerWithMultiNetworkFallback(
-                    dockerApi,
-                    specToCreate,
-                    depSpec,
+            let newDependent: Dockerode.Container | undefined;
+            try {
+                newDependent =
+                    await this.createContainerWithMultiNetworkFallback(
+                        dockerApi,
+                        specToCreate,
+                        depSpec,
+                        resolved.name,
+                        logContainer,
+                    );
+                if (running) {
+                    await this.startContainer(
+                        newDependent,
+                        resolved.name,
+                        logContainer,
+                    );
+                }
+            } catch (e: any) {
+                if (!depAsideName) {
+                    logContainer.error(
+                        `Dependent container ${resolved.name} could NOT be restored after a failed recreate (${e.message})`,
+                    );
+                    return {
+                        ...outcome,
+                        status: 'failed',
+                        reason: failedReason(e.message, false),
+                    };
+                }
+                try {
+                    if (newDependent) {
+                        await newDependent.remove({ force: true });
+                    }
+                    await this.renameContainer(
+                        dependent,
+                        depAsideName,
+                        resolved.name,
+                        resolved.id,
+                        logContainer,
+                    );
+                } catch (rollbackError: any) {
+                    logContainer.error(
+                        `Dependent container ${resolved.name} could NOT be restored (${rollbackError.message})`,
+                    );
+                    return {
+                        ...outcome,
+                        status: 'failed',
+                        reason: failedReason(e.message, false),
+                    };
+                }
+                const { disposition } = await this.restartRolledBack(
+                    dependent,
                     resolved.name,
+                    running,
                     logContainer,
                 );
-            if (running) {
-                await this.startContainer(
-                    newDependent,
-                    resolved.name,
-                    logContainer,
-                );
+                return {
+                    ...outcome,
+                    status: 'failed',
+                    reason: failedReason(
+                        e.message,
+                        disposition === 'rolled_back',
+                    ),
+                };
             }
+
+            if (depAsideName) {
+                try {
+                    await dependent.remove({ force: true });
+                } catch (cleanupError: any) {
+                    logContainer.warn(
+                        `Container ${depAsideName} could not be removed after a successful dependent recreate (${cleanupError.message})`,
+                    );
+                }
+            }
+
             logContainer.warn(
                 `Dependent container ${resolved.name} was recreated with id ${newDependent.id} to re-attach to ${hostName}`,
             );

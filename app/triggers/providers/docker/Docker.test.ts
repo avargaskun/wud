@@ -1467,14 +1467,25 @@ const buildDependentSpec = (overrides = {}) => ({
 });
 
 const buildDependentApi = (spec) => {
-    const restart = jest.fn().mockResolvedValue(undefined);
-    const stop = jest.fn().mockResolvedValue(undefined);
-    const remove = jest.fn().mockResolvedValue(undefined);
-    const wait = jest.fn().mockResolvedValue(undefined);
-    const start = jest.fn().mockResolvedValue(undefined);
-    const createContainer = jest
-        .fn()
-        .mockResolvedValue({ id: 'dep-new-id', start });
+    const order = [];
+    const track = (label, impl) =>
+        jest.fn(async (...args) => {
+            order.push(label);
+            return impl ? impl(...args) : undefined;
+        });
+    const restart = track('restart');
+    const stop = track('stop');
+    const remove = track('remove');
+    const wait = track('wait');
+    const rename = track('rename');
+    const startOriginal = track('original-start');
+    const start = track('start');
+    const removeNew = track('remove-new');
+    const createContainer = track('create', () => ({
+        id: 'dep-new-id',
+        start,
+        remove: removeNew,
+    }));
     const dockerApi = {
         createContainer,
         getContainer: jest.fn(() => ({
@@ -1483,9 +1494,23 @@ const buildDependentApi = (spec) => {
             stop,
             remove,
             wait,
+            rename,
+            start: startOriginal,
         })),
     };
-    return { dockerApi, restart, stop, remove, wait, start, createContainer };
+    return {
+        dockerApi,
+        order,
+        restart,
+        stop,
+        remove,
+        removeNew,
+        wait,
+        rename,
+        start,
+        startOriginal,
+        createContainer,
+    };
 };
 
 test('bounceDependent should restart a dependent that does not reference the host', async () => {
@@ -1534,7 +1559,7 @@ test('bounceDependent should skip a stopped dependent that does not reference th
 
 test('bounceDependent should recreate a dependent referencing the host by id', async () => {
     const swap = buildSwap();
-    const { dockerApi, stop, remove, wait, start, createContainer } =
+    const { dockerApi, order, rename, wait, createContainer } =
         buildDependentApi(
             buildDependentSpec({
                 HostConfig: {
@@ -1556,13 +1581,12 @@ test('bounceDependent should recreate a dependent referencing the host by id', a
         status: 'bounced',
         method: 'recreate',
     });
-    expect(stop).toHaveBeenCalled();
-    expect(remove).toHaveBeenCalled();
+    expect(order).toEqual(['stop', 'rename', 'create', 'start', 'remove']);
+    expect(rename).toHaveBeenCalledWith({ name: 'dependent_wud_old_dep-id' });
     expect(wait).not.toHaveBeenCalled();
     expect(
         createContainer.mock.calls[0][0]._body.HostConfig.NetworkMode,
     ).toEqual('container:new-host-id');
-    expect(start).toHaveBeenCalled();
 });
 
 test('bounceDependent should recreate a dependent referencing the host by short id', async () => {
@@ -1625,14 +1649,15 @@ test('bounceDependent should restart when a short non-hex reference prefixes the
 
 test('bounceDependent should wait for auto-removal instead of removing', async () => {
     const swap = buildSwap();
-    const { dockerApi, remove, wait, createContainer } = buildDependentApi(
-        buildDependentSpec({
-            HostConfig: {
-                AutoRemove: true,
-                NetworkMode: `container:${swap.oldContainerId}`,
-            },
-        }),
-    );
+    const { dockerApi, remove, rename, wait, createContainer } =
+        buildDependentApi(
+            buildDependentSpec({
+                HostConfig: {
+                    AutoRemove: true,
+                    NetworkMode: `container:${swap.oldContainerId}`,
+                },
+            }),
+        );
     await expect(
         docker.bounceDependent(
             dockerApi,
@@ -1643,6 +1668,7 @@ test('bounceDependent should wait for auto-removal instead of removing', async (
         ),
     ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
     expect(wait).toHaveBeenCalled();
+    expect(rename).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
     expect(createContainer).toHaveBeenCalled();
 });
@@ -1697,6 +1723,216 @@ test('bounceDependent should report a failure when the docker call throws', asyn
         status: 'failed',
         reason: 'restart failed',
     });
+});
+
+test('bounceDependent should roll the dependent back when the recreate fails', async () => {
+    const swap = buildSwap();
+    const { dockerApi, order, rename, remove, startOriginal, createContainer } =
+        buildDependentApi(
+            buildDependentSpec({
+                HostConfig: {
+                    NetworkMode: `container:${swap.oldContainerId}`,
+                },
+            }),
+        );
+    createContainer.mockImplementation(async () => {
+        order.push('create');
+        throw new Error('create exploded');
+    });
+
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'failed',
+        reason: 'recreate failed, dependent rolled back: create exploded',
+    });
+    expect(order).toEqual([
+        'stop',
+        'rename',
+        'create',
+        'rename',
+        'original-start',
+    ]);
+    expect(rename.mock.calls[0][0]).toEqual({
+        name: 'dependent_wud_old_dep-id',
+    });
+    expect(rename.mock.calls[1][0]).toEqual({ name: 'dependent' });
+    expect(startOriginal).toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should remove the replacement before renaming the aside back', async () => {
+    const swap = buildSwap();
+    const { dockerApi, order, start, removeNew, startOriginal } =
+        buildDependentApi(
+            buildDependentSpec({
+                HostConfig: {
+                    NetworkMode: `container:${swap.oldContainerId}`,
+                },
+            }),
+        );
+    start.mockRejectedValue(new Error('start exploded'));
+
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({
+        status: 'failed',
+        reason: 'recreate failed, dependent rolled back: start exploded',
+    });
+    expect(order).toEqual([
+        'stop',
+        'rename',
+        'create',
+        'remove-new',
+        'rename',
+        'original-start',
+    ]);
+    expect(removeNew).toHaveBeenCalledWith({ force: true });
+    expect(startOriginal).toHaveBeenCalled();
+});
+
+test('bounceDependent should report a destroyed dependent when the rollback rename fails', async () => {
+    const swap = buildSwap();
+    const logger = buildLogger();
+    const { dockerApi, rename, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    createContainer.mockRejectedValue(new Error('create exploded'));
+    rename
+        .mockResolvedValueOnce(undefined)
+        .mockRejectedValueOnce(new Error('rename back exploded'));
+
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            logger,
+        ),
+    ).resolves.toMatchObject({
+        status: 'failed',
+        reason: 'recreate failed and the dependent could NOT be restored: create exploded',
+    });
+    expect(logger.error).toHaveBeenCalled();
+});
+
+test('bounceDependent should fall back to removing the dependent when rename is unavailable', async () => {
+    const swap = buildSwap();
+    const { dockerApi, order, remove, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    dockerApi.getContainer = jest.fn(() => ({
+        inspect: jest.fn().mockResolvedValue(
+            buildDependentSpec({
+                HostConfig: {
+                    NetworkMode: `container:${swap.oldContainerId}`,
+                },
+            }),
+        ),
+        stop: jest.fn(async () => {
+            order.push('stop');
+        }),
+        rename: jest.fn(async () => {
+            order.push('rename');
+            throw new Error('rename not supported');
+        }),
+        remove,
+    }));
+
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            buildLogger(),
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(order).toEqual(['stop', 'rename', 'remove', 'create', 'start']);
+    expect(createContainer).toHaveBeenCalled();
+});
+
+test('bounceDependent should report an auto-removed dependent as not restored when the recreate fails', async () => {
+    const swap = buildSwap();
+    const logger = buildLogger();
+    const { dockerApi, rename, wait, createContainer } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                AutoRemove: true,
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    createContainer.mockRejectedValue(new Error('create exploded'));
+
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            logger,
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'failed',
+        reason: 'recreate failed and the dependent could NOT be restored: create exploded',
+    });
+    expect(wait).toHaveBeenCalled();
+    expect(rename).not.toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled();
+});
+
+test('bounceDependent should not fail the recreate when the aside cannot be removed', async () => {
+    const swap = buildSwap();
+    const logger = buildLogger();
+    const { dockerApi, remove } = buildDependentApi(
+        buildDependentSpec({
+            HostConfig: {
+                NetworkMode: `container:${swap.oldContainerId}`,
+            },
+        }),
+    );
+    remove.mockRejectedValue(new Error('aside stuck'));
+
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            logger,
+        ),
+    ).resolves.toMatchObject({ status: 'bounced', method: 'recreate' });
+    expect(logger.warn).toHaveBeenCalledWith(
+        expect.stringContaining(
+            'Container dependent_wud_old_dep-id could not be removed after a successful dependent recreate',
+        ),
+    );
 });
 
 const buildHostSwap = (name, label, overrides = {}) => ({
