@@ -64,7 +64,7 @@ jest.mock('../../../registry', () => ({
                             );
                         },
                         createContainer: (container) => {
-                            if (container.name === 'container-name') {
+                            if (container._query?.name === 'container-name') {
                                 return Promise.resolve({
                                     id: 'new-container-id',
                                     start: () => Promise.resolve(),
@@ -965,7 +965,8 @@ test('trigger should fallback to primary then connect secondary networks', async
     expect(createContainer).toHaveBeenCalledTimes(2);
     expect(
         Object.keys(
-            createContainer.mock.calls[1][0].NetworkingConfig.EndpointsConfig,
+            createContainer.mock.calls[1][0]._body.NetworkingConfig
+                .EndpointsConfig,
         ),
     ).toEqual(['postgres_default']);
     expect(getNetwork).toHaveBeenCalledTimes(2);
@@ -1066,6 +1067,62 @@ const buildLogger = () => {
     logger.child = () => logger;
     return logger;
 };
+
+test('createContainer should send the spec in the body and only the name in the query', async () => {
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({ id: 'x' }),
+    };
+    const spec = {
+        name: 'container-name',
+        Image: 'test/test:1.2.3',
+        Env: ['FOO=bar'],
+        Labels: { 'wud.watch': 'true' },
+        HostConfig: { NetworkMode: 'bridge' },
+        NetworkingConfig: { EndpointsConfig: { test: { Aliases: ['test'] } } },
+    };
+
+    await docker.createContainer(
+        dockerApi,
+        spec,
+        'container-name',
+        buildLogger(),
+    );
+
+    expect(dockerApi.createContainer).toHaveBeenCalledTimes(1);
+    const payload = dockerApi.createContainer.mock.calls[0][0];
+    expect(payload).toEqual({
+        _query: { name: 'container-name' },
+        _body: {
+            Image: 'test/test:1.2.3',
+            Env: ['FOO=bar'],
+            Labels: { 'wud.watch': 'true' },
+            HostConfig: { NetworkMode: 'bridge' },
+            NetworkingConfig: {
+                EndpointsConfig: { test: { Aliases: ['test'] } },
+            },
+        },
+    });
+    expect(payload._body.name).toBeUndefined();
+    expect(payload._body.Env).toEqual(spec.Env);
+    expect(payload._body.Labels).toEqual(spec.Labels);
+    expect(payload._body.HostConfig).toEqual(spec.HostConfig);
+    expect(payload._body.NetworkingConfig).toEqual(spec.NetworkingConfig);
+});
+
+test('createContainer should omit the name query parameter when the spec has no name', async () => {
+    const dockerApi = {
+        createContainer: jest.fn().mockResolvedValue({ id: 'x' }),
+    };
+
+    await docker.createContainer(
+        dockerApi,
+        { Image: 'test/test:1.2.3' },
+        'container-name',
+        buildLogger(),
+    );
+
+    expect(dockerApi.createContainer.mock.calls[0][0]._query).toEqual({});
+});
 
 const buildSwap = (overrides = {}) => ({
     container: { name: 'main-host', id: 'store-id' },
@@ -1345,9 +1402,9 @@ test('bounceDependent should recreate a dependent referencing the host by id', a
     expect(stop).toHaveBeenCalled();
     expect(remove).toHaveBeenCalled();
     expect(wait).not.toHaveBeenCalled();
-    expect(createContainer.mock.calls[0][0].HostConfig.NetworkMode).toEqual(
-        'container:new-host-id',
-    );
+    expect(
+        createContainer.mock.calls[0][0]._body.HostConfig.NetworkMode,
+    ).toEqual('container:new-host-id');
     expect(start).toHaveBeenCalled();
 });
 

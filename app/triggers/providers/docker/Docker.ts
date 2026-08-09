@@ -18,6 +18,12 @@ import type {
     TriggerRunResult,
 } from './types';
 
+/** docker-modem URL-encodes the whole payload into the request line unless _query/_body are set. */
+interface CreateEnvelope {
+    _query: { name?: string };
+    _body: Omit<Dockerode.ContainerCreateOptions, 'name'>;
+}
+
 /**
  * Replace a Docker container with an updated one.
  */
@@ -280,9 +286,15 @@ class Docker extends Trigger {
         logContainer: Logger,
     ): Promise<Dockerode.Container> {
         logContainer.info(`Create container ${containerName}`);
+        const { name, ...body } = containerToCreate;
+        const envelope: CreateEnvelope = {
+            _query: name === undefined ? {} : { name },
+            _body: body,
+        };
         try {
-            const newContainer =
-                await dockerApi.createContainer(containerToCreate);
+            const newContainer = await dockerApi.createContainer(
+                envelope as unknown as Dockerode.ContainerCreateOptions,
+            );
             logContainer.info(
                 `Container ${containerName} recreated on new image with success`,
             );
