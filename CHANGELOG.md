@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.2.0](https://github.com/avargaskun/wud/compare/v9.1.0...v9.2.0) (2026-08-09)
+
+
+### Features
+
+* Add the digest trigger threshold for digest-only auto-apply ([#37](https://github.com/avargaskun/wud/issues/37)) ([8b635b3](https://github.com/avargaskun/wud/commit/8b635b30170dc2005d8786046cc95b038eb5103a))
+
 ## [9.1.0](https://github.com/avargaskun/wud/compare/v9.0.0...v9.1.0) (2026-08-06)
 
 
