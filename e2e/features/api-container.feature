@@ -4,7 +4,7 @@ Feature: WUD Container API Exposure
     When I GET /api/containers
     Then response code should be 200
     And response body should be valid json
-    And response body path $ should be of type array with length 28
+    And response body path $ should be of type array with length 29
 
   # Test one representative container per registry type + update pattern
   Scenario Outline: WUD must handle different registry types and update patterns
@@ -161,3 +161,26 @@ Feature: WUD Container API Exposure
     And response body path $.updates.major must be exactly null
     And response body path $.result.tag should be 6.0.0
     And response body path $.updateAvailable should be false
+
+  # zz_digest_threshold carries wud.trigger.include=docker.update:digest on a ^6\.\d+\.\d+$ tag range.
+  Scenario: WUD must keep reporting tag updates for a container on the digest threshold
+    When I find the container with name "zz_digest_threshold" and save its ID as "DTID", version as "DTV", and name as "DTN"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.0\.\d+$" and value "" as "EXPECTED_PATCH_TAG"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.[1-9]\d*\.\d+$" and value "" as "EXPECTED_MINOR_TAG"
+    And I GET /api/containers/`DTID`
+    Then response code should be 200
+    And response body should be valid json
+    And response body path $.name should be zz_digest_threshold
+    And response body path $.updates.patch.remoteValue should equal variable "EXPECTED_PATCH_TAG"
+    And response body path $.updates.minor.remoteValue should equal variable "EXPECTED_MINOR_TAG"
+    And response body path $.updates.major must be exactly null
+    And response body path $.updates.digest must be absent
+    And response body path $.updateAvailable should be true
+
+  # An unrecognised threshold token makes apply() fail closed, dropping the trigger from this list.
+  Scenario: WUD must keep the trigger associated at the digest threshold
+    When I find the container with name "zz_digest_threshold" and save its ID as "DTID2", version as "DTV2", and name as "DTN2"
+    And I GET /api/containers/`DTID2`/triggers
+    Then response code should be 200
+    And response body should be valid json
+    And response body path $[?(@.type=="docker")].configuration.threshold should be digest

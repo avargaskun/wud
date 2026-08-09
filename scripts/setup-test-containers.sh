@@ -133,6 +133,13 @@ else
         --label 'wud.tag.include=^999\.\d+\.\d+$' \
         ghcr.io/stefanprodan/podinfo:6.0.0
 
+    # DIGEST-ONLY THRESHOLD: digest threshold must not suppress major/minor/patch reporting
+    $DOCKER_CMD run -d --name zz_digest_threshold \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.\d+\.\d+$' \
+        --label 'wud.trigger.include=docker.update:digest' \
+        ghcr.io/stefanprodan/podinfo:6.0.0
+
     # BUCKET-TARGETED TRIGGER (issue #18): patch + minor populated, major exactly null
     echo "Starting bucket trigger test containers ..."
     $DOCKER_CMD run -d --name zz_bucket_batch_1 --label 'wud.watch=true' --label 'wud.tag.include=^6\.\d+\.\d+$' ghcr.io/stefanprodan/podinfo:6.0.0
