@@ -7,10 +7,11 @@ The trigger will:
 - Update the related docker-compose.yml file
 - Clone the existing container specification
 - Pull the new image
-- Stop the existing container
-- Remove the existing container
+- Stop the existing container (if it is running)
+- Rename the existing container aside, to `<name>_wud_old_<id>`
 - Create the new container
 - Start the new container (if the previous one was running)
+- Remove the renamed-aside container
 - Remove the previous image (optionally)
 - Bounce the dependent containers declared with the `wud.postupdate.restart` label (optionally)
 
@@ -62,7 +63,15 @@ Other service shapes are never matched to a container at all, so the container i
 
 !> A trigger request that explicitly names such a container returns **HTTP 400**, on the single-container endpoint as well as the batch one. The same applies to a container whose compose file cannot be resolved at all — no label and no configured file, none of the candidate files exists, none of them parses, or none of them declares the container's image — and to a container that is not watched on the local host. Such a request used to answer `200` with an empty body while doing nothing; it now fails with the reason in the response body (see the [API documentation](/api/container/?id=response)).
 
-?> The trigger API response reports the outcome per member: `fileUpdated: true` when the service's `image:` line was rewritten, `false` when the container was updated but its compose file could not be. The field is omitted for digest updates, where no file change is expected because the tag does not change.
+?> The trigger API response reports the outcome per member: `fileUpdated: true` when the service's `image:` line was rewritten, `false` when the compose file could not be rewritten for that container, or when its `image:` line was reverted because the update failed. The field is omitted for digest updates, where no file change is expected because the tag does not change.
+
+### When an update fails
+
+The container swap itself is non-destructive and rolls back exactly as described for the [docker trigger](/configuration/triggers/docker/?id=when-an-update-fails): the existing container is renamed aside rather than removed, and it is renamed back and restarted if any step fails.
+
+The compose file is rewritten **before** the swap, so a rolled-back container would otherwise be left running an image its own compose file no longer pins — and a service is matched to a container by that pin, so the container would silently stop resolving to its service and could never be retried. To prevent that, WUD reverts an `image:` line once every container pinned to it has failed to update. A line shared by a scaled service is kept bumped as long as at least one of its containers succeeded, and a file holding several services is reverted service by service.
+
+The revert is skipped, with a warning, if the file no longer matches what WUD wrote — that is, if you or another tool edited it during the update. When `BACKUP` is enabled the `.back` file still holds the pre-update content and is left untouched.
 
 ### Post-update dependent restart
 

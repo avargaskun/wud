@@ -8,7 +8,7 @@ import type Registry from '../../../registries/Registry';
 import Logger from 'bunyan';
 import { wudPostupdateRestart } from '../../../watchers/providers/docker/label';
 import { getPostupdateBounceCounter } from '../../../prometheus/postupdate';
-import { ContainerGoneError } from './errors';
+import { ContainerGoneError, SwapFailedError } from './errors';
 import type {
     ContainerUpdateContext,
     DependentOutcome,
@@ -17,6 +17,25 @@ import type {
     SwapOutcome,
     TriggerRunResult,
 } from './types';
+
+/** docker-modem URL-encodes the whole payload into the request line unless _query/_body are set. */
+interface CreateEnvelope {
+    _query: { name?: string };
+    _body: Omit<Dockerode.ContainerCreateOptions, 'name'>;
+}
+
+type RollbackOptions = {
+    asideName?: string;
+    newContainer?: Dockerode.Container;
+    wasRunning: boolean;
+    originalName: string;
+    original: 'present' | 'removed' | 'unknown';
+};
+
+type RollbackResult = {
+    disposition: 'rolled_back' | 'left_stopped' | 'destroyed';
+    rollbackError?: string;
+};
 
 /**
  * Replace a Docker container with an updated one.
@@ -241,6 +260,37 @@ class Docker extends Trigger {
     }
 
     /**
+     * Rename a container.
+     */
+    async renameContainer(
+        container: Dockerode.Container,
+        containerName: string,
+        newName: string,
+        containerId: string,
+        logContainer: Logger,
+    ): Promise<void> {
+        logContainer.info(
+            `Rename container ${containerName} with id ${containerId} to ${newName}`,
+        );
+        try {
+            await container.rename({ name: newName });
+            logContainer.info(
+                `Container ${containerName} with id ${containerId} renamed to ${newName} with success`,
+            );
+        } catch (e: any) {
+            logContainer.warn(
+                `Error when renaming container ${containerName} with id ${containerId} to ${newName} (${e.message})`,
+            );
+            throw e;
+        }
+    }
+
+    /** Suffix, not prefix: resolveDependent strips a ^[a-f0-9]{8,12}_ prefix and would resolve a tombstone as live. */
+    buildAsideName(containerName: string, containerId: string): string {
+        return `${containerName}_wud_old_${containerId.slice(0, 12)}`;
+    }
+
+    /**
      * Wait for a container to be removed.
      */
     async waitContainerRemoved(
@@ -280,9 +330,15 @@ class Docker extends Trigger {
         logContainer: Logger,
     ): Promise<Dockerode.Container> {
         logContainer.info(`Create container ${containerName}`);
+        const { name, ...body } = containerToCreate;
+        const envelope: CreateEnvelope = {
+            _query: name === undefined ? {} : { name },
+            _body: body,
+        };
         try {
-            const newContainer =
-                await dockerApi.createContainer(containerToCreate);
+            const newContainer = await dockerApi.createContainer(
+                envelope as unknown as Dockerode.ContainerCreateOptions,
+            );
             logContainer.info(
                 `Container ${containerName} recreated on new image with success`,
             );
@@ -468,6 +524,13 @@ class Docker extends Trigger {
                     logContainer.warn(
                         `connect-secondary:${networkName}: failed for ${containerName} (${connectError.message})`,
                     );
+                    try {
+                        await newContainer.remove({ force: true });
+                    } catch (cleanupError: any) {
+                        logContainer.error(
+                            `connect-secondary:${networkName}: could not remove the partially created container ${containerName} with id ${newContainer.id}; it still holds the name and will block recovery (${cleanupError.message})`,
+                        );
+                    }
                     throw connectError;
                 }
             }
@@ -523,31 +586,30 @@ class Docker extends Trigger {
         newImage: string,
     ): Dockerode.ContainerCreateOptions {
         const containerName = currentContainer.Name.replace('/', '');
+        const endpointsConfig = currentContainer.NetworkSettings.Networks;
+        const sanitizedEndpoints: Record<string, Dockerode.EndpointSettings> =
+            {};
+        if (endpointsConfig) {
+            Object.entries(endpointsConfig).forEach(
+                ([networkName, endpoint]) => {
+                    sanitizedEndpoints[networkName] =
+                        this.sanitizeEndpointConfig(
+                            endpoint,
+                            currentContainer.Id,
+                        );
+                },
+            );
+        }
         const containerClone = {
             ...currentContainer.Config,
             name: containerName,
             Image: newImage,
             HostConfig: currentContainer.HostConfig,
             NetworkingConfig: {
-                EndpointsConfig: currentContainer.NetworkSettings.Networks,
+                EndpointsConfig: sanitizedEndpoints,
             },
         };
 
-        if (containerClone.NetworkingConfig.EndpointsConfig) {
-            Object.values(
-                containerClone.NetworkingConfig.EndpointsConfig,
-            ).forEach((endpointConfig) => {
-                if (
-                    endpointConfig.Aliases &&
-                    endpointConfig.Aliases.length > 0
-                ) {
-                    endpointConfig.Aliases = endpointConfig.Aliases.filter(
-                        (alias: string) =>
-                            !currentContainer.Id.startsWith(alias),
-                    );
-                }
-            });
-        }
         // Handle situation when container is using network_mode: service:other_service
         if (
             containerClone.HostConfig &&
@@ -648,6 +710,147 @@ class Docker extends Trigger {
     }
 
     /**
+     * Start a container that is already restored, reporting how far the rollback got.
+     */
+    private async restartRolledBack(
+        target: Dockerode.Container,
+        targetName: string,
+        wasRunning: boolean,
+        logContainer: Logger,
+    ): Promise<RollbackResult> {
+        if (!wasRunning) {
+            return { disposition: 'rolled_back' };
+        }
+        try {
+            await this.startContainer(target, targetName, logContainer);
+        } catch (e: any) {
+            logContainer.error(
+                `Rollback incomplete for ${targetName}: restored but not started (${e.message})`,
+            );
+            return { disposition: 'left_stopped', rollbackError: e.message };
+        }
+        return { disposition: 'rolled_back' };
+    }
+
+    /**
+     * Undo a failed swap, cheapest and most reliable rung first.
+     */
+    protected async rollbackSwap(
+        ctx: ContainerUpdateContext,
+        options: RollbackOptions,
+        logContainer: Logger,
+    ): Promise<RollbackResult> {
+        const { asideName, newContainer, wasRunning, originalName } = options;
+
+        if (newContainer) {
+            try {
+                await newContainer.remove({ force: true });
+            } catch (e: any) {
+                logContainer.error(
+                    `Rollback failed for ${originalName}: could not remove the replacement container (${e.message})`,
+                );
+                return { disposition: 'destroyed', rollbackError: e.message };
+            }
+        }
+
+        if (asideName) {
+            try {
+                await this.renameContainer(
+                    ctx.currentContainer,
+                    asideName,
+                    originalName,
+                    ctx.currentContainerSpec.Id,
+                    logContainer,
+                );
+            } catch (e: any) {
+                logContainer.error(
+                    `Rollback failed for ${originalName}: could not rename ${asideName} back (${e.message})`,
+                );
+                return { disposition: 'destroyed', rollbackError: e.message };
+            }
+            return this.restartRolledBack(
+                ctx.currentContainer,
+                originalName,
+                wasRunning,
+                logContainer,
+            );
+        }
+
+        let original = options.original;
+        if (original === 'unknown') {
+            try {
+                await ctx.currentContainer.inspect();
+                original = 'present';
+            } catch {
+                original = 'removed';
+            }
+        }
+        if (original === 'present') {
+            return this.restartRolledBack(
+                ctx.currentContainer,
+                originalName,
+                wasRunning,
+                logContainer,
+            );
+        }
+
+        try {
+            const respec = this.cloneContainer(
+                ctx.currentContainerSpec,
+                ctx.currentContainerSpec.Config.Image,
+            );
+            const restored = await this.createContainerWithMultiNetworkFallback(
+                ctx.dockerApi,
+                respec,
+                ctx.currentContainerSpec,
+                originalName,
+                logContainer,
+            );
+            if (wasRunning) {
+                await this.startContainer(restored, originalName, logContainer);
+            }
+        } catch (e: any) {
+            logContainer.error(
+                `Rollback failed for ${originalName}: could not recreate the original container (${e.message})`,
+            );
+            return { disposition: 'destroyed', rollbackError: e.message };
+        }
+        return { disposition: 'rolled_back' };
+    }
+
+    /**
+     * Roll a failed swap back and build the error describing what survived.
+     */
+    private async buildSwapFailure(
+        ctx: ContainerUpdateContext,
+        cause: Error,
+        options: RollbackOptions,
+        logContainer: Logger,
+    ): Promise<SwapFailedError> {
+        const { disposition, rollbackError } = await this.rollbackSwap(
+            ctx,
+            options,
+            logContainer,
+        );
+        if (disposition === 'rolled_back') {
+            return new SwapFailedError(
+                `Update failed and the container was rolled back: ${cause.message}`,
+                disposition,
+            );
+        }
+        if (disposition === 'left_stopped') {
+            return new SwapFailedError(
+                `Update failed; the container was restored but could not be started: ${cause.message}`,
+                disposition,
+            );
+        }
+        return new SwapFailedError(
+            `Update failed and the container could NOT be restored: ${cause.message} (rollback: ${rollbackError})`,
+            disposition,
+        );
+    }
+
+    /**
      * Swap phase: stop/remove the current container and recreate it on the new image.
      * @param container the container
      * @param ctx the context returned by pullContainer
@@ -675,51 +878,130 @@ class Docker extends Trigger {
             newImage,
         );
 
-        // Stop current container
-        if (state.Running) {
-            await this.stopContainer(
-                currentContainer,
-                container.name,
-                container.id,
-                logContainer,
-            );
+        const originalName = currentContainerSpec.Name.replace('/', '');
+        const autoRemove = currentContainerSpec.HostConfig?.AutoRemove === true;
+        const wasRunning = state.Running === true;
+        let asideName: string | undefined;
+        let original: 'present' | 'removed' | 'unknown' = 'present';
+
+        if (wasRunning) {
+            try {
+                await this.stopContainer(
+                    currentContainer,
+                    originalName,
+                    container.id,
+                    logContainer,
+                );
+            } catch (stopError: any) {
+                throw new SwapFailedError(stopError.message, 'unchanged');
+            }
         }
 
-        if (currentContainerSpec.HostConfig?.AutoRemove !== true) {
-            // Remove current container
-            await this.removeContainer(
-                currentContainer,
-                container.name,
-                container.id,
-                logContainer,
-            );
+        if (autoRemove) {
+            try {
+                await this.waitContainerRemoved(
+                    currentContainer,
+                    originalName,
+                    container.id,
+                    logContainer,
+                );
+                original = 'removed';
+            } catch (waitError: any) {
+                throw await this.buildSwapFailure(
+                    ctx,
+                    waitError,
+                    {
+                        asideName: undefined,
+                        newContainer: undefined,
+                        wasRunning,
+                        originalName,
+                        original: 'unknown',
+                    },
+                    logContainer,
+                );
+            }
         } else {
-            // This is a special case when the container is set to be removed automatically when it stops.
-            // In this case, we need to wait for the container to be removed before creating the new one.
-            await this.waitContainerRemoved(
-                currentContainer,
-                container.name,
-                container.id,
+            const candidate = this.buildAsideName(
+                originalName,
+                currentContainerSpec.Id,
+            );
+            try {
+                await this.renameContainer(
+                    currentContainer,
+                    originalName,
+                    candidate,
+                    container.id,
+                    logContainer,
+                );
+                asideName = candidate;
+            } catch {
+                try {
+                    await this.removeContainer(
+                        currentContainer,
+                        originalName,
+                        container.id,
+                        logContainer,
+                    );
+                    original = 'removed';
+                } catch (removeError: any) {
+                    throw await this.buildSwapFailure(
+                        ctx,
+                        removeError,
+                        {
+                            asideName,
+                            newContainer: undefined,
+                            wasRunning,
+                            originalName,
+                            original: 'unknown',
+                        },
+                        logContainer,
+                    );
+                }
+            }
+        }
+
+        let newContainer: Dockerode.Container | undefined;
+        try {
+            newContainer = await this.createContainerWithMultiNetworkFallback(
+                dockerApi,
+                containerToCreateInspect,
+                currentContainerSpec,
+                originalName,
+                logContainer,
+            );
+            if (wasRunning) {
+                await this.startContainer(
+                    newContainer,
+                    originalName,
+                    logContainer,
+                );
+            }
+        } catch (e: any) {
+            throw await this.buildSwapFailure(
+                ctx,
+                e,
+                {
+                    asideName,
+                    newContainer,
+                    wasRunning,
+                    originalName,
+                    original,
+                },
                 logContainer,
             );
         }
 
-        // Create new container
-        const newContainer = await this.createContainerWithMultiNetworkFallback(
-            dockerApi,
-            containerToCreateInspect,
-            currentContainerSpec,
-            container.name,
-            logContainer,
-        );
-
-        // Start container if it was running
-        if (state.Running) {
-            await this.startContainer(
-                newContainer,
-                container.name,
-                logContainer,
+        if (asideName) {
+            logContainer.info(
+                `Remove container ${asideName} with id ${currentContainer.id}`,
             );
+            try {
+                await currentContainer.remove({ force: true });
+            } catch (e: any) {
+                logContainer.warn(
+                    `Container ${asideName} could not be removed after a successful update (${e.message})`,
+                );
+            }
         }
 
         // Remove previous image (only when updateKind is tag)
@@ -734,7 +1016,13 @@ class Docker extends Trigger {
                 container.image,
                 tagOrDigestToRemove,
             );
-            await this.removeImage(dockerApi, oldImage, logContainer);
+            try {
+                await this.removeImage(dockerApi, oldImage, logContainer);
+            } catch (e: any) {
+                logContainer.warn(
+                    `Image ${oldImage} could not be removed after a successful update (${e.message})`,
+                );
+            }
         }
 
         return {
@@ -912,6 +1200,18 @@ class Docker extends Trigger {
                 NetworkMode: `container:${swap.newContainerId}`,
             };
 
+            const depAutoRemove = depSpec.HostConfig?.AutoRemove === true;
+            const failedReason = (
+                cause: string,
+                outcome: 'rolled_back' | 'left_stopped' | 'destroyed',
+            ) =>
+                outcome === 'rolled_back'
+                    ? `recreate failed, dependent rolled back: ${cause}`
+                    : outcome === 'left_stopped'
+                      ? `recreate failed; the dependent was restored but could not be started: ${cause}`
+                      : `recreate failed and the dependent could NOT be restored: ${cause}`;
+            let depAsideName: string | undefined;
+
             if (running) {
                 await this.stopContainer(
                     dependent,
@@ -920,37 +1220,112 @@ class Docker extends Trigger {
                     logContainer,
                 );
             }
-            if (depSpec.HostConfig?.AutoRemove !== true) {
-                await this.removeContainer(
-                    dependent,
-                    resolved.name,
-                    resolved.id,
-                    logContainer,
-                );
-            } else {
+            if (depAutoRemove) {
                 await this.waitContainerRemoved(
                     dependent,
                     resolved.name,
                     resolved.id,
                     logContainer,
                 );
+            } else {
+                const candidate = this.buildAsideName(
+                    resolved.name,
+                    resolved.id,
+                );
+                try {
+                    await this.renameContainer(
+                        dependent,
+                        resolved.name,
+                        candidate,
+                        resolved.id,
+                        logContainer,
+                    );
+                    depAsideName = candidate;
+                } catch {
+                    await this.removeContainer(
+                        dependent,
+                        resolved.name,
+                        resolved.id,
+                        logContainer,
+                    );
+                }
             }
 
-            const newDependent =
-                await this.createContainerWithMultiNetworkFallback(
-                    dockerApi,
-                    specToCreate,
-                    depSpec,
+            let newDependent: Dockerode.Container | undefined;
+            try {
+                newDependent =
+                    await this.createContainerWithMultiNetworkFallback(
+                        dockerApi,
+                        specToCreate,
+                        depSpec,
+                        resolved.name,
+                        logContainer,
+                    );
+                if (running) {
+                    await this.startContainer(
+                        newDependent,
+                        resolved.name,
+                        logContainer,
+                    );
+                }
+            } catch (e: any) {
+                if (!depAsideName) {
+                    logContainer.error(
+                        `Dependent container ${resolved.name} could NOT be restored after a failed recreate (${e.message})`,
+                    );
+                    return {
+                        ...outcome,
+                        status: 'failed',
+                        reason: failedReason(e.message, 'destroyed'),
+                    };
+                }
+                try {
+                    if (newDependent) {
+                        await newDependent.remove({ force: true });
+                    }
+                    await this.renameContainer(
+                        dependent,
+                        depAsideName,
+                        resolved.name,
+                        resolved.id,
+                        logContainer,
+                    );
+                } catch (rollbackError: any) {
+                    logContainer.error(
+                        `Dependent container ${resolved.name} could NOT be restored (${rollbackError.message})`,
+                    );
+                    return {
+                        ...outcome,
+                        status: 'failed',
+                        reason: failedReason(e.message, 'destroyed'),
+                    };
+                }
+                const { disposition } = await this.restartRolledBack(
+                    dependent,
                     resolved.name,
+                    running,
                     logContainer,
                 );
-            if (running) {
-                await this.startContainer(
-                    newDependent,
-                    resolved.name,
-                    logContainer,
-                );
+                return {
+                    ...outcome,
+                    status: 'failed',
+                    reason: failedReason(e.message, disposition),
+                };
             }
+
+            if (depAsideName) {
+                logContainer.info(
+                    `Remove container ${depAsideName} with id ${dependent.id}`,
+                );
+                try {
+                    await dependent.remove({ force: true });
+                } catch (cleanupError: any) {
+                    logContainer.warn(
+                        `Container ${depAsideName} could not be removed after a successful dependent recreate (${cleanupError.message})`,
+                    );
+                }
+            }
+
             logContainer.warn(
                 `Dependent container ${resolved.name} was recreated with id ${newDependent.id} to re-attach to ${hostName}`,
             );
@@ -1179,6 +1554,9 @@ class Docker extends Trigger {
                 error,
                 ...(result.reason instanceof ContainerGoneError
                     ? { gone: true }
+                    : {}),
+                ...(result.reason instanceof SwapFailedError
+                    ? { disposition: result.reason.disposition }
                     : {}),
             };
         });

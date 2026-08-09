@@ -188,7 +188,18 @@ else
         --label 'wud.tag.include=^6\.0\.0$' \
         ghcr.io/stefanprodan/podinfo:5.0.0
 
-    echo "✅ Test containers started (23 containers)"
-    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_batch_|zz_bucket_|zz_compose_|zz_mirror_|zz_mv_|zz_postupdate_)"
+    # ATOMIC SWAP (issue #39): the victim's --volumes-from donor is removed straight after, so
+    # recreating the victim fails at create and the swap must roll it back.
+    echo "Starting atomic swap test containers ..."
+    $DOCKER_CMD run -d --name zz_atomic_donor -v /data ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD run -d --name zz_atomic_victim \
+        --volumes-from zz_atomic_donor \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.0\.0$' \
+        ghcr.io/stefanprodan/podinfo:5.0.0
+    $DOCKER_CMD rm -f zz_atomic_donor
+
+    echo "✅ Test containers started (25 containers)"
+    $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_atomic_|zz_batch_|zz_bucket_|zz_compose_|zz_mirror_|zz_mv_|zz_postupdate_)"
 fi
 

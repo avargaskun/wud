@@ -17,6 +17,8 @@ docker rm -f \
     lscr_radarr \
     trueforge_radarr \
     quay_prometheus \
+    zz_atomic_donor \
+    zz_atomic_victim \
     zz_batch_local_1 \
     zz_batch_local_2 \
     zz_bucket_batch_1 \
