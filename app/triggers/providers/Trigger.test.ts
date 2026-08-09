@@ -427,6 +427,12 @@ const isThresholdReachedTestCases = [
         change: 'unknown',
         kind: 'digest',
     },
+    {
+        result: false,
+        threshold: 'DIGEST',
+        change: 'major',
+        kind: 'tag',
+    },
 ];
 
 test.each(isThresholdReachedTestCases)(

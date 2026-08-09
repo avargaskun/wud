@@ -431,7 +431,7 @@ The digest is always compared against the digest currently published for the **t
 
 !> Opting in costs **two additional registry calls per watch cycle** for each container carrying the label (a `GET` then a `HEAD` on the image manifest). Keep an eye on the [Docker Hub quotas](https://docs.docker.com/docker-hub/download-rate-limit/) if you enable it widely.
 
-?> **Why a separate label rather than `wud.watch.digest`?** On a semver tagged container `wud.watch.digest` has always done nothing, so an unknown number of deployments already carry it. Honouring it would have switched digest watching on at upgrade time with no user action — and because a digest update is eligible at every threshold except the digest-only one and triggers are automatic by default, the first watch cycle could have stopped, removed and recreated those running containers unprompted. `wud.watch.digest` therefore stays inert on semver tags, and `wud.watch.digest.semver` makes the new behaviour strictly opt-in.
+?> **Why a separate label rather than `wud.watch.digest`?** On a semver tagged container `wud.watch.digest` has always done nothing, so an unknown number of deployments already carry it. Honouring it would have switched digest watching on at upgrade time with no user action — and because a digest update is eligible at every threshold and triggers are automatic by default, the first watch cycle could have stopped, removed and recreated those running containers unprompted. `wud.watch.digest` therefore stays inert on semver tags, and `wud.watch.digest.semver` makes the new behaviour strictly opt-in.
 
 ### Associate a link to the container version
 
