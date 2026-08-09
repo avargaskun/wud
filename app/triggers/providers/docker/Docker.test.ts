@@ -404,11 +404,50 @@ test('clone should clone an existing container spec', async () => {
         NetworkingConfig: {
             EndpointsConfig: {
                 test: {
-                    Aliases: ['9708fc7b44f2', 'test'],
+                    Aliases: ['test'],
                 },
             },
         },
     });
+});
+
+test('clone should sanitize read-only endpoint fields', async () => {
+    const clone = docker.cloneContainer(
+        {
+            Name: '/test',
+            Id: 'abcdef1234567890',
+            HostConfig: {},
+            Config: {},
+            NetworkSettings: {
+                Networks: {
+                    mynet: {
+                        NetworkID: 'net-id',
+                        EndpointID: 'endpoint-id',
+                        Gateway: '172.18.0.1',
+                        IPAddress: '172.18.0.5',
+                        IPPrefixLen: 16,
+                        GlobalIPv6Address: 'fe80::1',
+                        DNSNames: ['web'],
+                        IPAMConfig: { IPv4Address: '172.18.0.5' },
+                        Aliases: ['abcdef123456', 'web'],
+                        MacAddress: '02:42:ac:12:00:05',
+                    },
+                },
+            },
+        },
+        'test/test:2.0.0',
+    );
+    const endpoint = clone.NetworkingConfig.EndpointsConfig.mynet;
+    expect(endpoint.NetworkID).toBeUndefined();
+    expect(endpoint.EndpointID).toBeUndefined();
+    expect(endpoint.Gateway).toBeUndefined();
+    expect(endpoint.IPAddress).toBeUndefined();
+    expect(endpoint.IPPrefixLen).toBeUndefined();
+    expect(endpoint.GlobalIPv6Address).toBeUndefined();
+    expect(endpoint.DNSNames).toBeUndefined();
+    expect(endpoint.IPAMConfig).toEqual({ IPv4Address: '172.18.0.5' });
+    expect(endpoint.MacAddress).toEqual('02:42:ac:12:00:05');
+    expect(endpoint.Aliases).toEqual(['web']);
 });
 
 test('clone should remove hostname and exposed ports when network mode is container:*', async () => {
@@ -978,6 +1017,7 @@ test('trigger should fallback to primary then connect secondary networks', async
 });
 
 test('trigger should throw when fallback cannot connect a secondary network', async () => {
+    const removeNew = jest.fn().mockResolvedValue(undefined);
     const createContainer = jest
         .fn()
         .mockRejectedValueOnce(
@@ -988,6 +1028,7 @@ test('trigger should throw when fallback cannot connect a secondary network', as
         .mockResolvedValueOnce({
             id: 'created-id',
             start: () => Promise.resolve(),
+            remove: removeNew,
         });
     const getNetwork = jest.fn((networkName) => ({
         connect: () =>
@@ -1054,6 +1095,8 @@ test('trigger should throw when fallback cannot connect a secondary network', as
             },
         }),
     ).rejects.toThrow('connect failed');
+
+    expect(removeNew).toHaveBeenCalled();
 
     watcherSpy.mockRestore();
 });

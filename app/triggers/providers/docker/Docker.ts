@@ -480,6 +480,13 @@ class Docker extends Trigger {
                     logContainer.warn(
                         `connect-secondary:${networkName}: failed for ${containerName} (${connectError.message})`,
                     );
+                    try {
+                        await newContainer.remove({ force: true });
+                    } catch (cleanupError: any) {
+                        logContainer.warn(
+                            `connect-secondary:${networkName}: could not remove the partially created container ${containerName} (${cleanupError.message})`,
+                        );
+                    }
                     throw connectError;
                 }
             }
@@ -535,31 +542,30 @@ class Docker extends Trigger {
         newImage: string,
     ): Dockerode.ContainerCreateOptions {
         const containerName = currentContainer.Name.replace('/', '');
+        const endpointsConfig = currentContainer.NetworkSettings.Networks;
+        const sanitizedEndpoints: Record<string, Dockerode.EndpointSettings> =
+            {};
+        if (endpointsConfig) {
+            Object.entries(endpointsConfig).forEach(
+                ([networkName, endpoint]) => {
+                    sanitizedEndpoints[networkName] =
+                        this.sanitizeEndpointConfig(
+                            endpoint,
+                            currentContainer.Id,
+                        );
+                },
+            );
+        }
         const containerClone = {
             ...currentContainer.Config,
             name: containerName,
             Image: newImage,
             HostConfig: currentContainer.HostConfig,
             NetworkingConfig: {
-                EndpointsConfig: currentContainer.NetworkSettings.Networks,
+                EndpointsConfig: sanitizedEndpoints,
             },
         };
 
-        if (containerClone.NetworkingConfig.EndpointsConfig) {
-            Object.values(
-                containerClone.NetworkingConfig.EndpointsConfig,
-            ).forEach((endpointConfig) => {
-                if (
-                    endpointConfig.Aliases &&
-                    endpointConfig.Aliases.length > 0
-                ) {
-                    endpointConfig.Aliases = endpointConfig.Aliases.filter(
-                        (alias: string) =>
-                            !currentContainer.Id.startsWith(alias),
-                    );
-                }
-            });
-        }
         // Handle situation when container is using network_mode: service:other_service
         if (
             containerClone.HostConfig &&
