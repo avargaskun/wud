@@ -251,6 +251,59 @@ test('removeContainer should throw error when error occurs', async () => {
     ).rejects.toThrowError('No container');
 });
 
+test('renameContainer should rename container from dockerApi', async () => {
+    const rename = jest.fn().mockResolvedValue(undefined);
+    await expect(
+        docker.renameContainer({ rename }, 'name', 'x', 'id', log),
+    ).resolves.toBeUndefined();
+    expect(rename).toHaveBeenCalledWith({ name: 'x' });
+});
+
+test('renameContainer should warn and throw when error occurs', async () => {
+    const logger = { info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+    await expect(
+        docker.renameContainer(
+            {
+                rename: () => Promise.reject(new Error('No container')),
+            },
+            'name',
+            'x',
+            'id',
+            logger,
+        ),
+    ).rejects.toThrowError('No container');
+    expect(logger.warn).toHaveBeenCalled();
+});
+
+test('renameContainer should reject when the container has no rename method', async () => {
+    const logger = { info: jest.fn(), warn: jest.fn(), debug: jest.fn() };
+    await expect(
+        docker.renameContainer({}, 'name', 'x', 'id', logger),
+    ).rejects.toThrow();
+    expect(logger.warn).toHaveBeenCalled();
+});
+
+test('buildAsideName should suffix the container name with the container id', () => {
+    expect(docker.buildAsideName('container-name', '123456789')).toEqual(
+        'container-name_wud_old_123456789',
+    );
+});
+
+test('buildAsideName should truncate the container id to 12 characters', () => {
+    const id =
+        'a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2c3d4e5f6a1b2';
+    expect(id).toHaveLength(64);
+    expect(docker.buildAsideName('container-name', id)).toEqual(
+        'container-name_wud_old_a1b2c3d4e5f6',
+    );
+});
+
+test('buildAsideName should not produce a dependent id prefix', () => {
+    expect(docker.buildAsideName('container-name', 'abcdef123456')).not.toMatch(
+        /^[a-f0-9]{8,12}_/,
+    );
+});
+
 test('waitContainerRemoved should wait for the container to be removed from dockerApi', async () => {
     await expect(
         docker.waitContainerRemoved(

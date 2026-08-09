@@ -247,6 +247,37 @@ class Docker extends Trigger {
     }
 
     /**
+     * Rename a container.
+     */
+    async renameContainer(
+        container: Dockerode.Container,
+        containerName: string,
+        newName: string,
+        containerId: string,
+        logContainer: Logger,
+    ): Promise<void> {
+        logContainer.info(
+            `Rename container ${containerName} with id ${containerId} to ${newName}`,
+        );
+        try {
+            await container.rename({ name: newName });
+            logContainer.info(
+                `Container ${containerName} with id ${containerId} renamed to ${newName} with success`,
+            );
+        } catch (e: any) {
+            logContainer.warn(
+                `Error when renaming container ${containerName} with id ${containerId} to ${newName} (${e.message})`,
+            );
+            throw e;
+        }
+    }
+
+    /** Suffix, not prefix: resolveDependent strips a ^[a-f0-9]{8,12}_ prefix and would resolve a tombstone as live. */
+    buildAsideName(containerName: string, containerId: string): string {
+        return `${containerName}_wud_old_${containerId.slice(0, 12)}`;
+    }
+
+    /**
      * Wait for a container to be removed.
      */
     async waitContainerRemoved(

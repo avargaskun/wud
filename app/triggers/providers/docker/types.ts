@@ -26,9 +26,16 @@ export interface SwapOutcome {
     oldContainerId: string;
     error?: string;
     gone?: boolean;
+    disposition?: SwapDisposition;
 }
 
 export type DependentOutcomeStatus = 'bounced' | 'skipped' | 'failed';
+
+export type SwapDisposition =
+    | 'unchanged'
+    | 'rolled_back'
+    | 'left_stopped'
+    | 'destroyed';
 
 /**
  * Outcome of the post-update bounce of a single dependent container.
