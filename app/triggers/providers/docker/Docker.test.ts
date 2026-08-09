@@ -120,6 +120,10 @@ beforeEach(async () => {
     jest.resetAllMocks();
 });
 
+afterEach(() => {
+    jest.restoreAllMocks();
+});
+
 test('validateConfiguration should return validated configuration when valid', async () => {
     const validatedConfiguration =
         docker.validateConfiguration(configurationValid);
@@ -1214,6 +1218,95 @@ test('trigger should throw when fallback cannot connect a secondary network', as
     watcherSpy.mockRestore();
 });
 
+test('trigger should log an error with the orphan id when the fallback cleanup remove fails', async () => {
+    const logger = useLogger();
+    const removeNew = jest.fn().mockRejectedValue(new Error('remove failed'));
+    const createContainer = jest
+        .fn()
+        .mockRejectedValueOnce(
+            new Error(
+                'Container cannot be connected to network endpoints: cloud_default, postgres_default, valkey_default',
+            ),
+        )
+        .mockResolvedValueOnce({
+            id: 'created-id',
+            start: () => Promise.resolve(),
+            remove: removeNew,
+        });
+    const getNetwork = jest.fn((networkName) => ({
+        connect: () =>
+            networkName === 'valkey_default'
+                ? Promise.reject(new Error('connect failed'))
+                : Promise.resolve(),
+    }));
+    const dockerApi = {
+        createContainer,
+        getNetwork,
+        pull: () => Promise.resolve(),
+        modem: {
+            followProgress: (pullStream, res) => res(),
+        },
+        getContainer: () =>
+            Promise.resolve({
+                inspect: () =>
+                    Promise.resolve({
+                        Name: '/container-name',
+                        Id: '123456798',
+                        State: {
+                            Running: false,
+                        },
+                        HostConfig: {
+                            NetworkMode: 'postgres_default',
+                        },
+                        NetworkSettings: {
+                            Networks: {
+                                cloud_default: {
+                                    Aliases: ['cloud'],
+                                },
+                                postgres_default: {
+                                    Aliases: ['postgres'],
+                                },
+                                valkey_default: {
+                                    Aliases: ['valkey'],
+                                },
+                            },
+                        },
+                    }),
+                stop: () => Promise.resolve(),
+                remove: () => Promise.resolve(),
+                start: () => Promise.resolve(),
+            }),
+    };
+    const watcherSpy = jest.spyOn(docker, 'getWatcher').mockReturnValue({
+        dockerApi,
+    });
+
+    await expect(
+        docker.trigger({
+            watcher: 'test',
+            id: '123456789',
+            name: 'container-name',
+            image: {
+                name: 'test/test',
+                registry: {
+                    name: 'hub',
+                    url: 'my-registry',
+                },
+            },
+            updateKind: {
+                remoteValue: '4.5.6',
+            },
+        }),
+    ).rejects.toThrow('connect failed');
+
+    expect(removeNew).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalledWith(
+        expect.stringContaining('created-id'),
+    );
+
+    watcherSpy.mockRestore();
+});
+
 const buildLogger = () => {
     const logger = {
         info: jest.fn(),
@@ -1767,6 +1860,39 @@ test('bounceDependent should roll the dependent back when the recreate fails', a
     expect(rename.mock.calls[1][0]).toEqual({ name: 'dependent' });
     expect(startOriginal).toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
+});
+
+test('bounceDependent should report a restored but unstarted dependent when the restart fails', async () => {
+    const swap = buildSwap();
+    const logger = buildLogger();
+    const { dockerApi, order, startOriginal, createContainer } =
+        buildDependentApi(
+            buildDependentSpec({
+                HostConfig: {
+                    NetworkMode: `container:${swap.oldContainerId}`,
+                },
+            }),
+        );
+    createContainer.mockRejectedValue(new Error('create exploded'));
+    startOriginal.mockRejectedValue(new Error('start exploded'));
+
+    await expect(
+        docker.bounceDependent(
+            dockerApi,
+            { id: 'dep-id', name: 'dependent' },
+            swap,
+            'main-host',
+            logger,
+        ),
+    ).resolves.toEqual({
+        name: 'dependent',
+        host: 'main-host',
+        status: 'failed',
+        reason: 'recreate failed; the dependent was restored but could not be started: create exploded',
+    });
+    expect(order).toEqual(['stop', 'rename', 'rename']);
+    expect(startOriginal).toHaveBeenCalled();
+    expect(logger.error).toHaveBeenCalled();
 });
 
 test('bounceDependent should remove the replacement before renaming the aside back', async () => {
@@ -2430,10 +2556,6 @@ const useLogger = () => {
     jest.spyOn(docker.log, 'child').mockReturnValue(logger);
     return logger;
 };
-
-afterEach(() => {
-    jest.restoreAllMocks();
-});
 
 test('swapContainer should remove the replacement before renaming the aside back when the start fails', async () => {
     const logger = useLogger();

@@ -527,8 +527,8 @@ class Docker extends Trigger {
                     try {
                         await newContainer.remove({ force: true });
                     } catch (cleanupError: any) {
-                        logContainer.warn(
-                            `connect-secondary:${networkName}: could not remove the partially created container ${containerName} (${cleanupError.message})`,
+                        logContainer.error(
+                            `connect-secondary:${networkName}: could not remove the partially created container ${containerName} with id ${newContainer.id}; it still holds the name and will block recovery (${cleanupError.message})`,
                         );
                     }
                     throw connectError;
@@ -992,6 +992,9 @@ class Docker extends Trigger {
         }
 
         if (asideName) {
+            logContainer.info(
+                `Remove container ${asideName} with id ${currentContainer.id}`,
+            );
             try {
                 await currentContainer.remove({ force: true });
             } catch (e: any) {
@@ -1198,10 +1201,15 @@ class Docker extends Trigger {
             };
 
             const depAutoRemove = depSpec.HostConfig?.AutoRemove === true;
-            const failedReason = (cause: string, restored: boolean) =>
-                restored
+            const failedReason = (
+                cause: string,
+                outcome: 'rolled_back' | 'left_stopped' | 'destroyed',
+            ) =>
+                outcome === 'rolled_back'
                     ? `recreate failed, dependent rolled back: ${cause}`
-                    : `recreate failed and the dependent could NOT be restored: ${cause}`;
+                    : outcome === 'left_stopped'
+                      ? `recreate failed; the dependent was restored but could not be started: ${cause}`
+                      : `recreate failed and the dependent could NOT be restored: ${cause}`;
             let depAsideName: string | undefined;
 
             if (running) {
@@ -1268,7 +1276,7 @@ class Docker extends Trigger {
                     return {
                         ...outcome,
                         status: 'failed',
-                        reason: failedReason(e.message, false),
+                        reason: failedReason(e.message, 'destroyed'),
                     };
                 }
                 try {
@@ -1289,7 +1297,7 @@ class Docker extends Trigger {
                     return {
                         ...outcome,
                         status: 'failed',
-                        reason: failedReason(e.message, false),
+                        reason: failedReason(e.message, 'destroyed'),
                     };
                 }
                 const { disposition } = await this.restartRolledBack(
@@ -1301,14 +1309,14 @@ class Docker extends Trigger {
                 return {
                     ...outcome,
                     status: 'failed',
-                    reason: failedReason(
-                        e.message,
-                        disposition === 'rolled_back',
-                    ),
+                    reason: failedReason(e.message, disposition),
                 };
             }
 
             if (depAsideName) {
+                logContainer.info(
+                    `Remove container ${depAsideName} with id ${dependent.id}`,
+                );
                 try {
                     await dependent.remove({ force: true });
                 } catch (cleanupError: any) {
