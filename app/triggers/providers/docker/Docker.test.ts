@@ -603,15 +603,26 @@ test('pullContainer should reject when the image pull fails', async () => {
     ).rejects.toThrowError('Error when pulling image');
 });
 
-test('swapContainer should run stop, remove, create and start on the happy path', async () => {
-    const stop = jest.fn().mockResolvedValue(undefined);
-    const remove = jest.fn().mockResolvedValue(undefined);
+test('swapContainer should run stop, rename, create, start and remove the aside on the happy path', async () => {
+    const calls = [];
+    const stop = jest.fn(async () => {
+        calls.push('stop');
+    });
+    const rename = jest.fn(async () => {
+        calls.push('rename');
+    });
+    const remove = jest.fn(async () => {
+        calls.push('remove');
+    });
     const wait = jest.fn().mockResolvedValue(undefined);
-    const newStart = jest.fn().mockResolvedValue(undefined);
+    const newStart = jest.fn(async () => {
+        calls.push('start');
+    });
     const dockerApi = {
-        createContainer: jest
-            .fn()
-            .mockResolvedValue({ id: 'new-container-id', start: newStart }),
+        createContainer: jest.fn(async () => {
+            calls.push('create');
+            return { id: 'new-container-id', start: newStart };
+        }),
     };
     const ctx = {
         dockerApi,
@@ -619,7 +630,7 @@ test('swapContainer should run stop, remove, create and start on the happy path'
             getImageFullName: () => 'my-registry/test/test:1.2.3',
         },
         newImage: 'my-registry/test/test:4.5.6',
-        currentContainer: { stop, remove, wait },
+        currentContainer: { stop, rename, remove, wait },
         currentContainerSpec: {
             Name: '/container-name',
             Id: '123456789',
@@ -638,15 +649,17 @@ test('swapContainer should run stop, remove, create and start on the happy path'
         startedAfterSwap: true,
         oldContainerId: '123456789',
     });
-    expect(stop).toHaveBeenCalled();
-    expect(remove).toHaveBeenCalled();
+    expect(calls).toEqual(['stop', 'rename', 'create', 'start', 'remove']);
+    expect(rename).toHaveBeenCalledWith({
+        name: 'container-name_wud_old_123456789',
+    });
+    expect(remove).toHaveBeenCalledTimes(1);
     expect(wait).not.toHaveBeenCalled();
-    expect(dockerApi.createContainer).toHaveBeenCalled();
-    expect(newStart).toHaveBeenCalled();
 });
 
 test('swapContainer should wait for auto-removal when HostConfig.AutoRemove is true', async () => {
     const stop = jest.fn().mockResolvedValue(undefined);
+    const rename = jest.fn().mockResolvedValue(undefined);
     const remove = jest.fn().mockResolvedValue(undefined);
     const wait = jest.fn().mockResolvedValue(undefined);
     const newStart = jest.fn().mockResolvedValue(undefined);
@@ -659,7 +672,7 @@ test('swapContainer should wait for auto-removal when HostConfig.AutoRemove is t
             getImageFullName: () => 'my-registry/test/test:1.2.3',
         },
         newImage: 'my-registry/test/test:4.5.6',
-        currentContainer: { stop, remove, wait },
+        currentContainer: { stop, rename, remove, wait },
         currentContainerSpec: {
             Name: '/container-name',
             Id: '123456789',
@@ -679,6 +692,7 @@ test('swapContainer should wait for auto-removal when HostConfig.AutoRemove is t
     });
     expect(stop).toHaveBeenCalled();
     expect(wait).toHaveBeenCalled();
+    expect(rename).not.toHaveBeenCalled();
     expect(remove).not.toHaveBeenCalled();
     expect(newStart).toHaveBeenCalled();
 });
@@ -790,6 +804,7 @@ test('triggerBatch should swap only the containers whose pull returned a context
 
 test('swapContainer should skip stop and start when the container is not running', async () => {
     const stop = jest.fn().mockResolvedValue(undefined);
+    const rename = jest.fn().mockResolvedValue(undefined);
     const remove = jest.fn().mockResolvedValue(undefined);
     const newStart = jest.fn().mockResolvedValue(undefined);
     const dockerApi = {
@@ -799,7 +814,7 @@ test('swapContainer should skip stop and start when the container is not running
         dockerApi,
         registry: { getImageFullName: () => 'my-registry/test/test:1.2.3' },
         newImage: 'my-registry/test/test:4.5.6',
-        currentContainer: { stop, remove },
+        currentContainer: { stop, rename, remove },
         currentContainerSpec: {
             Name: '/container-name',
             Id: '123456789',
@@ -818,6 +833,7 @@ test('swapContainer should skip stop and start when the container is not running
         oldContainerId: '123456789',
     });
     expect(stop).not.toHaveBeenCalled();
+    expect(rename).toHaveBeenCalled();
     expect(remove).toHaveBeenCalled();
     expect(dockerApi.createContainer).toHaveBeenCalled();
     expect(newStart).not.toHaveBeenCalled();
@@ -840,6 +856,7 @@ test('swapContainer should remove the previous image when prune is enabled', asy
         newImage: 'my-registry/test/test:4.5.6',
         currentContainer: {
             stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
             remove: jest.fn().mockResolvedValue(undefined),
         },
         currentContainerSpec: {
@@ -867,6 +884,49 @@ test('swapContainer should remove the previous image when prune is enabled', asy
     );
     expect(removeImage).toHaveBeenCalled();
     docker.configuration = configurationValid;
+});
+
+test('swapContainer should roll the original back when the create fails', async () => {
+    const stop = jest.fn().mockResolvedValue(undefined);
+    const rename = jest.fn().mockResolvedValue(undefined);
+    const remove = jest.fn().mockResolvedValue(undefined);
+    const originalStart = jest.fn().mockResolvedValue(undefined);
+    const dockerApi = {
+        createContainer: jest
+            .fn()
+            .mockRejectedValue(new Error('create exploded')),
+    };
+    const ctx = {
+        dockerApi,
+        registry: { getImageFullName: () => 'my-registry/test/test:1.2.3' },
+        newImage: 'my-registry/test/test:4.5.6',
+        currentContainer: { stop, rename, remove, start: originalStart },
+        currentContainerSpec: {
+            Name: '/container-name',
+            Id: '123456789',
+            Config: { Image: 'my-registry/test/test:1.2.3' },
+            HostConfig: {},
+            NetworkSettings: { Networks: {} },
+            State: { Running: true },
+        },
+        state: { Running: true },
+    };
+    const error = await docker
+        .swapContainer({ name: 'container-name', id: '123456789' }, ctx)
+        .then(
+            () => undefined,
+            (e) => e,
+        );
+    expect(error).toBeDefined();
+    expect(error.message).toContain('rolled back');
+    expect(error.message).toContain('create exploded');
+    expect(error.disposition).toBe('rolled_back');
+    expect(rename).toHaveBeenNthCalledWith(1, {
+        name: 'container-name_wud_old_123456789',
+    });
+    expect(rename).toHaveBeenNthCalledWith(2, { name: 'container-name' });
+    expect(originalStart).toHaveBeenCalled();
+    expect(remove).not.toHaveBeenCalled();
 });
 
 test('getNewImageFullName should keep the current tag when updateKind is digest', () => {
