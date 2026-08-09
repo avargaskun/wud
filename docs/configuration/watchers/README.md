@@ -427,7 +427,7 @@ docker run -d --name radarr --label wud.watch.digest.semver=true radarr:5.2.1
 
 The digest is always compared against the digest currently published for the **tag the container is running** (`5.2.1` above), never against the digest of a newer candidate tag. A digest update therefore always means _"the image behind the tag I am running has been rebuilt"_, and it is reported independently of any newer tag that may also be available.
 
-!> The digest is reported through the `digest` entry of the container `updates` field, and a `digest` update is eligible at **every** trigger threshold.
+!> The digest is reported through the `digest` entry of the container `updates` field. A `digest` update is eligible at **every** trigger threshold, and it is the **only** kind eligible at the `digest` threshold (see the [Triggers](/configuration/triggers/) documentation).
 
 !> Opting in costs **two additional registry calls per watch cycle** for each container carrying the label (a `GET` then a `HEAD` on the image manifest). Keep an eye on the [Docker Hub quotas](https://docs.docker.com/docker-hub/download-rate-limit/) if you enable it widely.
 
@@ -585,3 +585,5 @@ docker run -d --name my_important_service --label 'wud.trigger.include=smtp.gmai
 ?> Threshold `minor` means that the trigger will run only if this is a `minor` or `patch` semver change
 
 ?> Threshold `patch` means that the trigger will run only if this is a `patch` semver change
+
+?> Threshold `digest` (e.g. `wud.trigger.include=docker.update:digest`) means that the trigger will run only for a digest rebuild of the tag the container already runs — no tag change is ever installed, while `major`, `minor` and `patch` updates keep being detected and displayed

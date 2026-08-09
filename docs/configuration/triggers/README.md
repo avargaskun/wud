@@ -25,7 +25,7 @@ All implemented triggers, in addition to their specific configuration, also supp
 | `WUD_TRIGGER_{trigger_type}_{trigger_name}_ONCE`        | :white_circle: | Run trigger once (do not repeat previous results)                                             | `true`, `false`                              | `true`                                                                                                                                                                                                                                                                         |
 | `WUD_TRIGGER_{trigger_type}_{trigger_name}_SIMPLEBODY`  | :white_circle: | The template to use to render the body of the notification                                    | JS string template with vars `container`     | `Container ${container.name} running with ${container.updateKind.kind} ${container.updateKind.localValue} can be updated to ${container.updateKind.kind} ${container.updateKind.remoteValue}${container.result && container.result.link ? "\\n" + container.result.link : ""}` |
 | `WUD_TRIGGER_{trigger_type}_{trigger_name}_SIMPLETITLE` | :white_circle: | The template to use to render the title of the notification (simple mode)                     | JS string template with vars `${containers}` | `New ${container.updateKind.kind} found for container ${container.name}`                                                                                                                                                                                                       |
-| `WUD_TRIGGER_{trigger_type}_{trigger_name}_THRESHOLD`   | :white_circle: | The threshold to reach to run the trigger                                                     | `all`, `major`, `major-only`, `minor`, `minor-only`, `patch`             | `all`                                                                                                                                                                                                                                                                          |
+| `WUD_TRIGGER_{trigger_type}_{trigger_name}_THRESHOLD`   | :white_circle: | The threshold to reach to run the trigger                                                     | `all`, `major`, `major-only`, `minor`, `minor-only`, `patch`, `digest`             | `all`                                                                                                                                                                                                                                                                          |
 
 ?> Threshold `all` means that the trigger will run regardless of the nature of the change
 
@@ -38,6 +38,8 @@ All implemented triggers, in addition to their specific configuration, also supp
 ?> Threshold `minor-only` means that the trigger will run only if this is a `minor` semver change
 
 ?> Threshold `patch` means that the trigger will run only if this is a `patch` semver change
+
+?> Threshold `digest` means that the trigger will run only for a digest rebuild of the tag the container already runs — no tag change is ever installed
 
 ?> `WUD_TRIGGER_{trigger_type}_{trigger_name}_ONCE=false` can be useful when `WUD_TRIGGER_{trigger_type}_{trigger_name}_MODE=batch` to get a report with all pending updates.
 
@@ -57,8 +59,13 @@ WUD detects **every** available update for a container, split by kind (`major`, 
 | `patch`                                       |    ✗    |    ✗    |    ✓    |    ✓     |
 | `major-only`                                  |    ✓    |    ✗    |    ✗    |    ✓     |
 | `minor-only`                                  |    ✗    |    ✓    |    ✗    |    ✓     |
+| `digest`                                      |    ✗    |    ✗    |    ✗    |    ✓     |
 
-?> A `digest` update is eligible at **every** threshold — this has always been the case, digest updates never went through the threshold check.
+?> A `digest` update is eligible at **every** threshold, including `digest` itself — the one threshold at which it is the **only** eligible kind. A `digest` threshold installs digest rebuilds and nothing else, while `major`, `minor` and `patch` updates keep being detected and displayed.
+
+!> **`digest-only` is not a valid threshold.** Unlike `major-only` and `minor-only`, there is a single spelling — `digest` — and `wud.trigger.include=docker.update:digest-only` fails closed exactly like a typo: the trigger is not associated with the container and only a `warn` log is emitted.
+
+?> On a **semver** tagged container the `digest` bucket only exists when the container carries `wud.watch.digest.semver=true` (see the [Watchers](/configuration/watchers/) documentation). Without that label a `digest` threshold selects nothing and the trigger is a silent no-op.
 
 ?> A `prerelease` update counts as a `patch` update.
 

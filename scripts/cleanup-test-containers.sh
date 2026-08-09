@@ -23,6 +23,7 @@ docker rm -f \
     zz_bucket_batch_2 \
     zz_bucket_single \
     zz_compose_unresolvable \
+    zz_digest_threshold \
     zz_mirror_app \
     zz_mv_buckets \
     zz_mv_semver_digest \

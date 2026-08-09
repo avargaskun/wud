@@ -99,14 +99,15 @@ class Trigger extends Component {
      */
     static isThresholdReached(containerResult: Container, threshold: string) {
         let thresholdPassing = true;
+        const t = threshold.toLowerCase();
         if (
-            threshold.toLowerCase() !== 'all' &&
+            t !== 'all' &&
             containerResult.updateKind &&
             containerResult.updateKind.kind === 'tag' &&
             containerResult.updateKind.semverDiff &&
             containerResult.updateKind.semverDiff !== 'unknown'
         ) {
-            switch (threshold) {
+            switch (t) {
                 case 'major-only':
                     thresholdPassing =
                         containerResult.updateKind.semverDiff == 'major';
@@ -124,6 +125,9 @@ class Trigger extends Component {
                         containerResult.updateKind.semverDiff !== 'major' &&
                         containerResult.updateKind.semverDiff !== 'minor';
                     break;
+                case 'digest':
+                    thresholdPassing = false;
+                    break;
                 default:
                     thresholdPassing = true;
             }
@@ -134,13 +138,12 @@ class Trigger extends Component {
     /**
      * Return the update buckets a threshold allows to be installed.
      * The threshold is a ceiling on eligible buckets, not a filter on the highest one.
-     * digest is eligible at every threshold, preserving today's behaviour where
-     * isThresholdReached only applies its switch when updateKind.kind === 'tag'.
+     * digest is eligible at every threshold, and it is the only eligible bucket at 'digest'.
      * @param threshold
      * @returns {UpdateBucketKey[]}
      */
     static getEligibleBuckets(threshold: string): UpdateBucketKey[] {
-        switch (threshold) {
+        switch (threshold.toLowerCase()) {
             case 'minor':
                 return ['minor', 'patch', 'digest'];
             case 'patch':
@@ -149,6 +152,8 @@ class Trigger extends Component {
                 return ['major', 'digest'];
             case 'minor-only':
                 return ['minor', 'digest'];
+            case 'digest':
+                return ['digest'];
             case 'all':
             case 'major':
             default:
@@ -204,7 +209,13 @@ class Trigger extends Component {
             container.updateAvailable &&
             Trigger.isThresholdReached(container, threshold)
         ) {
-            return Trigger.legacyUpdate(container);
+            const legacy = Trigger.legacyUpdate(container);
+            // isThresholdReached cannot judge a tag update whose semverDiff is unknown or absent
+            if (
+                legacy.kind === 'digest' ||
+                eligible.some((b) => b !== 'digest')
+            )
+                return legacy;
         }
         return undefined;
     }
@@ -287,6 +298,7 @@ class Trigger extends Component {
                 case 'major':
                 case 'minor':
                 case 'patch':
+                case 'digest':
                 case 'all':
                     includeOrExcludeTrigger.threshold = thresholdNormalized;
                     break;
@@ -566,6 +578,7 @@ class Trigger extends Component {
                     'patch',
                     'major-only',
                     'minor-only',
+                    'digest',
                 )
                 .default('all'),
             mode: this.joi

@@ -42,6 +42,33 @@ test('validateConfiguration should return validated configuration when valid', a
     expect(validatedConfiguration).toStrictEqual(configurationValid);
 });
 
+test('validateConfiguration should accept the digest threshold', () => {
+    expect(
+        trigger.validateConfiguration({
+            ...configurationValid,
+            threshold: 'digest',
+        }).threshold,
+    ).toEqual('digest');
+});
+
+test('validateConfiguration should normalise an upper-case digest threshold', () => {
+    expect(
+        trigger.validateConfiguration({
+            ...configurationValid,
+            threshold: 'DIGEST',
+        }).threshold,
+    ).toEqual('digest');
+});
+
+test('validateConfiguration should reject the digest-only threshold', () => {
+    expect(() =>
+        trigger.validateConfiguration({
+            ...configurationValid,
+            threshold: 'digest-only',
+        }),
+    ).toThrowError(ValidationError);
+});
+
 test('validateConfiguration should throw error when invalid', async () => {
     const configuration = {
         url: 'git://xxx.com',
@@ -375,6 +402,36 @@ const isThresholdReachedTestCases = [
         threshold: 'patch',
         change: 'unknown',
         kind: 'digest',
+    },
+    {
+        result: false,
+        threshold: 'digest',
+        change: 'major',
+        kind: 'tag',
+    },
+    {
+        result: false,
+        threshold: 'digest',
+        change: 'minor',
+        kind: 'tag',
+    },
+    {
+        result: false,
+        threshold: 'digest',
+        change: 'patch',
+        kind: 'tag',
+    },
+    {
+        result: true,
+        threshold: 'digest',
+        change: 'unknown',
+        kind: 'digest',
+    },
+    {
+        result: false,
+        threshold: 'DIGEST',
+        change: 'major',
+        kind: 'tag',
     },
 ];
 
@@ -948,6 +1005,8 @@ describe('bucket selection', () => {
         { threshold: 'major-only', buckets: ['major', 'digest'] },
         { threshold: 'minor-only', buckets: ['minor', 'digest'] },
         { threshold: 'pacth', buckets: ['major', 'minor', 'patch', 'digest'] },
+        { threshold: 'digest', buckets: ['digest'] },
+        { threshold: 'DIGEST', buckets: ['digest'] },
     ];
 
     test.each(getEligibleBucketsTestCases)(
@@ -1015,6 +1074,102 @@ describe('bucket selection', () => {
         expect(Trigger.selectUpdate(container, 'patch')).toStrictEqual(
             patchBucket,
         );
+    });
+
+    test('selectUpdate should select the digest bucket at threshold digest even when every tag bucket is populated', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: minorBucket,
+            patch: patchBucket,
+            digest: digestBucket,
+        });
+        expect(Trigger.selectUpdate(container, 'digest')).toStrictEqual(
+            digestBucket,
+        );
+    });
+
+    test('selectUpdate should return undefined at threshold digest when no digest bucket exists', () => {
+        const container = containerWithBuckets({
+            major: majorBucket,
+            minor: minorBucket,
+            patch: patchBucket,
+        });
+        expect(Trigger.selectUpdate(container, 'digest')).toBeUndefined();
+    });
+
+    test('selectUpdate should refuse a legacy tag update at threshold digest when the semver diff is known', () => {
+        const container = containerWithBuckets(undefined, {
+            updateKind: {
+                kind: 'tag',
+                localValue: '1.2.3',
+                remoteValue: '2.0.0',
+                semverDiff: 'major',
+            },
+        });
+        expect(Trigger.selectUpdate(container, 'digest')).toBeUndefined();
+    });
+
+    test('selectUpdate should refuse a legacy tag update at threshold digest when the semver diff is unknown', () => {
+        const container = containerWithBuckets(undefined, {
+            result: {
+                tag: '1.2-rc.2',
+                created: '2021-03-01T00:00:00.000Z',
+                link: 'https://link/1.2-rc.2',
+            },
+            updateKind: {
+                kind: 'tag',
+                localValue: '1.2-rc.1',
+                remoteValue: '1.2-rc.2',
+                semverDiff: 'unknown',
+            },
+        });
+        expect(Trigger.selectUpdate(container, 'digest')).toBeUndefined();
+    });
+
+    test('selectUpdate should still return a legacy digest update at threshold digest', () => {
+        const container = containerWithBuckets(undefined, {
+            result: {
+                digest: 'sha256:remote',
+                created: '2021-04-01T00:00:00.000Z',
+            },
+            updateKind: {
+                kind: 'digest',
+                localValue: 'sha256:local',
+                remoteValue: 'sha256:remote',
+            },
+        });
+        expect(Trigger.selectUpdate(container, 'digest')).toStrictEqual({
+            kind: 'digest',
+            localValue: 'sha256:local',
+            remoteValue: 'sha256:remote',
+            semverDiff: undefined,
+            created: '2021-04-01T00:00:00.000Z',
+            link: undefined,
+        });
+    });
+
+    test('selectUpdate should still return a legacy tag update at threshold patch when the semver diff fits', () => {
+        const container = containerWithBuckets(undefined, {
+            result: {
+                tag: '1.2.9',
+                created: '2021-01-10T00:00:00.000Z',
+                link: 'https://link/1.2.9',
+            },
+            updateKind: {
+                kind: 'tag',
+                localValue: '1.2.3',
+                remoteValue: '1.2.9',
+                semverDiff: 'patch',
+            },
+        });
+        expect(Trigger.selectUpdate(container, 'patch')).toStrictEqual({
+            kind: 'tag',
+            localValue: '1.2.3',
+            remoteValue: '1.2.9',
+            semverDiff: 'patch',
+            created: '2021-01-10T00:00:00.000Z',
+            link: 'https://link/1.2.9',
+        });
     });
 
     test.each(['all', 'major', 'minor', 'patch', 'major-only', 'minor-only'])(
@@ -1197,6 +1352,13 @@ describe('handler bucket wiring', () => {
         created: '2021-01-10T00:00:00.000Z',
         link: 'https://link/1.2.9',
     };
+    const digestBucket = {
+        kind: 'digest',
+        localValue: 'sha256:local',
+        remoteValue: 'sha256:remote',
+        created: '2021-01-20T00:00:00.000Z',
+        link: 'https://link/1.2.3',
+    };
 
     const containerWithBuckets = (updates, extra = {}) => ({
         id: 'container-123',
@@ -1265,6 +1427,40 @@ describe('handler bucket wiring', () => {
             }),
         });
         expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('handleContainerReport should not call trigger at threshold digest when only a major update exists', async () => {
+        trigger.configuration.threshold = 'digest';
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: true,
+            container: containerWithBuckets({
+                major: majorBucket,
+                minor: null,
+                patch: null,
+            }),
+        });
+        expect(spy).not.toHaveBeenCalled();
+    });
+
+    test('handleContainerReport should install the digest update at threshold digest when a major update also exists', async () => {
+        trigger.configuration.threshold = 'digest';
+        const spy = jest.spyOn(trigger, 'trigger');
+        await trigger.handleContainerReport({
+            changed: true,
+            container: containerWithBuckets({
+                major: majorBucket,
+                minor: null,
+                patch: null,
+                digest: digestBucket,
+            }),
+        });
+        expect(spy).toHaveBeenCalledTimes(1);
+        const view = spy.mock.calls[0][0];
+        expect(view.updateKind.kind).toEqual('digest');
+        expect(view.selectedUpdate).toStrictEqual(digestBucket);
+        expect(view.result.tag).toEqual('1.2.3');
+        expect(view.result.digest).toEqual('sha256:remote');
     });
 
     test('handleContainerReport at threshold all must pass a view identical to the container result and update kind', async () => {
@@ -1364,6 +1560,36 @@ describe('handler bucket wiring', () => {
         expect(eligible.updateKind.remoteValue).toEqual('2.0.0');
         expect('selectedUpdate' in eligible).toBe(false);
     });
+
+    test('handleContainerReports should drop containers with no digest bucket at threshold digest', async () => {
+        trigger.configuration.mode = 'batch';
+        trigger.configuration.threshold = 'digest';
+        const eligible = containerWithBuckets(
+            {
+                major: majorBucket,
+                minor: null,
+                patch: null,
+                digest: digestBucket,
+            },
+            { name: 'containerA' },
+        );
+        const notEligible = containerWithBuckets(
+            { major: majorBucket, minor: null, patch: null },
+            { name: 'containerB' },
+        );
+        const spy = jest.spyOn(trigger, 'triggerBatch');
+        await trigger.handleContainerReports([
+            { changed: true, container: eligible },
+            { changed: true, container: notEligible },
+        ]);
+        expect(spy).toHaveBeenCalledTimes(1);
+        const batch = spy.mock.calls[0][0];
+        expect(batch).toHaveLength(1);
+        expect(batch[0].name).toEqual('containerA');
+        expect(batch[0].selectedUpdate).toStrictEqual(digestBucket);
+        expect(batch[0].updateKind.kind).toEqual('digest');
+        expect(batch[0].result.tag).toEqual('1.2.3');
+    });
 });
 
 const isThresholdReachedOnlyTestCases = [
@@ -1414,7 +1640,15 @@ describe('threshold label validation', () => {
         expect(parsed.threshold).toEqual('all');
     });
 
-    test.each(['all', 'major', 'minor', 'patch', 'major-only', 'minor-only'])(
+    test.each([
+        'all',
+        'major',
+        'minor',
+        'patch',
+        'major-only',
+        'minor-only',
+        'digest',
+    ])(
         'parseIncludeOrIncludeTriggerString should accept the %s threshold token',
         (token) => {
             const parsed = Trigger.parseIncludeOrIncludeTriggerString(
@@ -1433,6 +1667,7 @@ describe('threshold label validation', () => {
         ['PATCH', 'patch'],
         ['Major-Only', 'major-only'],
         ['ALL', 'all'],
+        ['DIGEST', 'digest'],
     ])(
         'parseIncludeOrIncludeTriggerString should accept the %s threshold token case-insensitively',
         (token, expected) => {
@@ -1448,6 +1683,16 @@ describe('threshold label validation', () => {
             expect(parsed.thresholdToken).toEqual(token);
         },
     );
+
+    test('parseIncludeOrIncludeTriggerString should reject the digest-only threshold token', () => {
+        const parsed = Trigger.parseIncludeOrIncludeTriggerString(
+            'docker.update:digest-only',
+        );
+        expect(parsed.thresholdPresent).toBe(true);
+        expect(parsed.thresholdInvalid).toBe(true);
+        expect(parsed.thresholdToken).toEqual('digest-only');
+        expect(parsed.threshold).toEqual('all');
+    });
 
     test.each([
         ['docker.t1:', ''],
