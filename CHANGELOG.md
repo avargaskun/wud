@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.2.1](https://github.com/avargaskun/wud/compare/v9.2.0...v9.2.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* never leave a container destroyed when an update fails (fixes [#39](https://github.com/avargaskun/wud/issues/39)) ([87bf17e](https://github.com/avargaskun/wud/commit/87bf17e40034584c92471ed514fb4c3f81455a99))
+
 ## [9.2.0](https://github.com/avargaskun/wud/compare/v9.1.0...v9.2.0) (2026-08-09)
 
 
