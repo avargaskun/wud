@@ -138,7 +138,7 @@ class Trigger extends Component {
     /**
      * Return the update buckets a threshold allows to be installed.
      * The threshold is a ceiling on eligible buckets, not a filter on the highest one.
-     * digest is eligible at every threshold except 'digest', which is digest-only.
+     * digest is eligible at every threshold, and it is the only eligible bucket at 'digest'.
      * @param threshold
      * @returns {UpdateBucketKey[]}
      */
