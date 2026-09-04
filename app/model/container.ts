@@ -62,6 +62,11 @@ export type ContainerUpdates = Partial<
     Record<UpdateBucketKey, ContainerUpdate | null>
 >;
 
+export interface ContainerCeiling {
+    tag?: string; // present in dynamic mode only
+    version: string; // the effective ceiling
+}
+
 export interface Container {
     id: string;
     name: string;
@@ -85,6 +90,7 @@ export interface Container {
     updateAvailable: boolean;
     updateKind: ContainerUpdateKind;
     updates?: ContainerUpdates; // persisted
+    ceiling?: ContainerCeiling; // persisted; resolved each watch cycle
     selectedUpdate?: ContainerUpdate; // transient; only present on a trigger view
     labels?: Record<string, string>;
     resultChanged?: (otherContainer: Container | undefined) => boolean;
@@ -176,6 +182,10 @@ const schema = joi.object({
         minor: updateSchema.allow(null),
         patch: updateSchema.allow(null),
         digest: updateSchema.allow(null),
+    }),
+    ceiling: joi.object({
+        tag: joi.string(),
+        version: joi.string().required(),
     }),
     selectedUpdate: updateSchema,
     resultChanged: joi.function(),
