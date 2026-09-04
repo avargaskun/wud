@@ -588,6 +588,65 @@ describe('getImageVersionLabel', () => {
             'url/image/manifests/digest_v8',
         );
     });
+
+    test('should keep the first matching manifest when no variant matches', async () => {
+        const registryMocked = buildRegistry((options) => {
+            if (options.url === 'url/image/manifests/stable') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.index.v1+json',
+                    manifests: [
+                        {
+                            platform: {
+                                architecture: 'amd64',
+                                os: 'linux',
+                                variant: 'v7',
+                            },
+                            digest: 'digest_v7',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                        {
+                            platform: {
+                                architecture: 'amd64',
+                                os: 'linux',
+                                variant: 'v8',
+                            },
+                            digest: 'digest_v8',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                    ],
+                };
+            }
+            if (options.url === 'url/image/manifests/digest_v7') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                    config: {
+                        digest: 'sha256:config_v7',
+                        mediaType: 'application/vnd.oci.image.config.v1+json',
+                    },
+                };
+            }
+            if (options.url === 'url/image/blobs/sha256:config_v7') {
+                return {
+                    config: {
+                        Labels: {
+                            'org.opencontainers.image.version': '2.37.9',
+                        },
+                    },
+                };
+            }
+            throw new Error('Boom!');
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).resolves.toEqual('2.37.9');
+        expect(urlsOf(registryMocked)[1]).toEqual(
+            'url/image/manifests/digest_v7',
+        );
+    });
 });
 
 describe('shouldWatchDigest', () => {
