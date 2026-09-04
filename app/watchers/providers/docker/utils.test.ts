@@ -217,6 +217,103 @@ describe('Docker Watcher Utils', () => {
                 expect(updates.patch.remoteValue).toEqual(candidates[0]);
             });
         });
+
+        describe('ceiling filter', () => {
+            const actualTag = jest.requireActual('../../../tag');
+
+            const ceilingContainer = {
+                image: {
+                    tag: { value: '2.36.0', semver: true },
+                },
+                transformTags: undefined,
+            };
+
+            beforeEach(() => {
+                tag.parse.mockImplementation(actualTag.parse);
+                tag.isGreater.mockImplementation(actualTag.isGreater);
+                tag.transform.mockImplementation(actualTag.transform);
+                tag.compare.mockImplementation(actualTag.compare);
+                tag.isAtOrBelowCeiling.mockImplementation(
+                    actualTag.isAtOrBelowCeiling,
+                );
+            });
+
+            test('should drop the candidates above the ceiling', () => {
+                const tags = ['2.38.3', '2.37.9', '2.36.0', '2.36.1'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        '2.37.9',
+                    ),
+                ).toEqual(['2.37.9', '2.36.1', '2.36.0']);
+            });
+
+            test('should support a partial ceiling', () => {
+                const tags = ['3.0.0', '2.38.3', '2.37.9', '2.36.0'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        '2',
+                    ),
+                ).toEqual(['2.38.3', '2.37.9', '2.36.0']);
+            });
+
+            test('should not change the candidates when no ceiling is given', () => {
+                const tags = ['3.0.0', '2.38.3', '2.37.9', '2.36.0', '2.36.1'];
+                const expected = [
+                    '3.0.0',
+                    '2.38.3',
+                    '2.37.9',
+                    '2.36.1',
+                    '2.36.0',
+                ];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        [...tags],
+                        mockLogContainer,
+                    ),
+                ).toEqual(expected);
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        [...tags],
+                        mockLogContainer,
+                        undefined,
+                    ),
+                ).toEqual(expected);
+            });
+
+            test('should run after the greater-than and numeric segment filters', () => {
+                // '2.37' is below the ceiling but has 2 numeric segments;
+                // '2.35.0' is below the ceiling but below the running tag
+                const tags = ['2.37', '2.35.0', '2.36.1'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        '2.37.9',
+                    ),
+                ).toEqual(['2.36.1']);
+            });
+
+            test('should drop every candidate when the ceiling is invalid', () => {
+                const tags = ['2.38.3', '2.37.9', '2.36.1'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        'stable',
+                    ),
+                ).toEqual([]);
+            });
+        });
     });
 
     describe('update buckets', () => {

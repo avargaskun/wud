@@ -5,6 +5,7 @@ import {
     transform as transformTag,
     diff as diffSemver,
     compare as compareSemver,
+    isAtOrBelowCeiling,
 } from '../../../tag';
 import log from '../../../log';
 import { wudWatchDigest, wudWatchDigestSemver } from './label';
@@ -52,6 +53,7 @@ export function getTagCandidates(
     container: Container,
     tags: string[],
     logContainer: any,
+    ceilingVersion?: string,
 ): string[] {
     let filteredTags = tags;
 
@@ -149,6 +151,19 @@ export function getTagCandidates(
                 ),
             ),
         );
+
+        if (ceilingVersion) {
+            const beforeCeiling = filteredTags.length;
+            filteredTags = filteredTags.filter((tag) =>
+                isAtOrBelowCeiling(
+                    transformTag(container.transformTags, tag),
+                    ceilingVersion,
+                ),
+            );
+            logContainer.debug(
+                `Ceiling ${ceilingVersion} filtered ${beforeCeiling - filteredTags.length} candidate(s)`,
+            );
+        }
 
         // Apply semver sort desc
         filteredTags.sort((t1, t2) => {
