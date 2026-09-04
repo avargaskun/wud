@@ -41,8 +41,16 @@ export interface RegistryManifestResponse {
     }[];
 }
 
+export interface RegistryImageConfigBlob {
+    config?: {
+        Labels?: Record<string, string>;
+    };
+}
+
 const MANIFEST_ACCEPT_HEADER =
     'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json';
+
+const OCI_VERSION_LABEL = 'org.opencontainers.image.version';
 
 /**
  * Docker Registry Abstract class.
@@ -313,6 +321,63 @@ export class Registry extends Component {
         }
         // Empty result...
         throw new Error('Unexpected error; no manifest found');
+    }
+
+    /**
+     * Resolve the org.opencontainers.image.version label of a remote tag.
+     * Returns undefined when the image publishes no such label.
+     */
+    async getImageVersionLabel(
+        image: ContainerImage,
+        tag: string,
+    ): Promise<string | undefined> {
+        this.log.debug(
+            `${this.getId()} - Get ${image.name}:${tag} version label`,
+        );
+        const responseManifests =
+            await this.callRegistry<RegistryManifestResponse>({
+                image,
+                url: `${image.registry.url}/${image.name}/manifests/${tag}`,
+                headers: { Accept: MANIFEST_ACCEPT_HEADER },
+            });
+        // schemaVersion 1 manifests carry no OCI labels
+        if (!responseManifests || responseManifests.schemaVersion !== 2) {
+            return undefined;
+        }
+
+        let configDigest = responseManifests.config?.digest;
+        const isIndex =
+            responseManifests.mediaType ===
+                'application/vnd.docker.distribution.manifest.list.v2+json' ||
+            responseManifests.mediaType ===
+                'application/vnd.oci.image.index.v1+json' ||
+            Array.isArray(responseManifests.manifests);
+        if (isIndex) {
+            const selectedManifest = this.selectPlatformManifest(
+                responseManifests,
+                image,
+            );
+            if (!selectedManifest) {
+                return undefined;
+            }
+            const childManifest =
+                await this.callRegistry<RegistryManifestResponse>({
+                    image,
+                    url: `${image.registry.url}/${image.name}/manifests/${selectedManifest.digest}`,
+                    headers: { Accept: selectedManifest.mediaType },
+                });
+            configDigest = childManifest?.config?.digest;
+        }
+        if (!configDigest) {
+            return undefined;
+        }
+
+        const configBlob = await this.callRegistry<RegistryImageConfigBlob>({
+            image,
+            url: `${image.registry.url}/${image.name}/blobs/${configDigest}`,
+            headers: { Accept: 'application/json' },
+        });
+        return configBlob?.config?.Labels?.[OCI_VERSION_LABEL];
     }
 
     async callRegistry<T = any>(options: {
