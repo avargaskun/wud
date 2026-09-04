@@ -6,9 +6,17 @@ import {
     diff as diffSemver,
     compare as compareSemver,
     isAtOrBelowCeiling,
+    isValidCeiling,
+    normalizeCeiling,
 } from '../../../tag';
 import log from '../../../log';
-import { wudWatchDigest, wudWatchDigestSemver } from './label';
+import {
+    wudTagCeiling,
+    wudTagCeilingVersion,
+    wudWatchDigest,
+    wudWatchDigestSemver,
+} from './label';
+import type { Registry } from '../../../registries/Registry';
 import {
     validate as validateContainer,
     fullName,
@@ -17,6 +25,7 @@ import {
 import * as registry from '../../../registry';
 import {
     Container,
+    ContainerCeiling,
     ContainerResult,
     ContainerUpdate,
     ContainerUpdates,
@@ -437,6 +446,77 @@ export function isContainerToWatch(
     return wudWatchLabelValue !== undefined && wudWatchLabelValue !== ''
         ? wudWatchLabelValue.toLowerCase() === 'true'
         : watchByDefault;
+}
+
+export interface CeilingResolution {
+    ceiling?: ContainerCeiling;
+    error?: string;
+}
+
+/**
+ * Resolve the version ceiling declared by the container labels.
+ * @param container
+ * @param registryProvider
+ * @param logContainer
+ */
+export async function resolveCeiling(
+    container: Container,
+    registryProvider: Registry,
+    logContainer: any,
+): Promise<CeilingResolution> {
+    const ceilingTag = container.labels?.[wudTagCeiling];
+    const ceilingVersion = container.labels?.[wudTagCeilingVersion];
+
+    if (!ceilingTag && !ceilingVersion) {
+        return {};
+    }
+    if (ceilingTag && ceilingVersion) {
+        return fail(
+            'Ceiling misconfigured: both wud.tag.ceiling and wud.tag.ceiling.version are set; use only one',
+        );
+    }
+    if (ceilingVersion) {
+        if (!isValidCeiling(ceilingVersion)) {
+            return fail(
+                `Invalid wud.tag.ceiling.version [${ceilingVersion}]; expected a full or partial semver (e.g. 2, 2.1, 2.1.3)`,
+            );
+        }
+        const version = normalizeCeiling(ceilingVersion);
+        logContainer.info(`Ceiling set to ${version}`);
+        return { ceiling: { version } };
+    }
+
+    let versionLabel: string | undefined;
+    try {
+        versionLabel = await registryProvider.getImageVersionLabel(
+            container.image,
+            ceilingTag,
+        );
+    } catch (e) {
+        return fail(
+            `Could not resolve ceiling tag [${ceilingTag}]: ${e.message}`,
+        );
+    }
+    if (!versionLabel) {
+        return fail(
+            `Could not resolve ceiling tag [${ceilingTag}]: image has no org.opencontainers.image.version label`,
+        );
+    }
+    if (!isValidCeiling(versionLabel)) {
+        return fail(
+            `Could not resolve ceiling tag [${ceilingTag}]: value [${versionLabel}] is not a valid semver`,
+        );
+    }
+    const version = normalizeCeiling(versionLabel);
+    logContainer.info(
+        `Ceiling resolved to ${version} (from tag ${ceilingTag})`,
+    );
+    return { ceiling: { tag: ceilingTag, version } };
+
+    function fail(message: string): CeilingResolution {
+        logContainer.warn(message);
+        return { error: message };
+    }
 }
 
 export interface FindNewVersionResult {

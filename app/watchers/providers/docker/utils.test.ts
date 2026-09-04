@@ -24,6 +24,7 @@ describe('Docker Watcher Utils', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockLogContainer = {
+            info: jest.fn(),
             warn: jest.fn(),
             error: jest.fn(),
             debug: jest.fn(),
@@ -767,6 +768,141 @@ describe('Docker Watcher Utils', () => {
             expect(mockRegistryProvider.shouldWatchDigest).toHaveBeenCalledWith(
                 undefined,
                 'library/nginx',
+            );
+        });
+    });
+
+    describe('resolveCeiling', () => {
+        const actualTag = jest.requireActual('../../../tag');
+
+        let mockProvider;
+
+        const containerWithLabels = (labels) => ({
+            image: { name: 'test/image' },
+            labels,
+        });
+
+        beforeEach(() => {
+            tag.isValidCeiling.mockImplementation(actualTag.isValidCeiling);
+            tag.normalizeCeiling.mockImplementation(actualTag.normalizeCeiling);
+            mockProvider = { getImageVersionLabel: jest.fn() };
+        });
+
+        test('should return an empty resolution when no ceiling label is set', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({}),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({});
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+        });
+
+        test('should fail when both ceiling labels are set', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({
+                    'wud.tag.ceiling': 'stable',
+                    'wud.tag.ceiling.version': '2.1',
+                }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Ceiling misconfigured: both wud.tag.ceiling and wud.tag.ceiling.version are set; use only one',
+            });
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+            expect(mockLogContainer.warn).toHaveBeenCalledWith(
+                resolution.error,
+            );
+        });
+
+        test('should fail when the static ceiling version is not a semver', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling.version': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Invalid wud.tag.ceiling.version [stable]; expected a full or partial semver (e.g. 2, 2.1, 2.1.3)',
+            });
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+        });
+
+        test('should normalize a valid static ceiling version', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling.version': ' v2.1 ' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({ ceiling: { version: '2.1' } });
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+            expect(mockLogContainer.info).toHaveBeenCalledWith(
+                'Ceiling set to 2.1',
+            );
+        });
+
+        test('should resolve a dynamic ceiling from the image version label', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+            const container = containerWithLabels({
+                'wud.tag.ceiling': 'stable',
+            });
+            const resolution = await utils.resolveCeiling(
+                container,
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                ceiling: { tag: 'stable', version: '2.37.9' },
+            });
+            expect(mockProvider.getImageVersionLabel).toHaveBeenCalledWith(
+                container.image,
+                'stable',
+            );
+            expect(mockLogContainer.info).toHaveBeenCalledWith(
+                'Ceiling resolved to 2.37.9 (from tag stable)',
+            );
+        });
+
+        test('should fail when the ceiling tag image has no version label', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue(undefined);
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Could not resolve ceiling tag [stable]: image has no org.opencontainers.image.version label',
+            });
+        });
+
+        test('should fail when the resolved version label is not a semver', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue(
+                'not-a-version',
+            );
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Could not resolve ceiling tag [stable]: value [not-a-version] is not a valid semver',
+            });
+        });
+
+        test('should fail when the registry call throws', async () => {
+            mockProvider.getImageVersionLabel.mockRejectedValue(
+                new Error('Boom!'),
+            );
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Could not resolve ceiling tag [stable]: Boom!',
+            });
+            expect(mockLogContainer.warn).toHaveBeenCalledWith(
+                resolution.error,
             );
         });
     });
