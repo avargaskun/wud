@@ -2,6 +2,7 @@
 
 aka ***What's up Docker?***
 
+[![Build Status](https://github.com/avargaskun/wud/actions/workflows/ci-push.yml/badge.svg)](https://github.com/getwud/wud/actions/workflows/ci-push.yml)
 ![Docker pulls](https://img.shields.io/docker/pulls/getwud/wud)
 [![Donate](https://img.shields.io/badge/Donate-PayPal-green.svg)](https://www.paypal.com/donate/?business=ZSDMEC3ZE8DQ8&no_recurring=0&currency_code=EUR)
 [![Donate](https://img.shields.io/badge/-buy_me_a%C2%A0coffee-gray?logo=buy-me-a-coffee)](https://www.buymeacoffee.com/61rUNMm)
@@ -12,9 +13,16 @@ aka ***What's up Docker?***
 
 ### [:rocket: Getting started](https://getwud.github.io/wud/)
 
+### Agent Mode
+WUD supports a distributed mode where "Agents" run on remote nodes to discover containers, and report back to a central "Controller".
+See the [documentation](docs/configuration/agents/README.md) for details.
+
 ### Contact & Support
 - Create a [GitHub issue](https://github.com/getwud/wud/issues) for bug reports, feature requests, or questions
 - Add a ⭐️ [star on GitHub](https://github.com/getwud/wud) or [Buy me coffee](https://www.buymeacoffee.com/61rUNMm)&nbsp;to support the project!
+
+### Development
+Interested in contributing? Check out our [Developer Guide](dev/README.md).
 
 ### License
 This project is licensed under the [MIT license](https://github.com/getwud/wud/blob/main/LICENSE).

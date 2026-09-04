@@ -154,6 +154,63 @@ describe('isGreater', () => {
             expect(semver.isGreater(v1, v2)).toBe(expected);
         },
     );
+
+    // Regression guard: isGreater is implemented with semver.gte, so it is true
+    // for equal versions. The bucket reduction relies on the strict compare instead.
+    test.each(['1.2.3', 'v1.2.3', '1.2.3-alpha1', '8'])(
+        'should return true for equal versions (gte semantics): %s',
+        (version) => {
+            expect(semver.isGreater(version, version)).toBe(true);
+        },
+    );
+});
+
+describe('compare', () => {
+    const compareTests = [
+        { v1: '1.0.0', v2: '2.0.0', expected: -1, desc: 'lower major' },
+        { v1: '2.0.0', v2: '1.0.0', expected: 1, desc: 'higher major' },
+        { v1: '1.0.0', v2: '1.0.0', expected: 0, desc: 'equal versions' },
+        { v1: '1.2.3', v2: '1.2.4', expected: -1, desc: 'lower patch' },
+        { v1: '1.3.0', v2: '1.2.9', expected: 1, desc: 'higher minor' },
+        {
+            v1: '1.2.3-alpha1',
+            v2: '1.2.3',
+            expected: -1,
+            desc: 'prerelease vs release',
+        },
+    ];
+
+    test.each(compareTests)(
+        'should compare $desc: compare($v1, $v2) = $expected',
+        ({ v1, v2, expected }) => {
+            const result = semver.compare(v1, v2);
+            if (expected === 0) {
+                expect(result).toBe(0);
+            } else if (expected < 0) {
+                expect(result).toBeLessThan(0);
+            } else {
+                expect(result).toBeGreaterThan(0);
+            }
+        },
+    );
+
+    const unparseableTests = [
+        { v1: 'latest', v2: '1.2.3', desc: 'invalid vs valid version' },
+        { v1: '1.2.3', v2: 'latest', desc: 'valid vs invalid version' },
+        { v1: 'latest', v2: 'stable', desc: 'both invalid versions' },
+    ];
+
+    test.each(unparseableTests)(
+        'should return null when $desc',
+        ({ v1, v2 }) => {
+            expect(semver.compare(v1, v2)).toBeNull();
+        },
+    );
+
+    test('should be consistent with isGreater for equal versions', async () => {
+        expect(semver.compare('1.2.3', '1.2.3')).toBe(0);
+        expect(semver.isGreater('1.2.3', '1.2.3')).toBe(true);
+    });
 });
 
 describe('diff', () => {
@@ -289,6 +346,158 @@ describe('transform', () => {
             );
         });
     });
+});
+
+describe('normalizeCeiling', () => {
+    const normalizations = [
+        { input: ' v2.1 ', expected: '2.1', desc: 'trim and strip v prefix' },
+        { input: '2.1', expected: '2.1', desc: 'leave a bare version as is' },
+        { input: 'V2.37.9', expected: '2.37.9', desc: 'strip uppercase V' },
+        { input: '  ', expected: '', desc: 'reduce blanks to empty string' },
+    ];
+
+    test.each(normalizations)('should $desc', ({ input, expected }) => {
+        expect(semver.normalizeCeiling(input)).toBe(expected);
+    });
+});
+
+describe('isValidCeiling', () => {
+    const ceilings = [
+        { input: '2', expected: true, desc: 'major only ceiling' },
+        { input: '2.1', expected: true, desc: 'major.minor ceiling' },
+        { input: '2.1.3', expected: true, desc: 'full semver ceiling' },
+        { input: 'v2.37.9', expected: true, desc: 'v prefixed ceiling' },
+        { input: 'stable', expected: false, desc: 'non semver ceiling' },
+        { input: '', expected: false, desc: 'empty ceiling' },
+        { input: '  ', expected: false, desc: 'blank ceiling' },
+        { input: 'x', expected: false, desc: 'x wildcard ceiling' },
+        { input: '*', expected: false, desc: 'star wildcard ceiling' },
+        { input: '2 || >1', expected: false, desc: 'union range ceiling' },
+        {
+            input: '2 3',
+            expected: false,
+            desc: 'intersection range ceiling',
+        },
+        { input: '2.x', expected: false, desc: 'partial wildcard ceiling' },
+    ];
+
+    test.each(ceilings)('should handle $desc', ({ input, expected }) => {
+        expect(semver.isValidCeiling(input)).toBe(expected);
+    });
+});
+
+describe('isAtOrBelowCeiling', () => {
+    const comparisons = [
+        {
+            version: '2.9.9',
+            ceiling: '2',
+            expected: true,
+            desc: 'a version inside a major only ceiling',
+        },
+        {
+            version: '3.0.0',
+            ceiling: '2',
+            expected: false,
+            desc: 'a version above a major only ceiling',
+        },
+        {
+            version: '2.1.5',
+            ceiling: '2.1',
+            expected: true,
+            desc: 'a version inside a major.minor ceiling',
+        },
+        {
+            version: '2.2.0',
+            ceiling: '2.1',
+            expected: false,
+            desc: 'a version above a major.minor ceiling',
+        },
+        {
+            version: '2.37.9',
+            ceiling: '2.37.9',
+            expected: true,
+            desc: 'a version exactly at the ceiling',
+        },
+        {
+            version: '2.38.0',
+            ceiling: '2.37.9',
+            expected: false,
+            desc: 'a version just above an exact ceiling',
+        },
+        {
+            version: '2.5.0-rc.1',
+            ceiling: '2',
+            expected: true,
+            desc: 'a prerelease below the ceiling (never a prerelease filter)',
+        },
+        {
+            version: '2.38.0-rc.1',
+            ceiling: '2.37.9',
+            expected: false,
+            desc: 'a prerelease above the ceiling',
+        },
+        {
+            version: 'v2.1.0',
+            ceiling: '2.1',
+            expected: true,
+            desc: 'a v prefixed version',
+        },
+        {
+            version: 'not-a-version',
+            ceiling: '2',
+            expected: false,
+            desc: 'an unparseable version',
+        },
+        {
+            version: '2.0.0',
+            ceiling: 'stable',
+            expected: false,
+            desc: 'a non semver ceiling',
+        },
+        {
+            version: '2.0.0',
+            ceiling: '',
+            expected: false,
+            desc: 'an empty ceiling',
+        },
+        {
+            version: '9.9.9',
+            ceiling: 'x',
+            expected: false,
+            desc: 'an x wildcard ceiling',
+        },
+        {
+            version: '9.9.9',
+            ceiling: '*',
+            expected: false,
+            desc: 'a star wildcard ceiling',
+        },
+        {
+            version: '9.9.9',
+            ceiling: '2 || >1',
+            expected: false,
+            desc: 'a union range ceiling',
+        },
+        {
+            version: '2.0.0',
+            ceiling: '2 3',
+            expected: false,
+            desc: 'an intersection range ceiling',
+        },
+        {
+            version: '2.0.0',
+            ceiling: '2.x',
+            expected: false,
+            desc: 'a partial wildcard ceiling',
+        },
+    ];
+
+    test.each(comparisons)(
+        'should handle $desc',
+        ({ version, ceiling, expected }) => {
+            expect(semver.isAtOrBelowCeiling(version, ceiling)).toBe(expected);
+        },
+    );
 });
 
 describe('integration tests', () => {

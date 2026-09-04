@@ -352,6 +352,303 @@ test('callRegistry should call authenticate', async () => {
     expect(spyAuthenticate).toHaveBeenCalledTimes(1);
 });
 
+describe('getImageVersionLabel', () => {
+    const MANIFEST_ACCEPT_HEADER =
+        'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json';
+
+    const buildImage = (extra = {}) => ({
+        name: 'image',
+        architecture: 'amd64',
+        os: 'linux',
+        tag: { value: 'tag' },
+        registry: { url: 'url' },
+        ...extra,
+    });
+
+    const buildRegistry = (callRegistry) => {
+        const registryMocked = new Registry();
+        registryMocked.log = log;
+        registryMocked.callRegistry = jest.fn(callRegistry);
+        return registryMocked;
+    };
+
+    const urlsOf = (registryMocked) =>
+        registryMocked.callRegistry.mock.calls.map(([options]) => options.url);
+
+    test('should follow index -> child manifest -> config blob', async () => {
+        const registryMocked = buildRegistry((options) => {
+            if (options.url === 'url/image/manifests/stable') {
+                expect(options.headers.Accept).toEqual(MANIFEST_ACCEPT_HEADER);
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.index.v1+json',
+                    manifests: [
+                        {
+                            platform: { architecture: 'arm64', os: 'linux' },
+                            digest: 'digest_arm64',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                        {
+                            platform: { architecture: 'amd64', os: 'linux' },
+                            digest: 'digest_amd64',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                    ],
+                };
+            }
+            if (options.url === 'url/image/manifests/digest_amd64') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                    config: {
+                        digest: 'sha256:config_amd64',
+                        mediaType: 'application/vnd.oci.image.config.v1+json',
+                    },
+                };
+            }
+            if (options.url === 'url/image/blobs/sha256:config_amd64') {
+                return {
+                    config: {
+                        Labels: {
+                            'org.opencontainers.image.version': '2.37.9',
+                        },
+                    },
+                };
+            }
+            throw new Error('Boom!');
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).resolves.toEqual('2.37.9');
+        expect(registryMocked.callRegistry).toHaveBeenCalledTimes(3);
+        expect(urlsOf(registryMocked)[2]).toContain('/blobs/');
+    });
+
+    test('should skip the child lookup for a single-platform manifest', async () => {
+        const registryMocked = buildRegistry((options) => {
+            if (options.url === 'url/image/manifests/stable') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                    config: {
+                        digest: 'sha256:config_single',
+                        mediaType: 'application/vnd.oci.image.config.v1+json',
+                    },
+                };
+            }
+            if (options.url === 'url/image/blobs/sha256:config_single') {
+                return {
+                    config: {
+                        Labels: {
+                            'org.opencontainers.image.version': '2.37.9',
+                        },
+                    },
+                };
+            }
+            throw new Error('Boom!');
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).resolves.toEqual('2.37.9');
+        expect(registryMocked.callRegistry).toHaveBeenCalledTimes(2);
+    });
+
+    test('should return undefined when the config blob has no version label', async () => {
+        const registryMocked = buildRegistry((options) => {
+            if (options.url === 'url/image/manifests/stable') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                    config: {
+                        digest: 'sha256:config_single',
+                        mediaType: 'application/vnd.oci.image.config.v1+json',
+                    },
+                };
+            }
+            if (options.url === 'url/image/blobs/sha256:config_single') {
+                return {
+                    config: {
+                        Labels: {
+                            'org.opencontainers.image.title': 'image',
+                        },
+                    },
+                };
+            }
+            throw new Error('Boom!');
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).resolves.toBeUndefined();
+    });
+
+    test('should return undefined for a schemaVersion 1 manifest without calling the blob', async () => {
+        const registryMocked = buildRegistry(() => ({
+            schemaVersion: 1,
+            history: [{ v1Compatibility: '{}' }],
+        }));
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).resolves.toBeUndefined();
+        expect(registryMocked.callRegistry).toHaveBeenCalledTimes(1);
+        expect(urlsOf(registryMocked)).not.toContainEqual(
+            expect.stringContaining('/blobs/'),
+        );
+    });
+
+    test('should return undefined when no manifest matches the platform', async () => {
+        const registryMocked = buildRegistry(() => ({
+            schemaVersion: 2,
+            mediaType: 'application/vnd.oci.image.index.v1+json',
+            manifests: [
+                {
+                    platform: { architecture: 'arm64', os: 'linux' },
+                    digest: 'digest_arm64',
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                },
+            ],
+        }));
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).resolves.toBeUndefined();
+        expect(registryMocked.callRegistry).toHaveBeenCalledTimes(1);
+        expect(urlsOf(registryMocked)).not.toContainEqual(
+            expect.stringContaining('/blobs/'),
+        );
+    });
+
+    test('should propagate a registry error', async () => {
+        const registryMocked = buildRegistry(() => {
+            throw new Error('Boom!');
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).rejects.toEqual(new Error('Boom!'));
+    });
+
+    test('should refine multiple matching manifests using the image variant', async () => {
+        const registryMocked = buildRegistry((options) => {
+            if (options.url === 'url/image/manifests/stable') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.index.v1+json',
+                    manifests: [
+                        {
+                            platform: {
+                                architecture: 'amd64',
+                                os: 'linux',
+                                variant: 'v7',
+                            },
+                            digest: 'digest_v7',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                        {
+                            platform: {
+                                architecture: 'amd64',
+                                os: 'linux',
+                                variant: 'v8',
+                            },
+                            digest: 'digest_v8',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                    ],
+                };
+            }
+            if (options.url === 'url/image/manifests/digest_v8') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                    config: {
+                        digest: 'sha256:config_v8',
+                        mediaType: 'application/vnd.oci.image.config.v1+json',
+                    },
+                };
+            }
+            if (options.url === 'url/image/blobs/sha256:config_v8') {
+                return {
+                    config: {
+                        Labels: {
+                            'org.opencontainers.image.version': '2.37.9',
+                        },
+                    },
+                };
+            }
+            throw new Error('Boom!');
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(
+                buildImage({ variant: 'v8' }),
+                'stable',
+            ),
+        ).resolves.toEqual('2.37.9');
+        expect(urlsOf(registryMocked)[1]).toEqual(
+            'url/image/manifests/digest_v8',
+        );
+    });
+
+    test('should keep the first matching manifest when no variant matches', async () => {
+        const registryMocked = buildRegistry((options) => {
+            if (options.url === 'url/image/manifests/stable') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.index.v1+json',
+                    manifests: [
+                        {
+                            platform: {
+                                architecture: 'amd64',
+                                os: 'linux',
+                                variant: 'v7',
+                            },
+                            digest: 'digest_v7',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                        {
+                            platform: {
+                                architecture: 'amd64',
+                                os: 'linux',
+                                variant: 'v8',
+                            },
+                            digest: 'digest_v8',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                    ],
+                };
+            }
+            if (options.url === 'url/image/manifests/digest_v7') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                    config: {
+                        digest: 'sha256:config_v7',
+                        mediaType: 'application/vnd.oci.image.config.v1+json',
+                    },
+                };
+            }
+            if (options.url === 'url/image/blobs/sha256:config_v7') {
+                return {
+                    config: {
+                        Labels: {
+                            'org.opencontainers.image.version': '2.37.9',
+                        },
+                    },
+                };
+            }
+            throw new Error('Boom!');
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).resolves.toEqual('2.37.9');
+        expect(urlsOf(registryMocked)[1]).toEqual(
+            'url/image/manifests/digest_v7',
+        );
+    });
+});
+
 describe('shouldWatchDigest', () => {
     test('should return true when label is true', () => {
         const result = registry.shouldWatchDigest('true', 'image/name');

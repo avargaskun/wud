@@ -6,6 +6,7 @@
           :trigger="trigger"
           :update-available="container.updateAvailable"
           :container-id="container.id"
+          @trigger-executed="$emit('trigger-executed')"
         />
       </v-col>
     </v-row>

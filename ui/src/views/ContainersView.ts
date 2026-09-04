@@ -1,7 +1,11 @@
 import ContainerItem from "@/components/ContainerItem.vue";
 import ContainerFilter from "@/components/ContainerFilter.vue";
 import { deleteContainer, getAllContainers } from "@/services/container";
+import agentService from "@/services/agent";
 import { defineComponent } from "vue";
+
+const TRIGGER_REFRESH_INTERVAL_MS = 1000;
+const TRIGGER_REFRESH_DURATION_MS = 60000;
 
 export default defineComponent({
   components: {
@@ -12,12 +16,16 @@ export default defineComponent({
   data() {
     return {
       containers: [] as any[],
+      agentsList: [] as any[],
       registrySelected: "",
+      agentSelected: "",
       watcherSelected: "",
       updateKindSelected: "",
       updateAvailableSelected: false,
       groupByLabel: "",
       oldestFirst: false,
+      triggerRefreshInterval: null as ReturnType<typeof setInterval> | null,
+      triggerRefreshTimeout: null as ReturnType<typeof setTimeout> | null,
     };
   },
   watch: {},
@@ -33,6 +41,16 @@ export default defineComponent({
         ...new Set(
           this.containers
             .map((container) => container.image.registry.name)
+            .sort(),
+        ),
+      ];
+    },
+    agents() {
+      return [
+        ...new Set(
+          this.containers
+            .map((container) => container.agent)
+            .filter((agent) => agent)
             .sort(),
         ),
       ];
@@ -62,6 +80,9 @@ export default defineComponent({
           this.registrySelected
             ? this.registrySelected === container.image.registry.name
             : true,
+        )
+        .filter((container) =>
+          this.agentSelected ? this.agentSelected === container.agent : true,
         )
         .filter((container) =>
           this.watcherSelected
@@ -106,6 +127,10 @@ export default defineComponent({
       this.registrySelected = registrySelected;
       this.updateQueryParams();
     },
+    onAgentChanged(agentSelected: string) {
+      this.agentSelected = agentSelected;
+      this.updateQueryParams();
+    },
     onWatcherChanged(watcherSelected: string) {
       this.watcherSelected = watcherSelected;
       this.updateQueryParams();
@@ -130,6 +155,9 @@ export default defineComponent({
       const query: any = {};
       if (this.registrySelected) {
         query["registry"] = this.registrySelected;
+      }
+      if (this.agentSelected) {
+        query["agent"] = this.agentSelected;
       }
       if (this.watcherSelected) {
         query["watcher"] = this.watcherSelected;
@@ -166,20 +194,62 @@ export default defineComponent({
         );
       }
     },
+    async refreshContainersAfterTrigger() {
+      try {
+        const updatedContainers = await getAllContainers();
+        this.containers = updatedContainers;
+      } catch (e: any) {
+        (this as any).$eventBus.emit(
+          "notify",
+          `Error refreshing containers: ${e.message}`,
+          "error",
+        );
+      }
+    },
+    stopTriggerRefresh() {
+      if (this.triggerRefreshInterval) {
+        clearInterval(this.triggerRefreshInterval);
+        this.triggerRefreshInterval = null;
+      }
+      if (this.triggerRefreshTimeout) {
+        clearTimeout(this.triggerRefreshTimeout);
+        this.triggerRefreshTimeout = null;
+      }
+    },
+    onTriggerExecuted() {
+      this.stopTriggerRefresh();
+      this.triggerRefreshInterval = setInterval(() => {
+        this.refreshContainersAfterTrigger();
+      }, TRIGGER_REFRESH_INTERVAL_MS);
+      this.triggerRefreshTimeout = setTimeout(() => {
+        this.stopTriggerRefresh();
+      }, TRIGGER_REFRESH_DURATION_MS);
+    },
+  },
+
+  beforeUnmount() {
+    this.stopTriggerRefresh();
   },
 
   async beforeRouteEnter(to, from, next) {
     const registrySelected = to.query["registry"];
+    const agentSelected = to.query["agent"];
     const watcherSelected = to.query["watcher"];
     const updateKindSelected = to.query["update-kind"];
     const updateAvailable = to.query["update-available"];
     const oldestFirst = to.query["oldest-first"];
     const groupByLabel = to.query["group-by-label"];
     try {
-      const containers = await getAllContainers();
+      const [containers, agents] = await Promise.all([
+        getAllContainers(),
+        agentService.getAgents(),
+      ]);
       next((vm: any) => {
         if (registrySelected) {
           vm.registrySelected = registrySelected;
+        }
+        if (agentSelected) {
+          vm.agentSelected = agentSelected;
         }
         if (watcherSelected) {
           vm.watcherSelected = watcherSelected;
@@ -197,6 +267,7 @@ export default defineComponent({
           vm.groupByLabel = groupByLabel;
         }
         vm.containers = containers;
+        vm.agentsList = agents;
       });
     } catch (e: any) {
       next((vm: any) => {

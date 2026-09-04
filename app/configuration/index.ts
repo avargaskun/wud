@@ -97,6 +97,14 @@ export function getAuthenticationConfigurations() {
 }
 
 /**
+ * Get Agent configurations.
+ * @returns {*}
+ */
+export function getAgentConfigurations() {
+    return get('wud.agent', wudEnvVars);
+}
+
+/**
  * Get Input configurations.
  */
 export function getStoreConfiguration() {

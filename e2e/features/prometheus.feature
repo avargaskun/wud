@@ -10,25 +10,40 @@ Feature: Prometheus exposure
     And response body should contain nodejs_eventloop_lag_seconds
     And response body should contain wud_containers{id=
 
+  # The zz_mv_buckets container appearing at all is the real assertion: an undeclared gauge label
+  # makes prom-client throw, populateGauge swallows it, and the container vanishes from wud_containers.
+  Scenario: WUD must expose per-kind update buckets as gauge labels
+    When I GET /metrics
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.0\.\d+$" and value "" as "EXPECTED_PATCH_TAG"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.[1-9]\d*\.\d+$" and value "" as "EXPECTED_MINOR_TAG"
+    Then response code should be 200
+    And response body should contain name="zz_mv_buckets"
+    And response body should contain updates_patch_kind="tag"
+    And response body should contain updates_patch_semver_diff="patch"
+    And response body should have substituted "updates_patch_remote_value=\"`EXPECTED_PATCH_TAG`\""
+    And response body should contain updates_minor_semver_diff="minor"
+    And response body should have substituted "updates_minor_remote_value=\"`EXPECTED_MINOR_TAG`\""
+    And response body should have substituted "result_tag=\"`EXPECTED_MINOR_TAG`\""
+    And response body should contain update_available="true"
+
   Scenario Outline: WUD must expose watched containers
     When I GET /metrics
+    And I resolve the latest version for image "<imageName>" on registry "<registry>" with strategy "<strategy>" and pattern "<pattern>" and value "<resultTag>" as "EXPECTED_TAG"
     Then response code should be 200
     And response body should contain name="<containerName>"
     And response body should contain image_registry_name="<registry>"
     And response body should contain image_registry_url="<registryUrl>"
     And response body should contain image_name="<imageName>"
     And response body should contain image_tag_value="<tag>"
-    And response body should contain result_tag="<resultTag>"
+    And response body should have substituted "result_tag=\"`EXPECTED_TAG`\""
     And response body should contain update_available="<updateAvailable>"
     Examples:
-      | containerName            | registry       | registryUrl                                             | imageName                           | tag                | resultTag          | updateAvailable |
-      # | ecr_sub_sub_test         | ecr.private    | https://229211676173.dkr.ecr.eu-west-1.amazonaws.com/v2 | sub/sub/test                        | 1.0.0              | 2.0.0              | true            |
-      | ghcr_radarr              | ghcr.private   | https://ghcr.io/v2                                      | linuxserver/radarr                  | 5.14.0.9383-ls245  | 6.3.0.10514-ls311  | false           |
-
-      | hub_homeassistant_202161 | hub.public     | https://registry-1.docker.io/v2                         | homeassistant/home-assistant        | 2021.6.1           | 2026.7.2           | false           |
-      | hub_homeassistant_latest | hub.public     | https://registry-1.docker.io/v2                         | homeassistant/home-assistant        | latest             | latest             | false           |
-      | hub_nginx_120            | hub.public     | https://registry-1.docker.io/v2                         | library/nginx                       | 1.20-alpine        | 1.31-alpine        | false           |
-      | hub_nginx_latest         | hub.public     | https://registry-1.docker.io/v2                         | library/nginx                       | latest             | latest             | true            |
-      | hub_traefik_245          | hub.public     | https://registry-1.docker.io/v2                         | library/traefik                     | 2.4.5              | 3.7.8              | false           |
-      | lscr_radarr              | lscr.private   | https://lscr.io/v2                                      | linuxserver/radarr                  | 5.14.0.9383-ls245  | 6.3.0.10514-ls311 | true            |
-      | quay_prometheus          | quay.public    | https://quay.io/v2                                      | prometheus/prometheus               | v2.52.0            | v3.13.1             | true            |
+      | containerName            | registry       | registryUrl                                             | imageName                           | tag                | resultTag          | updateAvailable | strategy | pattern                       |
+      | ecr_sub_sub_test         | ecr.private    | `ECR_REGISTRY_URL`                                      | `ECR_IMAGE_NAME`                    | 1.0.0              | 2.0.0              | true            | static   | .*                            |
+      | ghcr_radarr              | ghcr.public    | https://ghcr.io/v2                                      | linuxserver/radarr                  | 5.14.0.9383-ls245  | ignored            | true            | dynamic  | ^\d+\.\d+\.\d+\.\d+-ls\d+$    |
+      | hub_homeassistant_202161 | hub.public     | https://registry-1.docker.io/v2                         | homeassistant/home-assistant        | 2021.6.1           | ignored            | true            | dynamic  | ^\d+\.\d+\.\d+$               |
+      | ghcr_podinfo_500         | ghcr.public    | https://ghcr.io/v2                                      | stefanprodan/podinfo                | 5.0.0              | ignored            | true            | dynamic  | ^6\.0\.0$                     |
+      | ghcr_podinfo_latest      | ghcr.public    | https://ghcr.io/v2                                      | stefanprodan/podinfo                | latest             | latest             | true            | static   | .*                            |
+      | gitlab_test              | gitlab.private | https://registry.gitlab.com/v2                          | gitlab-org/gitlab-runner            | v16.0.0            | ignored            | true            | dynamic  | ^v16\.[01]\.0$                |
+      | lscr_radarr              | lscr.private   | https://lscr.io/v2                                      | linuxserver/radarr                  | 5.14.0.9383-ls245  | ignored            | true            | dynamic  | ^\d+\.\d+\.\d+\.\d+-ls\d+$    |
+      | quay_prometheus          | quay.public    | https://quay.io/v2                                      | prometheus/prometheus               | v2.52.0            | ignored            | true            | dynamic  | ^v\d+\.\d+\.\d+$              |

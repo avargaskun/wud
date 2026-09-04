@@ -47,6 +47,7 @@ jspm_packages/
 
 # TypeScript v1 declaration files
 typings/
+!e2e/typings/
 
 # TypeScript cache
 *.tsbuildinfo
@@ -103,3 +104,10 @@ typings/
 *.DS_Store
 app/dist/
 dist/
+
+# Generated AWS ECR test credentials
+ecr_test_credentials.json
+
+# Disposable runtime copy of the e2e compose fixture (rewritten in place by the dockercompose trigger)
+test/compose-stack/docker-compose.active.yml
+test/compose-stack/docker-compose.mirror.active.yml

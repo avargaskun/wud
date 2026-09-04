@@ -5,9 +5,10 @@
   "scripts": {
     "serve": "vue-cli-service serve",
     "build": "vue-cli-service build",
-    "lint": "vue-cli-service lint",
-    "test:unit": "jest --coverage",
-    "test:unit:watch": "jest --watch"
+    "lint": "vue-cli-service lint --no-fix",
+    "test": "jest --runInBand --no-coverage",
+    "test:coverage": "jest --coverage",
+    "test:watch": "jest --watch"
   },
   "dependencies": {
     "@fortawesome/fontawesome-free": "6.7.2",

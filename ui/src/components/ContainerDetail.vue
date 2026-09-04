@@ -48,6 +48,17 @@
         }}</router-link>
       </v-list-item-subtitle>
     </v-list-item>
+    <v-list-item v-if="container.agent">
+      <template v-slot:prepend>
+        <v-icon color="secondary">mdi-lan</v-icon>
+      </template>
+      <v-list-item-title>Agent</v-list-item-title>
+      <v-list-item-subtitle>
+        <router-link to="/configuration/agents">{{
+          container.agent
+        }}</router-link>
+      </v-list-item-subtitle>
+    </v-list-item>
     <v-list-item v-if="container.includeTags">
       <template v-slot:prepend>
         <v-icon color="secondary">mdi-tag</v-icon>
@@ -102,6 +113,18 @@
       <v-list-item-subtitle>{{
         container.transformTags
       }}</v-list-item-subtitle>
+    </v-list-item>
+    <v-list-item v-if="container.ceiling">
+      <template v-slot:prepend>
+        <v-icon color="secondary">mdi-arrow-collapse-up</v-icon>
+      </template>
+      <v-list-item-title>Version ceiling</v-list-item-title>
+      <v-list-item-subtitle
+        >{{ container.ceiling.version
+        }}{{
+          container.ceiling.tag ? ` (from :${container.ceiling.tag})` : ''
+        }}</v-list-item-subtitle
+      >
     </v-list-item>
     <v-list-item v-if="container.linkTemplate">
       <template v-slot:prepend>

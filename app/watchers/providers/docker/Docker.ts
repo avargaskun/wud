@@ -6,11 +6,6 @@ const joi = JoiCronExpression(Joi);
 import cron from 'node-cron';
 import parse from 'parse-docker-image-name';
 import debounce from 'just-debounce';
-import {
-    parse as parseSemver,
-    isGreater as isGreaterSemver,
-    transform as transformTag,
-} from '../../../tag';
 import * as event from '../../../event';
 import {
     wudWatch,
@@ -18,6 +13,7 @@ import {
     wudTagExclude,
     wudTagTransform,
     wudWatchDigest,
+    wudWatchDigestSemver,
     wudLinkTemplate,
     wudDisplayName,
     wudDisplayIcon,
@@ -25,16 +21,20 @@ import {
     wudTriggerExclude,
 } from './label';
 import * as storeContainer from '../../../store/container';
-import {
-    validate as validateContainer,
-    fullName,
-    Container,
-} from '../../../model/container';
-import * as registry from '../../../registry';
+import { fullName, Container, ContainerReport } from '../../../model/container';
 import { getWatchContainerGauge } from '../../../prometheus/watcher';
 import Watcher from '../../Watcher';
 import { ComponentConfiguration } from '../../../registry/Component';
-import Logger from 'bunyan';
+import {
+    getRegistries,
+    isContainerToWatch,
+    normalizeContainer,
+    getContainerName,
+    findNewVersion,
+    resetCeilingCache,
+    shouldWatchDigestForContainer,
+} from './utils';
+import { parse as parseSemver, transform as transformTag } from '../../../tag';
 
 export interface DockerWatcherConfiguration extends ComponentConfiguration {
     socket: string;
@@ -57,144 +57,6 @@ const START_WATCHER_DELAY_MS = 1000;
 
 // Debounce delay used when performing a watch after a docker event has been received
 const DEBOUNCED_WATCH_CRON_MS = 5000;
-
-/**
- * Return all supported registries
- */
-function getRegistries() {
-    return registry.getState().registry;
-}
-
-/**
- * Filter candidate tags (based on tag name).
- */
-function getTagCandidates(
-    container: Container,
-    tags: string[],
-    logContainer: any,
-) {
-    let filteredTags = tags;
-
-    // Match include tag regex
-    if (container.includeTags) {
-        const includeTagsRegex = new RegExp(container.includeTags);
-        filteredTags = filteredTags.filter((tag) => includeTagsRegex.test(tag));
-    } else {
-        // If no includeTags, filter out tags starting with "sha"
-        filteredTags = filteredTags.filter((tag) => !tag.startsWith('sha'));
-    }
-
-    // Match exclude tag regex
-    if (container.excludeTags) {
-        const excludeTagsRegex = new RegExp(container.excludeTags);
-        filteredTags = filteredTags.filter(
-            (tag) => !excludeTagsRegex.test(tag),
-        );
-    }
-
-    // Always filter out tags ending with ".sig"
-    filteredTags = filteredTags.filter((tag) => !tag.endsWith('.sig'));
-
-    // Semver image -> find higher semver tag
-    if (container.image.tag.semver) {
-        if (filteredTags.length === 0) {
-            logContainer.warn(
-                'No tags found after filtering; check you regex filters',
-            );
-        }
-
-        // If user has not specified custom include regex, default to keep current prefix
-        // Prefix is almost-always standardized around "must stay the same" for tags
-        if (!container.includeTags) {
-            const currentTag = container.image.tag.value;
-            const match = currentTag.match(/^(.*?)(\d+.*)$/);
-            const currentPrefix = match ? match[1] : '';
-
-            if (currentPrefix) {
-                // Retain only tags with the same non-empty prefix
-                filteredTags = filteredTags.filter((tag) =>
-                    tag.startsWith(currentPrefix),
-                );
-            } else {
-                // Retain only tags that start with a number (no prefix)
-                filteredTags = filteredTags.filter((tag) => /^\d/.test(tag));
-            }
-
-            // Ensure we throw good errors when we've prefix-related issues
-            if (filteredTags.length === 0) {
-                if (currentPrefix) {
-                    logContainer.warn(
-                        "No tags found with existing prefix: '" +
-                            currentPrefix +
-                            "'; check your regex filters",
-                    );
-                } else {
-                    logContainer.warn(
-                        'No tags found starting with a number (no prefix); check your regex filters',
-                    );
-                }
-            }
-        }
-
-        // Keep semver only
-        filteredTags = filteredTags.filter(
-            (tag) =>
-                parseSemver(transformTag(container.transformTags, tag)) !==
-                null,
-        );
-
-        // Remove prefix and suffix (keep only digits and dots)
-        const numericPart = container.image.tag.value.match(/(\d+(\.\d+)*)/);
-
-        if (numericPart) {
-            const referenceGroups = numericPart[0].split('.').length;
-
-            filteredTags = filteredTags.filter((tag) => {
-                const tagNumericPart = tag.match(/(\d+(\.\d+)*)/);
-                if (!tagNumericPart) return false; // skip tags without numeric part
-                const tagGroups = tagNumericPart[0].split('.').length;
-
-                // Keep only tags with the same number of numeric segments
-                return tagGroups === referenceGroups;
-            });
-        }
-
-        // Keep only greater semver
-        filteredTags = filteredTags.filter((tag) =>
-            isGreaterSemver(
-                transformTag(container.transformTags, tag),
-                transformTag(
-                    container.transformTags,
-                    container.image.tag.value,
-                ),
-            ),
-        );
-
-        // Apply semver sort desc
-        filteredTags.sort((t1, t2) => {
-            const greater = isGreaterSemver(
-                transformTag(container.transformTags, t2),
-                transformTag(container.transformTags, t1),
-            );
-            return greater ? 1 : -1;
-        });
-    } else {
-        // Non semver tag -> do not propose any other registry tag
-        filteredTags = [];
-    }
-    return filteredTags;
-}
-
-/**
- * Get the Docker Registry by name.
- */
-function getRegistry(registryName: string) {
-    const registryToReturn = getRegistries()[registryName];
-    if (!registryToReturn) {
-        throw new Error(`Unsupported Registry ${registryName}`);
-    }
-    return registryToReturn;
-}
 
 /**
  * Get old containers to prune.
@@ -230,46 +92,6 @@ function pruneOldContainers(
     });
 }
 
-function getContainerName(container: any) {
-    let containerName = '';
-    const names = container.Names;
-    if (names && names.length > 0) {
-        [containerName] = names;
-    }
-    // Strip ugly forward slash
-    containerName = containerName.replace(/\//, '');
-    return containerName;
-}
-
-/**
- * Get image repo digest.
- */
-function getRepoDigest(containerImage: any) {
-    if (
-        !containerImage.RepoDigests ||
-        containerImage.RepoDigests.length === 0
-    ) {
-        return undefined;
-    }
-    const fullDigest = containerImage.RepoDigests[0];
-    const digestSplit = fullDigest.split('@');
-    return digestSplit[1];
-}
-
-/**
- * Return true if container must be watched.
- * @param wudWatchLabelValue the value of the wud.watch label
- * @param watchByDefault true if containers must be watched by default
- */
-function isContainerToWatch(
-    wudWatchLabelValue: string,
-    watchByDefault: boolean,
-) {
-    return wudWatchLabelValue !== undefined && wudWatchLabelValue !== ''
-        ? wudWatchLabelValue.toLowerCase() === 'true'
-        : watchByDefault;
-}
-
 /**
  * Docker Watcher Component.
  */
@@ -298,6 +120,7 @@ export class Docker extends Watcher {
             watchdigest: this.joi.any(),
             watchevents: this.joi.boolean().default(true),
             watchatstart: this.joi.boolean().default(true),
+            enablemetrics: this.joi.boolean().default(true),
         });
     }
 
@@ -336,10 +159,7 @@ export class Docker extends Watcher {
                 this.watchFromCron.bind(this),
                 DEBOUNCED_WATCH_CRON_MS,
             );
-            this.listenDockerEventsTimeout = setTimeout(
-                this.listenDockerEvents.bind(this),
-                START_WATCHER_DELAY_MS,
-            );
+            this.scheduleDockerEvents();
         }
     }
 
@@ -380,6 +200,17 @@ export class Docker extends Watcher {
         }
     }
 
+    scheduleDockerEvents() {
+        if (this.listenDockerEventsTimeout) {
+            clearTimeout(this.listenDockerEventsTimeout);
+            delete this.listenDockerEventsTimeout;
+        }
+        this.listenDockerEventsTimeout = setTimeout(
+            this.listenDockerEvents.bind(this),
+            START_WATCHER_DELAY_MS,
+        );
+    }
+
     /**
      * Listen and react to docker events.
      */
@@ -405,12 +236,11 @@ export class Docker extends Watcher {
         };
         this.dockerApi.getEvents(options, (err, stream) => {
             if (err) {
-                if (this.log && typeof this.log.warn === 'function') {
-                    this.log.warn(
-                        `Unable to listen to Docker events [${err.message}]`,
-                    );
-                    this.log.debug(err);
-                }
+                this.log.warn(
+                    `Unable to listen to Docker events [${err.message}]`,
+                );
+                this.log.debug(err);
+                this.scheduleDockerEvents();
             } else {
                 let chunks: Buffer[] = [];
                 const collectChunks = (chunk: Buffer) => {
@@ -422,6 +252,34 @@ export class Docker extends Watcher {
                     }
                 };
                 stream.on('data', collectChunks);
+                stream.on('error', (error: any) => {
+                    // Idle events stream is periodically reset by the socket proxy (ECONNRESET/"aborted") — expected and self-healing, so reconnect quietly.
+                    if (
+                        error?.code === 'ECONNRESET' ||
+                        error?.message === 'aborted'
+                    ) {
+                        this.log.debug(
+                            `Docker events stream interrupted, reconnecting [${error.message}]`,
+                        );
+                    } else {
+                        this.log.warn(
+                            `Error when listening to Docker events [${error.message}]`,
+                        );
+                        this.log.debug(error);
+                    }
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
+                stream.on('end', () => {
+                    this.log.info('Docker events stream ended');
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
+                stream.on('close', () => {
+                    this.log.info('Docker events stream closed');
+                    stream.removeAllListeners();
+                    this.scheduleDockerEvents();
+                });
             }
         });
     }
@@ -430,48 +288,118 @@ export class Docker extends Watcher {
      * Process a docker event.
      */
     async onDockerEvent(dockerEventChunk: any) {
-        let dockerEvent;
         try {
-            dockerEvent = JSON.parse(dockerEventChunk.toString());
-        } catch (e) {
-            this.log.warn(
-                `Unable to parse Docker event (${e.message}): ${dockerEventChunk.toString()}`,
-            );
-            return;
-        }
-        const action = dockerEvent.Action;
-        const containerId = dockerEvent.id;
+            const dockerEvent = JSON.parse(dockerEventChunk.toString());
+            const action = dockerEvent.Action;
+            const containerId = dockerEvent.id;
 
-        // If the container was created or destroyed => perform a watch
-        if (action === 'destroy' || action === 'create') {
-            await this.watchCronDebounced();
-        } else {
-            // Update container state in db if so
-            try {
-                const container =
-                    await this.dockerApi.getContainer(containerId);
-                const containerInspect = await container.inspect();
-                const newStatus = containerInspect.State.Status;
-                const containerFound = storeContainer.getContainer(containerId);
-                if (containerFound) {
-                    // Child logger for the container to process
-                    const logContainer = this.log.child({
-                        container: fullName(containerFound),
-                    });
-                    const oldStatus = containerFound.status;
-                    containerFound.status = newStatus;
-                    if (oldStatus !== newStatus) {
-                        storeContainer.updateContainer(containerFound);
-                        logContainer.info(
-                            `Status changed from ${oldStatus} to ${newStatus}`,
-                        );
+            // If the container was created or destroyed => perform a watch
+            if (action === 'destroy') {
+                this.log.info(`Container destroyed [id=${containerId}]`);
+                storeContainer.deleteContainer(containerId);
+            } else if (action === 'create') {
+                this.log.debug(`Container created [id=${containerId}]`);
+                try {
+                    const listContainersOptions: Dockerode.ContainerListOptions =
+                        {
+                            filters: { id: [containerId] },
+                        };
+                    if (this.configuration.watchall) {
+                        listContainersOptions.all = true;
                     }
+                    const containers = await this.dockerApi.listContainers(
+                        listContainersOptions,
+                    );
+                    const container =
+                        containers.length > 0 ? containers[0] : undefined;
+
+                    if (container) {
+                        const containerWithImageDetails =
+                            await this.getContainerToWatch(container);
+
+                        if (containerWithImageDetails) {
+                            this.log.info(
+                                `Watching newly created container [id=${containerId}]`,
+                            );
+                            await this.watchContainer(
+                                containerWithImageDetails,
+                            );
+                        } else {
+                            this.log.debug(
+                                `Container created [id=${containerId}] but ignored (not to watch)`,
+                            );
+                        }
+                    } else {
+                        this.log.warn(
+                            `Container created [id=${containerId}] but not found in list. Falling back to debounced full scan`,
+                        );
+                        await this.watchCronDebounced();
+                    }
+                } catch (e: any) {
+                    this.log.warn(
+                        `Error when processing container create event [id=${containerId}] (${e.message}). Falling back to debounced full scan`,
+                    );
+                    this.log.debug(e);
+                    await this.watchCronDebounced();
                 }
-            } catch (e: any) {
-                this.log.debug(
-                    `Unable to get container details for container id=[${containerId}] (${e.message})`,
-                );
+            } else {
+                // Update container state and name in db if so
+                try {
+                    const container =
+                        await this.dockerApi.getContainer(containerId);
+                    const containerInspect = await container.inspect();
+                    const newStatus = containerInspect.State.Status;
+                    const newName = containerInspect.Name.replace(/^\//, '');
+                    const containerFound =
+                        storeContainer.getContainer(containerId);
+                    if (containerFound) {
+                        // Child logger for the container to process
+                        const logContainer = this.log.child({
+                            container: fullName(containerFound),
+                        });
+                        const oldStatus = containerFound.status;
+                        const oldName = containerFound.name;
+                        let changed = false;
+
+                        containerFound.status = newStatus;
+                        if (oldStatus !== newStatus) {
+                            changed = true;
+                            logContainer.info(
+                                `Status changed from ${oldStatus} to ${newStatus}`,
+                            );
+                        }
+
+                        // Update name if changed (e.g., Docker Compose rename)
+                        if (oldName !== newName) {
+                            containerFound.name = newName;
+                            // Also refresh displayName if no explicit wud.display.name label is set
+                            const hasDisplayNameLabel =
+                                containerInspect.Config?.Labels?.[
+                                    wudDisplayName
+                                ];
+                            if (!hasDisplayNameLabel) {
+                                containerFound.displayName = newName;
+                            }
+                            changed = true;
+                            logContainer.info(
+                                `Name changed from ${oldName} to ${newName}`,
+                            );
+                        }
+
+                        if (changed) {
+                            storeContainer.updateContainer(containerFound);
+                        }
+                    }
+                } catch (e: any) {
+                    this.log.debug(
+                        `Unable to get container details for container action=[${action}] id=[${containerId}] (${e.message})`,
+                    );
+                }
             }
+        } catch (e: any) {
+            this.log.warn(
+                `Unable to process Docker event [${dockerEventChunk}] (${e.message})`,
+            );
         }
     }
 
@@ -510,8 +438,10 @@ export class Docker extends Watcher {
     /**
      * Watch main method.
      */
-    async watch() {
+    async watch(): Promise<ContainerReport[]> {
         let containers: Container[] = [];
+
+        resetCeilingCache();
 
         // Dispatch event to notify start watching
         event.emitWatcherStart(this);
@@ -536,6 +466,9 @@ export class Docker extends Watcher {
             );
             return [];
         } finally {
+            // Keep the cache scoped to one scan; event-driven watches must not reuse it
+            resetCeilingCache();
+
             // Dispatch event to notify stop watching
             event.emitWatcherStop(this);
         }
@@ -551,15 +484,22 @@ export class Docker extends Watcher {
 
         // Reset previous results if so
         delete containerWithResult.result;
+        delete containerWithResult.updates;
         delete containerWithResult.error;
+        delete containerWithResult.ceiling;
         logContainer.debug('Start watching');
 
         try {
-            containerWithResult.result = await this.findNewVersion(
+            const { result, updates, ceiling, error } = await findNewVersion(
                 container,
+                this.dockerApi,
                 logContainer,
             );
-        } catch (e: any) {
+            containerWithResult.result = result;
+            containerWithResult.updates = updates;
+            if (ceiling) containerWithResult.ceiling = ceiling;
+            if (error) containerWithResult.error = error;
+        } catch (e) {
             logContainer.warn(`Error when processing (${e.message})`);
             logContainer.debug(e);
             containerWithResult.error = {
@@ -574,6 +514,23 @@ export class Docker extends Watcher {
     }
 
     /**
+     * Get a container to watch with all details populated.
+     * Returns undefined if the container should not be watched.
+     * @param container
+     */
+    async getContainerToWatch(container: any): Promise<Container | undefined> {
+        if (
+            !isContainerToWatch(
+                container.Labels[wudWatch],
+                this.configuration.watchbydefault,
+            )
+        ) {
+            return undefined;
+        }
+        return this.addImageDetailsToContainer(container);
+    }
+
+    /**
      * Get all containers to watch.
      */
     async getContainers(): Promise<Container[]> {
@@ -585,25 +542,8 @@ export class Docker extends Watcher {
             listContainersOptions,
         );
 
-        // Filter on containers to watch
-        const filteredContainers = containers.filter((container) =>
-            isContainerToWatch(
-                container.Labels[wudWatch],
-                this.configuration.watchbydefault,
-            ),
-        );
-        const containerPromises = filteredContainers.map((container) =>
-            this.addImageDetailsToContainer(
-                container,
-                container.Labels[wudTagInclude],
-                container.Labels[wudTagExclude],
-                container.Labels[wudTagTransform],
-                container.Labels[wudLinkTemplate],
-                container.Labels[wudDisplayName],
-                container.Labels[wudDisplayIcon],
-                container.Labels[wudTriggerInclude],
-                container.Labels[wudTriggerExclude],
-            ).catch((e) => {
+        const containerPromises = containers.map((container: any) =>
+            this.getContainerToWatch(container).catch((e) => {
                 this.log.warn(
                     `Failed to fetch image detail for container ${container.Id}: ${e.message} - ${e.stack}`,
                 );
@@ -619,11 +559,14 @@ export class Docker extends Watcher {
             (imagePromise) => imagePromise !== undefined,
         );
 
-        // Prune old containers from the store
+        // Prune old containers from the store - only locally discovered containers will be pruned
         try {
-            const containersFromTheStore = storeContainer.getContainers({
-                watcher: this.name,
-            });
+            // Filter on empty `agent` must be done in memory as the store query system does not support it
+            const containersFromTheStore = storeContainer
+                .getContainers({
+                    watcher: this.name,
+                })
+                .filter((container) => !container.agent);
             pruneOldContainers(containersToReturn, containersFromTheStore);
         } catch (e: any) {
             this.log.warn(
@@ -649,107 +592,18 @@ export class Docker extends Watcher {
     }
 
     /**
-     * Find new version for a Container.
-     */
-
-    async findNewVersion(container: Container, logContainer: Logger) {
-        const registryProvider = getRegistry(container.image.registry.name);
-        const result: any = { tag: container.image.tag.value };
-        if (!registryProvider) {
-            logContainer.error(
-                `Unsupported registry (${container.image.registry.name})`,
-            );
-            return result;
-        } else {
-            const watchDigest =
-                !container.image.tag.semver &&
-                registryProvider.shouldWatchDigest(
-                    container.labels?.[wudWatchDigest],
-                    container.image.name,
-                );
-
-            if (!container.image.tag.semver && !watchDigest) {
-                this.log.warn(
-                    `Image ${container.image.name} is not a semver and digest watching is disabled so wud won't report any update. Please review the configuration to enable digest watching for this container or exclude this container from being watched`,
-                );
-            }
-
-            // Get all available tags
-            const tags = await registryProvider.getTags(container.image);
-
-            // Get candidate tags (based on tag name)
-            const tagsCandidates = getTagCandidates(
-                container,
-                tags,
-                logContainer,
-            );
-
-            // Must watch digest? => Find local/remote digests on registry
-            if (watchDigest && container.image.digest.repo) {
-                // If we have a tag candidate BUT we also watch digest
-                // (case where local=`mongo:8` and remote=`mongo:8.0.0`),
-                // Then get the digest of the tag candidate
-                // Else get the digest of the same tag as the local one
-                const imageToGetDigestFrom = JSON.parse(
-                    JSON.stringify(container.image),
-                );
-                if (tagsCandidates.length > 0) {
-                    [imageToGetDigestFrom.tag.value] = tagsCandidates;
-                }
-
-                const remoteDigest =
-                    await registryProvider.getImageManifestDigest(
-                        imageToGetDigestFrom,
-                    );
-
-                result.digest = remoteDigest.digest;
-                result.created = remoteDigest.created;
-
-                if (remoteDigest.version === 2) {
-                    // Regular v2 manifest => Get manifest digest
-
-                    const digestV2 =
-                        await registryProvider.getImageManifestDigest(
-                            imageToGetDigestFrom,
-                            container.image.digest.repo,
-                        );
-                    container.image.digest.value = digestV2.digest;
-                } else {
-                    // Legacy v1 image => take Image digest as reference for comparison.
-                    // Config.Image is empty on most modern images (deprecated since
-                    // Docker moved to content-addressable image storage), so fall back
-                    // to the local image Id, which is the config digest Docker itself
-                    // uses to identify this image.
-                    const image = await this.dockerApi
-                        .getImage(container.image.id)
-                        .inspect();
-                    container.image.digest.value =
-                        image.Config.Image || image.Id;
-                }
-            }
-
-            // The first one in the array is the highest
-            if (tagsCandidates && tagsCandidates.length > 0) {
-                [result.tag] = tagsCandidates;
-            }
-        }
-        return result;
-    }
-
-    /**
      * Add image detail to Container.
      */
-    async addImageDetailsToContainer(
-        container: any,
-        includeTags: string,
-        excludeTags: string,
-        transformTags: string,
-        linkTemplate: string,
-        displayName: string,
-        displayIcon: string,
-        triggerInclude: string,
-        triggerExclude: string,
-    ) {
+    async addImageDetailsToContainer(container: any) {
+        const includeTags = container.Labels[wudTagInclude];
+        const excludeTags = container.Labels[wudTagExclude];
+        const transformTags = container.Labels[wudTagTransform];
+        const linkTemplate = container.Labels[wudLinkTemplate];
+        const displayName = container.Labels[wudDisplayName];
+        const displayIcon = container.Labels[wudDisplayIcon];
+        const triggerInclude = container.Labels[wudTriggerInclude];
+        const triggerExclude = container.Labels[wudTriggerExclude];
+
         const containerId = container.Id;
 
         // Is container already in store? just return it :)
@@ -758,6 +612,22 @@ export class Docker extends Watcher {
             containerInStore !== undefined &&
             containerInStore.error === undefined
         ) {
+            // Refresh name from Docker in case it was renamed
+            // (e.g., Docker Compose replace strategy assigns a hash-prefixed
+            // temp name then renames to the final name)
+            const currentName = getContainerName(container);
+            if (containerInStore.name !== currentName) {
+                this.log.info(
+                    `Container ${containerId} name changed from ${containerInStore.name} to ${currentName}`,
+                );
+                containerInStore.name = currentName;
+                // Also refresh displayName if no explicit wud.display.name label is set
+                // (displayName defaults to name, so it should track name changes)
+                if (!displayName) {
+                    containerInStore.displayName = currentName;
+                }
+                storeContainer.updateContainer(containerInStore);
+            }
             this.log.debug(`Container ${containerInStore.id} already in store`);
             return containerInStore;
         }
@@ -772,7 +642,7 @@ export class Docker extends Watcher {
         const os = image.Os;
         const variant = image.Variant;
         const created = image.Created;
-        const repoDigest = getRepoDigest(image);
+        const repoDigest = image.RepoDigests?.[0]?.split('@')?.[1];
         const imageId = image.Id;
 
         // Parse image to get registry, organization...
@@ -782,7 +652,7 @@ export class Docker extends Watcher {
                 this.log.warn(
                     `Cannot get a reliable tag for this image [${imageNameToParse}]`,
                 );
-                return Promise.resolve();
+                return Promise.resolve(undefined);
             }
             // Get the first repo tag (better than nothing ;)
             [imageNameToParse] = image.RepoTags;
@@ -811,14 +681,15 @@ export class Docker extends Watcher {
         }
         const parsedTag = parseSemver(transformTag(transformTags, tagName));
         const isSemver = parsedTag !== null && parsedTag !== undefined;
-        const watchDigest =
-            !isSemver &&
-            registryProvider.shouldWatchDigest(
-                container.Labels[wudWatchDigest],
-                parsedImage.path,
-            );
+        const watchDigest = shouldWatchDigestForContainer(
+            registryProvider,
+            isSemver,
+            container.Labels[wudWatchDigest],
+            container.Labels[wudWatchDigestSemver],
+            parsedImage.path,
+        );
 
-        return this.normalizeContainer({
+        return normalizeContainer({
             id: containerId,
             name: containerName,
             status,
@@ -893,25 +764,6 @@ export class Docker extends Watcher {
                 containerWithResult.updateAvailable;
         }
         return containerReport;
-    }
-
-    private normalizeContainer(container: Container) {
-        const containerWithNormalizedImage = container;
-        const registryProvider = Object.values(getRegistries()).find(
-            (provider) => provider.match(container.image.registry.url),
-        );
-        if (!registryProvider) {
-            this.log.warn(
-                `${fullName(container)} - No Registry Provider found`,
-            );
-            containerWithNormalizedImage.image.registry.name = 'unknown';
-        } else {
-            containerWithNormalizedImage.image =
-                registryProvider.normalizeImage(container.image);
-            containerWithNormalizedImage.image.registry.name =
-                registryProvider.getId();
-        }
-        return validateContainer(containerWithNormalizedImage);
     }
 }
 

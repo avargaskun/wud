@@ -1,11 +1,8 @@
 import { ContainerImage } from '../../../model/container';
 import Gcr from './Gcr';
 
-jest.mock('axios', () =>
-    jest.fn().mockImplementation(() => ({
-        data: { token: 'xxxxx' },
-    })),
-);
+// Mock axios
+jest.mock('axios');
 
 const gcr = new Gcr();
 gcr.configuration = {
@@ -68,6 +65,8 @@ test('normalizeImage should return the proper registry v2 endpoint', async () =>
 });
 
 test('authenticate should call ecr auth endpoint', async () => {
+    const { default: axios } = await import('axios');
+    (axios as any).mockResolvedValue({ data: { token: 'xxxxx' } });
     expect(
         gcr.authenticate({} as ContainerImage, { headers: {} }),
     ).resolves.toEqual({

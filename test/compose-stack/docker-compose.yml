@@ -1,0 +1,18 @@
+services:
+  zz_batch_compose_1:
+    container_name: zz_batch_compose_1
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+    labels:
+      - 'wud.watch=true'
+      - 'wud.tag.include=^6\.0\.0$'
+      - 'wud.compose.file=/compose/docker-compose.yml'
+  zz_batch_compose_2:
+    container_name: zz_batch_compose_2
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+    labels:
+      - 'wud.watch=true'
+      - 'wud.tag.include=^6\.0\.0$'
+      - 'wud.compose.file=/compose/docker-compose.yml'
+  zz_batch_compose_bystander:
+    container_name: zz_batch_compose_bystander
+    image: ghcr.io/stefanprodan/podinfo:5.0.0   # bystander - must never be co-bumped

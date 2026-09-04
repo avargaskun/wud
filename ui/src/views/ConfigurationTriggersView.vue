@@ -1,8 +1,8 @@
 <template>
   <v-container fluid>
-    <v-row v-for="trigger in triggers" :key="trigger.id">
+    <v-row v-for="trigger in triggers" :key="`${trigger.agent || '_local'}.${trigger.id}`">
       <v-col :cols="12" class="pt-2 pb-2">
-        <trigger-detail :trigger="trigger" />
+        <trigger-detail :trigger="trigger" :agents="agents" />
       </v-col>
     </v-row>
     <v-row v-if="triggers.length === 0">

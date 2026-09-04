@@ -1,5 +1,10 @@
-import axios, { AxiosRequestConfig, Method, AxiosResponse } from 'axios';
-import log from '../log';
+import axios, {
+    AxiosRequestConfig,
+    Method,
+    AxiosResponse,
+    AxiosInstance,
+} from 'axios';
+import log, { registerAxiosErrorLogging } from '../log';
 import Component from '../registry/Component';
 import { getSummaryTags } from '../prometheus/registry';
 import { ContainerImage } from '../model/container';
@@ -36,10 +41,29 @@ export interface RegistryManifestResponse {
     }[];
 }
 
+export interface RegistryImageConfigBlob {
+    config?: {
+        Labels?: Record<string, string>;
+    };
+}
+
+const MANIFEST_ACCEPT_HEADER =
+    'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json';
+
+const OCI_VERSION_LABEL = 'org.opencontainers.image.version';
+
 /**
  * Docker Registry Abstract class.
  */
 export class Registry extends Component {
+    protected axiosInstance: AxiosInstance;
+
+    constructor() {
+        super();
+        this.axiosInstance = axios.create();
+        registerAxiosErrorLogging(this.axiosInstance, () => this.log);
+    }
+
     /**
      * Encode Bse64(login:password)
      */
@@ -125,6 +149,52 @@ export class Registry extends Component {
         });
     }
 
+    protected selectPlatformManifest(
+        responseManifests: RegistryManifestResponse,
+        image: ContainerImage,
+    ): { digest: string; mediaType: string } | undefined {
+        this.log.debug(
+            `Filter manifest for [arch=${image.architecture}, os=${image.os}, variant=${image.variant}]`,
+        );
+        if (!responseManifests.manifests) {
+            return undefined;
+        }
+        let manifestFound;
+        const manifestFounds = responseManifests.manifests.filter(
+            (manifest) =>
+                manifest.platform.architecture === image.architecture &&
+                manifest.platform.os === image.os,
+        );
+
+        // 1 manifest matching al least? Get the first one (better than nothing)
+        if (manifestFounds.length > 0) {
+            [manifestFound] = manifestFounds;
+        }
+
+        // Multiple matching manifests? Try to refine using variant filtering
+        if (manifestFounds.length > 1) {
+            const manifestFoundFilteredOnVariant = manifestFounds.find(
+                (manifest) => manifest.platform.variant === image.variant,
+            );
+
+            // Manifest exactly matching with variant? Select it
+            if (manifestFoundFilteredOnVariant) {
+                manifestFound = manifestFoundFilteredOnVariant;
+            }
+        }
+
+        if (!manifestFound) {
+            return undefined;
+        }
+        this.log.debug(
+            `Manifest found with [digest=${manifestFound.digest}, mediaType=${manifestFound.mediaType}]`,
+        );
+        return {
+            digest: manifestFound.digest,
+            mediaType: manifestFound.mediaType,
+        };
+    }
+
     /**
      * Get image manifest for a remote tag.
      */
@@ -143,14 +213,16 @@ export class Registry extends Component {
                 image,
                 url: `${image.registry.url}/${image.name}/manifests/${tagOrDigest}`,
                 headers: {
-                    Accept: 'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json',
+                    Accept: MANIFEST_ACCEPT_HEADER,
                 },
             });
         if (responseManifests) {
-            log.debug(`Found manifests [${JSON.stringify(responseManifests)}]`);
+            this.log.debug(
+                `Found manifests [${JSON.stringify(responseManifests)}]`,
+            );
             if (responseManifests.schemaVersion === 2) {
-                log.debug('Manifests found with schemaVersion = 2');
-                log.debug(
+                this.log.debug('Manifests found with schemaVersion = 2');
+                this.log.debug(
                     `Manifests media type detected [${responseManifests.mediaType}]`,
                 );
                 if (
@@ -159,42 +231,13 @@ export class Registry extends Component {
                     responseManifests.mediaType ===
                         'application/vnd.oci.image.index.v1+json'
                 ) {
-                    log.debug(
-                        `Filter manifest for [arch=${image.architecture}, os=${image.os}, variant=${image.variant}]`,
+                    const selectedManifest = this.selectPlatformManifest(
+                        responseManifests,
+                        image,
                     );
-                    let manifestFound;
-                    const manifestFounds = responseManifests.manifests.filter(
-                        (manifest: any) =>
-                            manifest.platform.architecture ===
-                                image.architecture &&
-                            manifest.platform.os === image.os,
-                    );
-
-                    // 1 manifest matching al least? Get the first one (better than nothing)
-                    if (manifestFounds.length > 0) {
-                        [manifestFound] = manifestFounds;
-                    }
-
-                    // Multiple matching manifests? Try to refine using variant filtering
-                    if (manifestFounds.length > 1) {
-                        const manifestFoundFilteredOnVariant =
-                            manifestFounds.find(
-                                (manifest: any) =>
-                                    manifest.platform.variant === image.variant,
-                            );
-
-                        // Manifest exactly matching with variant? Select it
-                        if (manifestFoundFilteredOnVariant) {
-                            manifestFound = manifestFoundFilteredOnVariant;
-                        }
-                    }
-
-                    if (manifestFound) {
-                        log.debug(
-                            `Manifest found with [digest=${manifestFound.digest}, mediaType=${manifestFound.mediaType}]`,
-                        );
-                        manifestDigestFound = manifestFound.digest;
-                        manifestMediaType = manifestFound.mediaType;
+                    if (selectedManifest) {
+                        manifestDigestFound = selectedManifest.digest;
+                        manifestMediaType = selectedManifest.mediaType;
                     }
                 } else if (
                     responseManifests.mediaType ===
@@ -207,14 +250,14 @@ export class Registry extends Component {
                     // identifier. Do not use responseManifests.config.digest here;
                     // that's the digest of the config blob, not of the manifest,
                     // and is not a valid value to re-request a manifest with.
-                    log.debug(
+                    this.log.debug(
                         `Manifest found with [reference=${tagOrDigest}, mediaType=${responseManifests.mediaType}]`,
                     );
                     manifestDigestFound = tagOrDigest;
                     manifestMediaType = responseManifests.mediaType;
                 }
             } else if (responseManifests.schemaVersion === 1) {
-                log.debug('Manifests found with schemaVersion = 1');
+                this.log.debug('Manifests found with schemaVersion = 1');
                 const v1Compat = JSON.parse(
                     responseManifests.history[0].v1Compatibility,
                 );
@@ -223,7 +266,7 @@ export class Registry extends Component {
                     created: v1Compat.created,
                     version: 1,
                 };
-                log.debug(
+                this.log.debug(
                     `Manifest found with [digest=${manifestFound.digest}, created=${manifestFound.created}, version=${manifestFound.version}]`,
                 );
                 return manifestFound;
@@ -280,6 +323,63 @@ export class Registry extends Component {
         throw new Error('Unexpected error; no manifest found');
     }
 
+    /**
+     * Resolve the org.opencontainers.image.version label of a remote tag.
+     * Returns undefined when the image publishes no such label.
+     */
+    async getImageVersionLabel(
+        image: ContainerImage,
+        tag: string,
+    ): Promise<string | undefined> {
+        this.log.debug(
+            `${this.getId()} - Get ${image.name}:${tag} version label`,
+        );
+        const responseManifests =
+            await this.callRegistry<RegistryManifestResponse>({
+                image,
+                url: `${image.registry.url}/${image.name}/manifests/${tag}`,
+                headers: { Accept: MANIFEST_ACCEPT_HEADER },
+            });
+        // schemaVersion 1 manifests carry no OCI labels
+        if (!responseManifests || responseManifests.schemaVersion !== 2) {
+            return undefined;
+        }
+
+        let configDigest = responseManifests.config?.digest;
+        const isIndex =
+            responseManifests.mediaType ===
+                'application/vnd.docker.distribution.manifest.list.v2+json' ||
+            responseManifests.mediaType ===
+                'application/vnd.oci.image.index.v1+json' ||
+            Array.isArray(responseManifests.manifests);
+        if (isIndex) {
+            const selectedManifest = this.selectPlatformManifest(
+                responseManifests,
+                image,
+            );
+            if (!selectedManifest) {
+                return undefined;
+            }
+            const childManifest =
+                await this.callRegistry<RegistryManifestResponse>({
+                    image,
+                    url: `${image.registry.url}/${image.name}/manifests/${selectedManifest.digest}`,
+                    headers: { Accept: selectedManifest.mediaType },
+                });
+            configDigest = childManifest?.config?.digest;
+        }
+        if (!configDigest) {
+            return undefined;
+        }
+
+        const configBlob = await this.callRegistry<RegistryImageConfigBlob>({
+            image,
+            url: `${image.registry.url}/${image.name}/blobs/${configDigest}`,
+            headers: { Accept: 'application/json' },
+        });
+        return configBlob?.config?.Labels?.[OCI_VERSION_LABEL];
+    }
+
     async callRegistry<T = any>(options: {
         image: ContainerImage;
         url: string;
@@ -327,19 +427,19 @@ export class Registry extends Component {
         );
 
         try {
-            const response = (await axios(
+            const response = (await this.axiosInstance(
                 axiosOptionsWithAuth,
             )) as AxiosResponse<T>;
             this.observePrometheusSummaryTags(start);
             return resolveWithFullResponse ? response : response.data;
         } catch (error) {
-            const end = new Date().getTime();
             this.observePrometheusSummaryTags(start);
             throw error;
         }
     }
 
     observePrometheusSummaryTags(start: number) {
+        // The metric may be undefined if running in Agent mode because Prometheus is disabled
         const summaryTags = getSummaryTags();
         if (summaryTags) {
             const end = new Date().getTime();

@@ -8,6 +8,8 @@ import {
     registerContainerRemoved,
 } from '../event';
 
+const CEILING_KEYS = ['ceiling_tag', 'ceiling_version'];
+
 let gaugeContainer;
 let metricsDirty = true;
 
@@ -25,6 +27,13 @@ function populateGauge() {
             const flatContainer = flatten(container);
             const flatContainerWithoutLabels = Object.keys(flatContainer)
                 .filter((key) => !key.startsWith('labels_'))
+                // flatten() emits null buckets and empty objects as leaves, producing
+                // undeclared labels that make prom-client throw -- and the catch below
+                // would silently drop the container from wud_containers entirely.
+                .filter((key) => typeof flatContainer[key] !== 'object')
+                // stripped here, not in flatten(), so k/v integrations keep
+                // publishing the ceiling; only the allowlisted gauge needs it gone
+                .filter((key) => !CEILING_KEYS.includes(key))
                 .reduce((obj, key) => {
                     obj[key] = flatContainer[key];
                     return obj;
@@ -52,6 +61,7 @@ export function init() {
         name: 'wud_containers',
         help: 'The watched containers',
         labelNames: [
+            'agent',
             'display_icon',
             'display_name',
             'error_message',
@@ -88,6 +98,30 @@ export function init() {
             'update_kind_local_value',
             'update_kind_remote_value',
             'update_kind_semver_diff',
+            'updates_digest_created',
+            'updates_digest_kind',
+            'updates_digest_link',
+            'updates_digest_local_value',
+            'updates_digest_remote_value',
+            'updates_digest_semver_diff',
+            'updates_major_created',
+            'updates_major_kind',
+            'updates_major_link',
+            'updates_major_local_value',
+            'updates_major_remote_value',
+            'updates_major_semver_diff',
+            'updates_minor_created',
+            'updates_minor_kind',
+            'updates_minor_link',
+            'updates_minor_local_value',
+            'updates_minor_remote_value',
+            'updates_minor_semver_diff',
+            'updates_patch_created',
+            'updates_patch_kind',
+            'updates_patch_link',
+            'updates_patch_local_value',
+            'updates_patch_remote_value',
+            'updates_patch_semver_diff',
             'watcher',
         ],
     });

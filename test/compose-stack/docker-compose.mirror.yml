@@ -1,0 +1,5 @@
+services:
+  zz_mirror_app:
+    image: mirror.local/ghcr.io/stefanprodan/podinfo:5.0.0
+  zz_mirror_bystander:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0

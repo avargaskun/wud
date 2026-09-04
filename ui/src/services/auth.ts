@@ -58,6 +58,9 @@ async function loginBasic(username, password) {
       password,
     }),
   });
+  if (!response.ok) {
+    throw new Error("Authentication failed");
+  }
   user = await response.json();
   return user;
 }
@@ -67,7 +70,12 @@ async function loginBasic(username, password) {
  * @returns {Promise<*>}
  */
 async function getOidcRedirection(name) {
-  const response = await fetch(url(`auth/oidc/${name}/redirect`), { credentials: "include" });
+  const response = await fetch(url(`auth/oidc/${name}/redirect`), {
+    credentials: "include",
+  });
+  if (!response.ok) {
+    throw new Error("Failed to get OIDC redirection URL");
+  }
   user = await response.json();
   return user;
 }
@@ -82,8 +90,15 @@ async function logout() {
     credentials: "include",
     redirect: "manual",
   });
+  if (!response.ok && response.status !== 0 && response.type !== 'opaqueredirect') {
+    throw new Error("Logout failed");
+  }
   user = undefined;
-  return response.json();
+  try {
+      return await response.json();
+  } catch (e) {
+      return {};
+  }
 }
 
 export { getStrategies, getUser, loginBasic, getOidcRedirection, logout };

@@ -1,4 +1,3 @@
-// @ts-nocheck
 /**
  * WUD supported Docker labels.
  */
@@ -24,9 +23,26 @@ export const wudTagExclude = 'wud.tag.exclude';
 export const wudTagTransform = 'wud.tag.transform';
 
 /**
+ * Optional tag name whose current version caps the versions WUD will report.
+ */
+export const wudTagCeiling = 'wud.tag.ceiling';
+
+/**
+ * Optional static full or partial semver capping the versions WUD will report.
+ */
+export const wudTagCeilingVersion = 'wud.tag.ceiling.version';
+
+/**
  * Should container digest be tracked? (true | false).
  */
 export const wudWatchDigest = 'wud.watch.digest';
+
+/**
+ * Should digest be tracked for a semver tagged container? (true | false).
+ * Dedicated label: wud.watch.digest is inert on semver tags today, so honouring
+ * it here would silently activate digest watching on upgrade.
+ */
+export const wudWatchDigestSemver = 'wud.watch.digest.semver';
 
 /**
  * Optional templated string pointing to a browsable link.
@@ -52,3 +68,8 @@ export const wudTriggerInclude = 'wud.trigger.include';
  * Optional list of triggers to exclude
  */
 export const wudTriggerExclude = 'wud.trigger.exclude';
+
+/**
+ * Optional comma-separated list of dependent containers to bounce after this container is updated.
+ */
+export const wudPostupdateRestart = 'wud.postupdate.restart';

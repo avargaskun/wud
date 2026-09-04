@@ -40,7 +40,7 @@ You just need to give them different names.
 
 !> Watching image digests causes an extensive usage of _Docker Registry Pull API_ which is restricted by [**Quotas on the Docker Hub**](https://docs.docker.com/docker-hub/download-rate-limit/). \
 By default, WUD enables it only for **non semver** image tags. \
-You can tune this behavior per container using the `wud.watch.digest` label. \
+You can tune this behavior per container using the `wud.watch.digest` label (**non semver** tags) or the `wud.watch.digest.semver` label (**semver** tags). \
 If you face [quota related errors](https://docs.docker.com/docker-hub/download-rate-limit/#how-do-i-know-my-pull-requests-are-being-limited), consider slowing down the watcher rate by adjusting the `WUD_WATCHER_{watcher_name}_CRON` variable.
 
 ## Variable examples
@@ -205,12 +205,16 @@ To fine-tune the behaviour of WUD _per container_, you can add labels on them.
 | `wud.display.icon`    | :white_circle: | Custom display icon for the container              | Valid [Material Design Icon](https://materialdesignicons.com/), [Fontawesome Icon](https://fontawesome.com/) or [Simple icon](https://simpleicons.org/) (see details below) | `mdi:docker`                                                                          |
 | `wud.display.name`    | :white_circle: | Custom display name for the container              | Valid String                                                                                                                                                                | Container name                                                                        |
 | `wud.link.template`   | :white_circle: | Browsable link associated to the container version | JS string template with vars `${container}`, `${original}`, `${transformed}`, `${major}`, `${minor}`, `${patch}`, `${prerelease}`                                           |                                                                                       |
+| `wud.postupdate.restart` | :white_circle: | Comma separated list of container names to bounce after this container is updated | `$container_name_1,$container_name_2`                                                                                                    |                                                                                       |
+| `wud.tag.ceiling`     | :white_circle: | Tag name whose current version caps the versions WUD will report | Valid tag name (the image must publish `org.opencontainers.image.version`)                                                                                     |                                                                                       |
+| `wud.tag.ceiling.version` | :white_circle: | Static full or partial semver capping the versions WUD will report | `2`, `2.1`, `2.1.3`                                                                                                                                         |                                                                                       |
 | `wud.tag.exclude`     | :white_circle: | Regex to exclude specific tags                     | Valid JavaScript Regex                                                                                                                                                      |                                                                                       |
 | `wud.tag.include`     | :white_circle: | Regex to include specific tags only                | Valid JavaScript Regex                                                                                                                                                      |                                                                                       |
 | `wud.tag.transform`   | :white_circle: | Transform function to apply to the tag             | `$valid_regex => $valid_string_with_placeholders` (see below)                                                                                                               |                                                                                       |
 | `wud.trigger.exclude` | :white_circle: | Optional list of triggers to exclude               | `$trigger_1_id,$trigger_2_id:$threshold`                                                                                                                                    |                                                                                       |
 | `wud.trigger.include` | :white_circle: | Optional list of triggers to include               | `$trigger_1_id,$trigger_2_id:$threshold`                                                                                                                                    |                                                                                       |
-| `wud.watch.digest`    | :white_circle: | Watch this container digest                        | Valid Boolean                                                                                                                                                               | `false`                                                                               |
+| `wud.watch.digest`    | :white_circle: | Watch this container digest (**non semver** tags only) | Valid Boolean                                                                                                                                                           | `false`                                                                               |
+| `wud.watch.digest.semver` | :white_circle: | Watch this container digest when its tag **is** a semver tag | Valid Boolean                                                                                                                                                | `false`                                                                               |
 | `wud.watch`           | :white_circle: | Watch this container                               | Valid Boolean                                                                                                                                                               | `true` when `WUD_WATCHER_{watcher_name}_WATCHBYDEFAULT` is `true` (`false` otherwise) |
 
 ## Label examples
@@ -372,6 +376,74 @@ searx/searx:1.0.0-269-7b368146
 
 <!-- tabs:end -->
 
+### Cap the versions WUD is allowed to report
+
+Some publishers ship a plain semver tag before promoting it to their stable channel. n8n, for example, publishes `2.38.x` while `:stable` still points at `2.37.9`.
+A **version ceiling** tells WUD to report (and auto-apply) updates only up to a cap, so you keep pinned version tags and per-bucket visibility but never install a version the publisher has not promoted yet.
+
+Two mutually exclusive labels are available:
+
+- `wud.tag.ceiling` — **dynamic**. The name of another tag (`stable`); the version it currently points to is resolved on every watch cycle from the remote image's `org.opencontainers.image.version` OCI label.
+- `wud.tag.ceiling.version` — **static**. A full or partial semver (`2`, `2.1`, `2.1.3`). A partial value caps the whole line: `2` allows every `2.x.y`, `2.1` allows every `2.1.z`.
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.37.9
+    labels:
+      - wud.tag.ceiling=stable
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name n8n --label wud.tag.ceiling=stable docker.n8n.io/n8nio/n8n:2.37.9
+```
+
+<!-- tabs:end -->
+
+The same container capped statically instead:
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.37.9
+    labels:
+      - wud.tag.ceiling.version=2.37
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name n8n --label wud.tag.ceiling.version=2.37 docker.n8n.io/n8nio/n8n:2.37.9
+```
+
+<!-- tabs:end -->
+
+The resolved ceiling is reported through the container `ceiling` field (see the [Container API](/api/container/?id=ceiling)) and displayed in the container detail view.
+
+!> The two labels are **mutually exclusive**. Setting both is a configuration error: WUD reports no tag updates for the container and sets its `error` field.
+
+!> Resolving a ceiling **fails closed**. If the ceiling tag cannot be resolved (registry error, or the image publishes no `org.opencontainers.image.version` label), or if the static value is not a valid semver, WUD reports **no tag updates at all** for that container and sets its `error` field (shown in the UI). Resolution is retried on the next watch cycle. Failing open would silently restore uncapped auto-updates precisely when WUD cannot tell what the cap is.
+
+?> A ceiling **never** caps digest updates. A digest update is a rebuild of the tag the container is already running, so it can never be above the ceiling; it keeps being reported even while a ceiling is failing to resolve.
+
+?> A ceiling only filters **tag candidates**, it never removes an update bucket. A bucket that a ceiling emptied stays present and reports `null` (see the [Container API](/api/container/?id=ceiling)).
+
+?> Both labels are **silently inert on a container running a non semver tag** (`latest`, `stable`...), exactly like `wud.tag.include` / `wud.tag.exclude`. WUD proposes no tag candidates for such containers at all, so there is nothing for a ceiling to cap and no registry call is made to resolve one.
+
+!> Like every other `wud.*` label, adding or changing a ceiling label takes effect when the container is **recreated** (or after the container enters an error state).
+
+!> A dynamic ceiling costs **two to three additional registry calls per watch cycle** for each distinct image and ceiling tag (containers sharing both are resolved once per cycle): the ceiling tag manifest, the platform child manifest for a multi arch image, then the image config blob. A static ceiling costs nothing — it makes no registry call.
+
 ### Enable digest watching
 
 Additionally to semver tag tracking, you can also track if the digest associated to the local tag has been updated.  
@@ -397,6 +469,39 @@ docker run -d --name mariadb --label 'wud.tag.include=^\d+$' --label wud.watch.d
 ```
 
 <!-- tabs:end -->
+
+### Enable digest watching on a semver tagged container
+
+`wud.watch.digest` only applies to containers running a **non semver** tag. \
+To also watch the digest of a container running a **semver** tag, use the dedicated `wud.watch.digest.semver` label.
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  radarr:
+    image: radarr:5.2.1
+    labels:
+      - wud.watch.digest.semver=true
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name radarr --label wud.watch.digest.semver=true radarr:5.2.1
+```
+
+<!-- tabs:end -->
+
+The digest is always compared against the digest currently published for the **tag the container is running** (`5.2.1` above), never against the digest of a newer candidate tag. A digest update therefore always means _"the image behind the tag I am running has been rebuilt"_, and it is reported independently of any newer tag that may also be available.
+
+!> The digest is reported through the `digest` entry of the container `updates` field. A `digest` update is eligible at **every** trigger threshold, and it is the **only** kind eligible at the `digest` threshold (see the [Triggers](/configuration/triggers/) documentation).
+
+!> Opting in costs **two additional registry calls per watch cycle** for each container carrying the label (a `GET` then a `HEAD` on the image manifest). Keep an eye on the [Docker Hub quotas](https://docs.docker.com/docker-hub/download-rate-limit/) if you enable it widely.
+
+?> **Why a separate label rather than `wud.watch.digest`?** On a semver tagged container `wud.watch.digest` has always done nothing, so an unknown number of deployments already carry it. Honouring it would have switched digest watching on at upgrade time with no user action — and because a digest update is eligible at every threshold and triggers are automatic by default, the first watch cycle could have stopped, removed and recreated those running containers unprompted. `wud.watch.digest` therefore stays inert on semver tags, and `wud.watch.digest.semver` makes the new behaviour strictly opt-in.
 
 ### Associate a link to the container version
 
@@ -471,6 +576,50 @@ docker run -d --name mariadb --label 'wud.display.name=Maria DB' --label 'wud.di
 
 <!-- tabs:end -->
 
+### Restart dependent containers after an update
+
+Containers sharing the network namespace of another container (`network_mode: container:<x>` in `docker run`, `network_mode: service:<x>` in Compose) lose their network when that container is updated: the update recreates it, and the sidecars stay attached to a namespace that no longer exists. Their healthchecks often keep passing, so the breakage is silent.
+
+Add the `wud.postupdate.restart` label on the **network host** container to let WUD bounce its dependents once the update succeeded.
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  gluetun:
+    image: qmcgaw/gluetun:3.38.0
+    labels:
+      - wud.watch=true
+      - wud.postupdate.restart=qbittorrent,qbittorrent-exporter
+
+  qbittorrent:
+    image: linuxserver/qbittorrent:4.6.5
+    network_mode: service:gluetun
+
+  qbittorrent-exporter:
+    image: caseyscarborough/qbittorrent-exporter:1.4.0
+    network_mode: service:gluetun
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name gluetun \
+  --label 'wud.watch=true' \
+  --label 'wud.postupdate.restart=qbittorrent,qbittorrent-exporter' \
+  qmcgaw/gluetun:3.38.0
+
+docker run -d --name qbittorrent --network container:gluetun linuxserver/qbittorrent:4.6.5
+```
+
+<!-- tabs:end -->
+
+?> The dependents are named by **container name** and are resolved on the same Docker host as the labeled container. They do **not** need to be watched by WUD.
+
+?> The label is honoured by the [docker](/configuration/triggers/docker/) and [docker-compose](/configuration/triggers/docker-compose/) triggers only; see their documentation for the exact restart / recreate behaviour and the associated timeout.
+
 ### Assign different triggers to containers
 
 You can assign different triggers and thresholds on a per container basis.
@@ -506,3 +655,5 @@ docker run -d --name my_important_service --label 'wud.trigger.include=smtp.gmai
 ?> Threshold `minor` means that the trigger will run only if this is a `minor` or `patch` semver change
 
 ?> Threshold `patch` means that the trigger will run only if this is a `patch` semver change
+
+?> Threshold `digest` (e.g. `wud.trigger.include=docker.update:digest`) means that the trigger will run only for a digest rebuild of the tag the container already runs — no tag change is ever installed, while `major`, `minor` and `patch` updates keep being detected and displayed

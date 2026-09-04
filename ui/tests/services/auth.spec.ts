@@ -77,9 +77,7 @@ describe('Auth Service', () => {
         json: async () => ({ error: 'Invalid credentials' })
       });
 
-      const user = await loginBasic('testuser', 'wrongpass');
-
-      expect(user).toEqual({ error: 'Invalid credentials' });
+      await expect(loginBasic('testuser', 'wrongpass')).rejects.toThrow('Authentication failed');
     });
   });
 
