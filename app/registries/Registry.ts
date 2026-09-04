@@ -41,6 +41,9 @@ export interface RegistryManifestResponse {
     }[];
 }
 
+const MANIFEST_ACCEPT_HEADER =
+    'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json';
+
 /**
  * Docker Registry Abstract class.
  */
@@ -138,6 +141,52 @@ export class Registry extends Component {
         });
     }
 
+    protected selectPlatformManifest(
+        responseManifests: RegistryManifestResponse,
+        image: ContainerImage,
+    ): { digest: string; mediaType: string } | undefined {
+        this.log.debug(
+            `Filter manifest for [arch=${image.architecture}, os=${image.os}, variant=${image.variant}]`,
+        );
+        if (!responseManifests.manifests) {
+            return undefined;
+        }
+        let manifestFound;
+        const manifestFounds = responseManifests.manifests.filter(
+            (manifest) =>
+                manifest.platform.architecture === image.architecture &&
+                manifest.platform.os === image.os,
+        );
+
+        // 1 manifest matching al least? Get the first one (better than nothing)
+        if (manifestFounds.length > 0) {
+            [manifestFound] = manifestFounds;
+        }
+
+        // Multiple matching manifests? Try to refine using variant filtering
+        if (manifestFounds.length > 1) {
+            const manifestFoundFilteredOnVariant = manifestFounds.find(
+                (manifest) => manifest.platform.variant === image.variant,
+            );
+
+            // Manifest exactly matching with variant? Select it
+            if (manifestFoundFilteredOnVariant) {
+                manifestFound = manifestFoundFilteredOnVariant;
+            }
+        }
+
+        if (!manifestFound) {
+            return undefined;
+        }
+        this.log.debug(
+            `Manifest found with [digest=${manifestFound.digest}, mediaType=${manifestFound.mediaType}]`,
+        );
+        return {
+            digest: manifestFound.digest,
+            mediaType: manifestFound.mediaType,
+        };
+    }
+
     /**
      * Get image manifest for a remote tag.
      */
@@ -156,7 +205,7 @@ export class Registry extends Component {
                 image,
                 url: `${image.registry.url}/${image.name}/manifests/${tagOrDigest}`,
                 headers: {
-                    Accept: 'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json',
+                    Accept: MANIFEST_ACCEPT_HEADER,
                 },
             });
         if (responseManifests) {
@@ -174,42 +223,13 @@ export class Registry extends Component {
                     responseManifests.mediaType ===
                         'application/vnd.oci.image.index.v1+json'
                 ) {
-                    this.log.debug(
-                        `Filter manifest for [arch=${image.architecture}, os=${image.os}, variant=${image.variant}]`,
+                    const selectedManifest = this.selectPlatformManifest(
+                        responseManifests,
+                        image,
                     );
-                    let manifestFound;
-                    const manifestFounds = responseManifests.manifests.filter(
-                        (manifest: any) =>
-                            manifest.platform.architecture ===
-                                image.architecture &&
-                            manifest.platform.os === image.os,
-                    );
-
-                    // 1 manifest matching al least? Get the first one (better than nothing)
-                    if (manifestFounds.length > 0) {
-                        [manifestFound] = manifestFounds;
-                    }
-
-                    // Multiple matching manifests? Try to refine using variant filtering
-                    if (manifestFounds.length > 1) {
-                        const manifestFoundFilteredOnVariant =
-                            manifestFounds.find(
-                                (manifest: any) =>
-                                    manifest.platform.variant === image.variant,
-                            );
-
-                        // Manifest exactly matching with variant? Select it
-                        if (manifestFoundFilteredOnVariant) {
-                            manifestFound = manifestFoundFilteredOnVariant;
-                        }
-                    }
-
-                    if (manifestFound) {
-                        this.log.debug(
-                            `Manifest found with [digest=${manifestFound.digest}, mediaType=${manifestFound.mediaType}]`,
-                        );
-                        manifestDigestFound = manifestFound.digest;
-                        manifestMediaType = manifestFound.mediaType;
+                    if (selectedManifest) {
+                        manifestDigestFound = selectedManifest.digest;
+                        manifestMediaType = selectedManifest.mediaType;
                     }
                 } else if (
                     responseManifests.mediaType ===
