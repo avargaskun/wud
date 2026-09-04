@@ -118,3 +118,36 @@ export function compare(version1: string, version2: string): number | null {
     }
     return semver.compare(v1, v2);
 }
+
+/** Normalize a user- or registry-supplied ceiling value ("v2.1 " -> "2.1"). */
+export function normalizeCeiling(rawCeiling: string): string {
+    return rawCeiling.trim().replace(/^v/i, '');
+}
+
+/** True when `rawCeiling` is usable as a ceiling (full or partial semver). */
+export function isValidCeiling(rawCeiling: string): boolean {
+    const normalized = normalizeCeiling(rawCeiling);
+    return normalized !== '' && semver.validRange(`<=${normalized}`) !== null;
+}
+
+/**
+ * True when `version` is at or below `rawCeiling`.
+ * includePrerelease keeps this a pure version cap: without it, node-semver would
+ * drop every prerelease, turning the ceiling into a prerelease filter as well.
+ */
+export function isAtOrBelowCeiling(
+    version: string,
+    rawCeiling: string,
+): boolean {
+    const versionSemver = parse(version);
+    const normalized = normalizeCeiling(rawCeiling);
+    if (
+        versionSemver === null ||
+        semver.validRange(`<=${normalized}`) === null
+    ) {
+        return false;
+    }
+    return semver.satisfies(versionSemver, `<=${normalized}`, {
+        includePrerelease: true,
+    });
+}

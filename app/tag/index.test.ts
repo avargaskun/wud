@@ -348,6 +348,119 @@ describe('transform', () => {
     });
 });
 
+describe('normalizeCeiling', () => {
+    const normalizations = [
+        { input: ' v2.1 ', expected: '2.1', desc: 'trim and strip v prefix' },
+        { input: '2.1', expected: '2.1', desc: 'leave a bare version as is' },
+        { input: 'V2.37.9', expected: '2.37.9', desc: 'strip uppercase V' },
+        { input: '  ', expected: '', desc: 'reduce blanks to empty string' },
+    ];
+
+    test.each(normalizations)('should $desc', ({ input, expected }) => {
+        expect(semver.normalizeCeiling(input)).toBe(expected);
+    });
+});
+
+describe('isValidCeiling', () => {
+    const ceilings = [
+        { input: '2', expected: true, desc: 'major only ceiling' },
+        { input: '2.1', expected: true, desc: 'major.minor ceiling' },
+        { input: '2.1.3', expected: true, desc: 'full semver ceiling' },
+        { input: 'v2.37.9', expected: true, desc: 'v prefixed ceiling' },
+        { input: 'stable', expected: false, desc: 'non semver ceiling' },
+        { input: '', expected: false, desc: 'empty ceiling' },
+        { input: '  ', expected: false, desc: 'blank ceiling' },
+    ];
+
+    test.each(ceilings)('should handle $desc', ({ input, expected }) => {
+        expect(semver.isValidCeiling(input)).toBe(expected);
+    });
+});
+
+describe('isAtOrBelowCeiling', () => {
+    const comparisons = [
+        {
+            version: '2.9.9',
+            ceiling: '2',
+            expected: true,
+            desc: 'a version inside a major only ceiling',
+        },
+        {
+            version: '3.0.0',
+            ceiling: '2',
+            expected: false,
+            desc: 'a version above a major only ceiling',
+        },
+        {
+            version: '2.1.5',
+            ceiling: '2.1',
+            expected: true,
+            desc: 'a version inside a major.minor ceiling',
+        },
+        {
+            version: '2.2.0',
+            ceiling: '2.1',
+            expected: false,
+            desc: 'a version above a major.minor ceiling',
+        },
+        {
+            version: '2.37.9',
+            ceiling: '2.37.9',
+            expected: true,
+            desc: 'a version exactly at the ceiling',
+        },
+        {
+            version: '2.38.0',
+            ceiling: '2.37.9',
+            expected: false,
+            desc: 'a version just above an exact ceiling',
+        },
+        {
+            version: '2.5.0-rc.1',
+            ceiling: '2',
+            expected: true,
+            desc: 'a prerelease below the ceiling (never a prerelease filter)',
+        },
+        {
+            version: '2.38.0-rc.1',
+            ceiling: '2.37.9',
+            expected: false,
+            desc: 'a prerelease above the ceiling',
+        },
+        {
+            version: 'v2.1.0',
+            ceiling: '2.1',
+            expected: true,
+            desc: 'a v prefixed version',
+        },
+        {
+            version: 'not-a-version',
+            ceiling: '2',
+            expected: false,
+            desc: 'an unparseable version',
+        },
+        {
+            version: '2.0.0',
+            ceiling: 'stable',
+            expected: false,
+            desc: 'a non semver ceiling',
+        },
+        {
+            version: '2.0.0',
+            ceiling: '',
+            expected: false,
+            desc: 'an empty ceiling',
+        },
+    ];
+
+    test.each(comparisons)(
+        'should handle $desc',
+        ({ version, ceiling, expected }) => {
+            expect(semver.isAtOrBelowCeiling(version, ceiling)).toBe(expected);
+        },
+    );
+});
+
 describe('integration tests', () => {
     test('should handle complete semver workflow', async () => {
         const versions = ['1.0.0', '1.1.0', '2.0.0-alpha', '2.0.0', '2.1.0'];
