@@ -496,6 +496,59 @@ describe('Docker Watcher', () => {
             expect('result' in container).toBe(false);
             expect(container.error).toEqual({ message: 'boom' });
         });
+
+        test('should assign the ceiling and the error from findNewVersion', async () => {
+            const container = { id: 'test123', name: 'test' };
+            docker.log = {
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+            };
+            docker.configuration = { discoveryonly: false };
+            utils.findNewVersion.mockResolvedValue({
+                result: { tag: '1.0.0' },
+                updates: {},
+                ceiling: { tag: 'stable', version: '2.37.9' },
+                error: { message: 'Ceiling boom' },
+            });
+            docker.mapContainerToContainerReport = jest
+                .fn()
+                .mockImplementation((c) => ({ container: c, changed: false }));
+
+            await docker.watchContainer(container);
+
+            expect(container.ceiling).toEqual({
+                tag: 'stable',
+                version: '2.37.9',
+            });
+            expect(container.error).toEqual({ message: 'Ceiling boom' });
+        });
+
+        test('should clear a stale ceiling when findNewVersion returns none', async () => {
+            const container = {
+                id: 'test123',
+                name: 'test',
+                ceiling: { tag: 'stable', version: '2.37.9' },
+            };
+            docker.log = {
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+            };
+            docker.configuration = { discoveryonly: false };
+            utils.findNewVersion.mockResolvedValue({
+                result: { tag: '1.0.0' },
+                updates: {},
+            });
+            docker.mapContainerToContainerReport = jest
+                .fn()
+                .mockImplementation((c) => ({ container: c, changed: false }));
+
+            await docker.watchContainer(container);
+
+            expect(container.ceiling).toBeUndefined();
+            expect('ceiling' in container).toBe(false);
+        });
     });
 
     describe('Container Details', () => {

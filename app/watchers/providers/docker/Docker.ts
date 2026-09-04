@@ -480,16 +480,19 @@ export class Docker extends Watcher {
         delete containerWithResult.result;
         delete containerWithResult.updates;
         delete containerWithResult.error;
+        delete containerWithResult.ceiling;
         logContainer.debug('Start watching');
 
         try {
-            const { result, updates } = await findNewVersion(
+            const { result, updates, ceiling, error } = await findNewVersion(
                 container,
                 this.dockerApi,
                 logContainer,
             );
             containerWithResult.result = result;
             containerWithResult.updates = updates;
+            if (ceiling) containerWithResult.ceiling = ceiling;
+            if (error) containerWithResult.error = error;
         } catch (e) {
             logContainer.warn(`Error when processing (${e.message})`);
             logContainer.debug(e);

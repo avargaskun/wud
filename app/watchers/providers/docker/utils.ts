@@ -522,6 +522,8 @@ export async function resolveCeiling(
 export interface FindNewVersionResult {
     result: ContainerResult;
     updates: ContainerUpdates;
+    ceiling?: ContainerCeiling;
+    error?: { message: string };
 }
 
 /**
@@ -557,11 +559,24 @@ export async function findNewVersion(
             );
         }
 
+        // A ceiling cannot change the outcome for a non-semver tag (no candidates at all)
+        const ceilingResolution = container.image.tag.semver
+            ? await resolveCeiling(container, registryProvider, logContainer)
+            : {};
+        const ceilingFailed = ceilingResolution.error !== undefined;
+
         // Get all available tags
         const tags = await registryProvider.getTags(container.image);
 
         // Get candidate tags (based on tag name)
-        const tagsCandidates = getTagCandidates(container, tags, logContainer);
+        const tagsCandidates = ceilingFailed
+            ? []
+            : getTagCandidates(
+                  container,
+                  tags,
+                  logContainer,
+                  ceilingResolution.ceiling?.version,
+              );
 
         // Must watch digest? => Find local/remote digests on registry
         if (watchDigest && container.image.digest.repo) {
@@ -614,6 +629,12 @@ export async function findNewVersion(
         return {
             result,
             updates: computeUpdateBuckets(container, tagsCandidates, result),
+            ...(ceilingResolution.ceiling
+                ? { ceiling: ceilingResolution.ceiling }
+                : {}),
+            ...(ceilingResolution.error
+                ? { error: { message: ceilingResolution.error } }
+                : {}),
         };
     }
 }
