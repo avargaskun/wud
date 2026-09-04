@@ -442,7 +442,7 @@ The resolved ceiling is reported through the container `ceiling` field (see the 
 
 !> Like every other `wud.*` label, adding or changing a ceiling label takes effect when the container is **recreated** (or after the container enters an error state).
 
-!> A dynamic ceiling costs **two to three additional registry calls per watch cycle** for each container carrying the label (the ceiling tag manifest, the platform child manifest for a multi arch image, then the image config blob). A static ceiling costs nothing — it makes no registry call.
+!> A dynamic ceiling costs **two to three additional registry calls per watch cycle** for each distinct image and ceiling tag (containers sharing both are resolved once per cycle): the ceiling tag manifest, the platform child manifest for a multi arch image, then the image config blob. A static ceiling costs nothing — it makes no registry call.
 
 ### Enable digest watching
 
