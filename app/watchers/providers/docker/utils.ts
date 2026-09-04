@@ -601,8 +601,10 @@ export async function findNewVersion(
             : {};
         const ceilingFailed = ceilingResolution.error !== undefined;
 
-        // Get all available tags
-        const tags = await registryProvider.getTags(container.image);
+        // Get all available tags (skipped when the ceiling failed, as no candidate can survive)
+        const tags = ceilingFailed
+            ? []
+            : await registryProvider.getTags(container.image);
 
         // Get candidate tags (based on tag name)
         const tagsCandidates = ceilingFailed

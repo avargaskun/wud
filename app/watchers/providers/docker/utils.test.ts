@@ -1494,6 +1494,7 @@ describe('Docker Watcher Utils', () => {
                         remoteValue: 'sha256:def456',
                     }),
                 );
+                expect(mockProvider.getTags).not.toHaveBeenCalled();
             });
 
             test('should cap the candidates with a static ceiling', async () => {
