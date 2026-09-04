@@ -232,6 +232,38 @@ test('gauge must accept a container whose updates object is empty', async () => 
     expect(spySet.mock.calls[0][0].id).toEqual('container-123456789');
 });
 
+test('gauge must accept a container carrying a ceiling and strip the ceiling labels', async () => {
+    let onAdded;
+    event.registerContainerAdded.mockImplementation((handler) => {
+        onAdded = handler;
+        return jest.fn();
+    });
+    event.registerContainerUpdated.mockImplementation(() => jest.fn());
+    event.registerContainerRemoved.mockImplementation(() => jest.fn());
+    const ceilingContainer = {
+        ...sampleContainers[0],
+        ceiling: { tag: 'stable', version: '2.37.9' },
+    };
+    store.getContainers = jest.fn(() => [ceilingContainer]);
+    const spyLog = jest.spyOn(log, 'warn');
+
+    const gauge = container.init();
+    const spySet = jest.spyOn(gauge, 'set');
+    spySet.mockClear();
+
+    onAdded(ceilingContainer);
+    jest.advanceTimersByTime(5000);
+
+    expect(spyLog).not.toHaveBeenCalled();
+    expect(spySet).toHaveBeenCalledTimes(1);
+
+    const labels = spySet.mock.calls[0][0];
+    expect(labels.id).toEqual('container-123456789');
+    expect('ceiling_tag' in labels).toBe(false);
+    expect('ceiling_version' in labels).toBe(false);
+    expect('ceiling' in labels).toBe(false);
+});
+
 test('interval tick should skip full rebuild when metrics are clean', async () => {
     event.registerContainerAdded.mockImplementation(() => jest.fn());
     event.registerContainerUpdated.mockImplementation(() => jest.fn());
