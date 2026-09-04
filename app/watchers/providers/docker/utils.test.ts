@@ -23,6 +23,7 @@ describe('Docker Watcher Utils', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
+        utils.resetCeilingCache();
         mockLogContainer = {
             info: jest.fn(),
             warn: jest.fn(),
@@ -904,6 +905,155 @@ describe('Docker Watcher Utils', () => {
             expect(mockLogContainer.warn).toHaveBeenCalledWith(
                 resolution.error,
             );
+        });
+
+        describe('memoization', () => {
+            const containerOnRegistry = (url, labels) => ({
+                image: { name: 'test/image', registry: { url } },
+                labels,
+            });
+
+            test('should resolve the same image and ceiling tag only once', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const first = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+                const second = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+
+                expect(first).toEqual({
+                    ceiling: { tag: 'stable', version: '2.37.9' },
+                });
+                expect(second).toEqual(first);
+                expect(second.ceiling).not.toBe(first.ceiling);
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should resolve each distinct image and ceiling tag', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+
+                await utils.resolveCeiling(
+                    containerOnRegistry('https://registry-1', {
+                        'wud.tag.ceiling': 'stable',
+                    }),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                await utils.resolveCeiling(
+                    containerOnRegistry('https://registry-2', {
+                        'wud.tag.ceiling': 'stable',
+                    }),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                await utils.resolveCeiling(
+                    {
+                        image: {
+                            name: 'other/image',
+                            registry: { url: 'https://registry-1' },
+                        },
+                        labels: { 'wud.tag.ceiling': 'stable' },
+                    },
+                    mockProvider,
+                    mockLogContainer,
+                );
+                await utils.resolveCeiling(
+                    containerOnRegistry('https://registry-1', {
+                        'wud.tag.ceiling': 'lts',
+                    }),
+                    mockProvider,
+                    mockLogContainer,
+                );
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    4,
+                );
+            });
+
+            test('should resolve again after the cache is reset', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+                utils.resetCeilingCache();
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
+            });
+
+            test('should return a cached failure without calling the registry again', async () => {
+                mockProvider.getImageVersionLabel.mockRejectedValue(
+                    new Error('Boom!'),
+                );
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const first = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+                const second = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+
+                expect(second).toEqual(first);
+                expect(second).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: Boom!',
+                });
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+                expect(mockLogContainer.warn).toHaveBeenCalledTimes(2);
+            });
+
+            test('should not cache a static ceiling', async () => {
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling.version': '2.1',
+                });
+
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+
+                expect(
+                    mockProvider.getImageVersionLabel,
+                ).not.toHaveBeenCalled();
+                expect(mockLogContainer.info).toHaveBeenCalledTimes(2);
+            });
         });
     });
 

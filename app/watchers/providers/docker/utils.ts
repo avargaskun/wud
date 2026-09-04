@@ -453,6 +453,15 @@ export interface CeilingResolution {
     error?: string;
 }
 
+const ceilingCache = new Map<string, CeilingResolution>();
+
+/**
+ * Discard the memoized dynamic ceilings; a dynamic ceiling moves between cycles.
+ */
+export function resetCeilingCache(): void {
+    ceilingCache.clear();
+}
+
 /**
  * Resolve the version ceiling declared by the container labels.
  * @param container
@@ -486,6 +495,15 @@ export async function resolveCeiling(
         return { ceiling: { version } };
     }
 
+    const cacheKey = `${container.image.registry?.url}|${container.image.name}|${ceilingTag}`;
+    const cached = ceilingCache.get(cacheKey);
+    if (cached?.ceiling) {
+        return succeed(cached.ceiling);
+    }
+    if (cached?.error) {
+        return fail(cached.error);
+    }
+
     let versionLabel: string | undefined;
     try {
         versionLabel = await registryProvider.getImageVersionLabel(
@@ -493,29 +511,47 @@ export async function resolveCeiling(
             ceilingTag,
         );
     } catch (e) {
-        return fail(
-            `Could not resolve ceiling tag [${ceilingTag}]: ${e.message}`,
+        return remember(
+            fail(`Could not resolve ceiling tag [${ceilingTag}]: ${e.message}`),
         );
     }
     if (!versionLabel) {
-        return fail(
-            `Could not resolve ceiling tag [${ceilingTag}]: image has no org.opencontainers.image.version label`,
+        return remember(
+            fail(
+                `Could not resolve ceiling tag [${ceilingTag}]: image has no org.opencontainers.image.version label`,
+            ),
         );
     }
     if (!isValidCeiling(versionLabel)) {
-        return fail(
-            `Could not resolve ceiling tag [${ceilingTag}]: value [${versionLabel}] is not a valid semver`,
+        return remember(
+            fail(
+                `Could not resolve ceiling tag [${ceilingTag}]: value [${versionLabel}] is not a valid semver`,
+            ),
         );
     }
-    const version = normalizeCeiling(versionLabel);
-    logContainer.info(
-        `Ceiling resolved to ${version} (from tag ${ceilingTag})`,
-    );
-    return { ceiling: { tag: ceilingTag, version } };
+    const resolvedCeiling: ContainerCeiling = {
+        tag: ceilingTag,
+        version: normalizeCeiling(versionLabel),
+    };
+    remember({ ceiling: resolvedCeiling });
+    return succeed(resolvedCeiling);
 
     function fail(message: string): CeilingResolution {
         logContainer.warn(message);
         return { error: message };
+    }
+
+    function succeed(ceiling: ContainerCeiling): CeilingResolution {
+        logContainer.info(
+            `Ceiling resolved to ${ceiling.version} (from tag ${ceilingTag})`,
+        );
+        // Copy, so containers sharing a cached ceiling never share one object
+        return { ceiling: { ...ceiling } };
+    }
+
+    function remember(resolution: CeilingResolution): CeilingResolution {
+        ceilingCache.set(cacheKey, resolution);
+        return resolution;
     }
 }
 

@@ -31,6 +31,7 @@ import {
     normalizeContainer,
     getContainerName,
     findNewVersion,
+    resetCeilingCache,
     shouldWatchDigestForContainer,
 } from './utils';
 import { parse as parseSemver, transform as transformTag } from '../../../tag';
@@ -440,6 +441,8 @@ export class Docker extends Watcher {
     async watch(): Promise<ContainerReport[]> {
         let containers: Container[] = [];
 
+        resetCeilingCache();
+
         // Dispatch event to notify start watching
         event.emitWatcherStart(this);
 
@@ -463,6 +466,9 @@ export class Docker extends Watcher {
             );
             return [];
         } finally {
+            // Keep the cache scoped to one scan; event-driven watches must not reuse it
+            resetCeilingCache();
+
             // Dispatch event to notify stop watching
             event.emitWatcherStop(this);
         }

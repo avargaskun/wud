@@ -384,6 +384,32 @@ describe('Docker Watcher', () => {
             expect(docker.watchContainer).toHaveBeenCalled();
         });
 
+        test('should reset the ceiling cache around the whole scan', async () => {
+            docker.getContainers = jest.fn().mockResolvedValue([{ id: '1' }]);
+            docker.watchContainer = jest.fn().mockResolvedValue({});
+
+            await docker.watch();
+
+            expect(utils.resetCeilingCache).toHaveBeenCalledTimes(2);
+            const [beforeScan, afterScan] =
+                utils.resetCeilingCache.mock.invocationCallOrder;
+            const [watched] = docker.watchContainer.mock.invocationCallOrder;
+            expect(beforeScan).toBeLessThan(watched);
+            expect(afterScan).toBeGreaterThan(watched);
+        });
+
+        test('should reset the ceiling cache even when the scan fails', async () => {
+            docker.log = { warn: jest.fn() };
+            docker.getContainers = jest.fn().mockResolvedValue([{ id: '1' }]);
+            docker.watchContainer = jest
+                .fn()
+                .mockRejectedValue(new Error('Boom!'));
+
+            await docker.watch();
+
+            expect(utils.resetCeilingCache).toHaveBeenCalledTimes(2);
+        });
+
         test('should filter store containers by agent when pruning', async () => {
             docker.name = 'docker-local';
             docker.configuration = { watchall: false, watchbydefault: true };
