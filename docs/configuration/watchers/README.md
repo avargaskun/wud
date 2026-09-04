@@ -206,6 +206,8 @@ To fine-tune the behaviour of WUD _per container_, you can add labels on them.
 | `wud.display.name`    | :white_circle: | Custom display name for the container              | Valid String                                                                                                                                                                | Container name                                                                        |
 | `wud.link.template`   | :white_circle: | Browsable link associated to the container version | JS string template with vars `${container}`, `${original}`, `${transformed}`, `${major}`, `${minor}`, `${patch}`, `${prerelease}`                                           |                                                                                       |
 | `wud.postupdate.restart` | :white_circle: | Comma separated list of container names to bounce after this container is updated | `$container_name_1,$container_name_2`                                                                                                    |                                                                                       |
+| `wud.tag.ceiling`     | :white_circle: | Tag name whose current version caps the versions WUD will report | Valid tag name (the image must publish `org.opencontainers.image.version`)                                                                                     |                                                                                       |
+| `wud.tag.ceiling.version` | :white_circle: | Static full or partial semver capping the versions WUD will report | `2`, `2.1`, `2.1.3`                                                                                                                                         |                                                                                       |
 | `wud.tag.exclude`     | :white_circle: | Regex to exclude specific tags                     | Valid JavaScript Regex                                                                                                                                                      |                                                                                       |
 | `wud.tag.include`     | :white_circle: | Regex to include specific tags only                | Valid JavaScript Regex                                                                                                                                                      |                                                                                       |
 | `wud.tag.transform`   | :white_circle: | Transform function to apply to the tag             | `$valid_regex => $valid_string_with_placeholders` (see below)                                                                                                               |                                                                                       |
@@ -373,6 +375,74 @@ searx/searx:1.0.0-269-7b368146
 ```
 
 <!-- tabs:end -->
+
+### Cap the versions WUD is allowed to report
+
+Some publishers ship a plain semver tag before promoting it to their stable channel. n8n, for example, publishes `2.38.x` while `:stable` still points at `2.37.9`.
+A **version ceiling** tells WUD to report (and auto-apply) updates only up to a cap, so you keep pinned version tags and per-bucket visibility but never install a version the publisher has not promoted yet.
+
+Two mutually exclusive labels are available:
+
+- `wud.tag.ceiling` — **dynamic**. The name of another tag (`stable`); the version it currently points to is resolved on every watch cycle from the remote image's `org.opencontainers.image.version` OCI label.
+- `wud.tag.ceiling.version` — **static**. A full or partial semver (`2`, `2.1`, `2.1.3`). A partial value caps the whole line: `2` allows every `2.x.y`, `2.1` allows every `2.1.z`.
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.37.9
+    labels:
+      - wud.tag.ceiling=stable
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name n8n --label wud.tag.ceiling=stable docker.n8n.io/n8nio/n8n:2.37.9
+```
+
+<!-- tabs:end -->
+
+The same container capped statically instead:
+
+<!-- tabs:start -->
+
+#### **Docker Compose**
+
+```yaml
+services:
+  n8n:
+    image: docker.n8n.io/n8nio/n8n:2.37.9
+    labels:
+      - wud.tag.ceiling.version=2.37
+```
+
+#### **Docker**
+
+```bash
+docker run -d --name n8n --label wud.tag.ceiling.version=2.37 docker.n8n.io/n8nio/n8n:2.37.9
+```
+
+<!-- tabs:end -->
+
+The resolved ceiling is reported through the container `ceiling` field (see the [Container API](/api/container/?id=ceiling)) and displayed in the container detail view.
+
+!> The two labels are **mutually exclusive**. Setting both is a configuration error: WUD reports no tag updates for the container and sets its `error` field.
+
+!> Resolving a ceiling **fails closed**. If the ceiling tag cannot be resolved (registry error, or the image publishes no `org.opencontainers.image.version` label), or if the static value is not a valid semver, WUD reports **no tag updates at all** for that container and sets its `error` field (shown in the UI). Resolution is retried on the next watch cycle. Failing open would silently restore uncapped auto-updates precisely when WUD cannot tell what the cap is.
+
+?> A ceiling **never** caps digest updates. A digest update is a rebuild of the tag the container is already running, so it can never be above the ceiling; it keeps being reported even while a ceiling is failing to resolve.
+
+?> A ceiling only filters **tag candidates**, it never removes an update bucket. A bucket that a ceiling emptied stays present and reports `null` (see the [Container API](/api/container/?id=ceiling)).
+
+?> Both labels are **silently inert on a container running a non semver tag** (`latest`, `stable`...), exactly like `wud.tag.include` / `wud.tag.exclude`. WUD proposes no tag candidates for such containers at all, so there is nothing for a ceiling to cap and no registry call is made to resolve one.
+
+!> Like every other `wud.*` label, adding or changing a ceiling label takes effect when the container is **recreated** (or after the container enters an error state).
+
+!> A dynamic ceiling costs **two to three additional registry calls per watch cycle** for each container carrying the label (the ceiling tag manifest, the platform child manifest for a multi arch image, then the image config blob). A static ceiling costs nothing — it makes no registry call.
 
 ### Enable digest watching
 

@@ -114,6 +114,18 @@
         container.transformTags
       }}</v-list-item-subtitle>
     </v-list-item>
+    <v-list-item v-if="container.ceiling">
+      <template v-slot:prepend>
+        <v-icon color="secondary">mdi-arrow-collapse-up</v-icon>
+      </template>
+      <v-list-item-title>Version ceiling</v-list-item-title>
+      <v-list-item-subtitle
+        >{{ container.ceiling.version
+        }}{{
+          container.ceiling.tag ? ` (from :${container.ceiling.tag})` : ''
+        }}</v-list-item-subtitle
+      >
+    </v-list-item>
     <v-list-item v-if="container.linkTemplate">
       <template v-slot:prepend>
         <v-icon color="secondary">mdi-file-replace</v-icon>

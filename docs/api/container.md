@@ -84,6 +84,31 @@ Each populated entry is an object with the following fields.
 
 ?> The `digest` entry always compares the digest of the **currently running** tag; it never mixes with the tag entries. See the `wud.watch.digest.semver` label in the [Watchers](/configuration/watchers/) documentation.
 
+### `ceiling`
+
+`ceiling` reports the **version ceiling** currently applied to the container, as configured with the
+`wud.tag.ceiling` / `wud.tag.ceiling.version` labels (see the [Watchers](/configuration/watchers/) documentation).
+
+```json
+"ceiling": {
+  "tag": "stable",
+  "version": "2.37.9"
+}
+```
+
+| Field     | Description                                                                                        |
+| --------- | ---------------------------------------------------------------------------------------------------- |
+| `tag`     | The tag the ceiling was resolved from. Present in **dynamic** mode only (`wud.tag.ceiling`)         |
+| `version` | The effective ceiling — no tag above this version is reported as an update                          |
+
+`ceiling` is **absent** when no ceiling label is set, when the label is inert (non semver tag), and when
+resolution failed — a failed resolution is reported through the container `error` field instead, and no
+tag update is reported for that cycle.
+
+?> A ceiling never removes a key from `updates`. A bucket emptied by the ceiling stays present and reports
+**`null`** (the "Key present, `null`" state above): the update kind still applies to the container, there is
+just nothing available under the cap. Digest updates are never capped by a ceiling.
+
 ## Get all containers
 
 This operation lets you get all the watched cainers.
