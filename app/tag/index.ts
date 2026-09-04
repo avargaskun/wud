@@ -124,10 +124,17 @@ export function normalizeCeiling(rawCeiling: string): string {
     return rawCeiling.trim().replace(/^v/i, '');
 }
 
-/** True when `rawCeiling` is usable as a ceiling (full or partial semver). */
+/**
+ * True when `rawCeiling` is usable as a ceiling (full or partial semver).
+ * The version-shape gate is what keeps range expressions (`x`, `*`, `2 || >1`)
+ * out: they are valid ranges, so on their own they would uncap the container.
+ */
 export function isValidCeiling(rawCeiling: string): boolean {
     const normalized = normalizeCeiling(rawCeiling);
-    return normalized !== '' && semver.validRange(`<=${normalized}`) !== null;
+    const isVersionShaped =
+        /^\d+(\.\d+){0,2}$/.test(normalized) ||
+        semver.valid(normalized) !== null;
+    return isVersionShaped && semver.validRange(`<=${normalized}`) !== null;
 }
 
 /**
@@ -141,10 +148,7 @@ export function isAtOrBelowCeiling(
 ): boolean {
     const versionSemver = parse(version);
     const normalized = normalizeCeiling(rawCeiling);
-    if (
-        versionSemver === null ||
-        semver.validRange(`<=${normalized}`) === null
-    ) {
+    if (versionSemver === null || !isValidCeiling(rawCeiling)) {
         return false;
     }
     return semver.satisfies(versionSemver, `<=${normalized}`, {

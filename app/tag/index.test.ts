@@ -370,6 +370,15 @@ describe('isValidCeiling', () => {
         { input: 'stable', expected: false, desc: 'non semver ceiling' },
         { input: '', expected: false, desc: 'empty ceiling' },
         { input: '  ', expected: false, desc: 'blank ceiling' },
+        { input: 'x', expected: false, desc: 'x wildcard ceiling' },
+        { input: '*', expected: false, desc: 'star wildcard ceiling' },
+        { input: '2 || >1', expected: false, desc: 'union range ceiling' },
+        {
+            input: '2 3',
+            expected: false,
+            desc: 'intersection range ceiling',
+        },
+        { input: '2.x', expected: false, desc: 'partial wildcard ceiling' },
     ];
 
     test.each(ceilings)('should handle $desc', ({ input, expected }) => {
@@ -450,6 +459,36 @@ describe('isAtOrBelowCeiling', () => {
             ceiling: '',
             expected: false,
             desc: 'an empty ceiling',
+        },
+        {
+            version: '9.9.9',
+            ceiling: 'x',
+            expected: false,
+            desc: 'an x wildcard ceiling',
+        },
+        {
+            version: '9.9.9',
+            ceiling: '*',
+            expected: false,
+            desc: 'a star wildcard ceiling',
+        },
+        {
+            version: '9.9.9',
+            ceiling: '2 || >1',
+            expected: false,
+            desc: 'a union range ceiling',
+        },
+        {
+            version: '2.0.0',
+            ceiling: '2 3',
+            expected: false,
+            desc: 'an intersection range ceiling',
+        },
+        {
+            version: '2.0.0',
+            ceiling: '2.x',
+            expected: false,
+            desc: 'a partial wildcard ceiling',
         },
     ];
 
