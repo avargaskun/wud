@@ -21,6 +21,7 @@ import type {
     DependentOutcome,
     SwapOutcome,
 } from '../docker/types';
+import { emptyHints } from '../docker/config';
 
 jest.mock('fs/promises', () => ({
     access: jest.fn(),
@@ -199,6 +200,10 @@ interface ProtectedDockerApi {
         swaps: SwapOutcome[],
         memberNames: Set<string>,
     ): Promise<DependentOutcome[]>;
+    swapAll(
+        containers: Container[],
+        contexts: (ContainerUpdateContext | undefined)[],
+    ): Promise<SwapOutcome[]>;
 }
 const protectedApi = dockercompose as unknown as ProtectedDockerApi;
 
@@ -470,7 +475,7 @@ test('resolveComposeFileForContainer should pick the last candidate that declare
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toEqual({ file: '/abs/override.yml' });
+    ).resolves.toMatchObject({ file: '/abs/override.yml' });
 });
 
 test('resolveComposeFileForContainer should pick the only candidate that declares the image', async () => {
@@ -485,7 +490,7 @@ test('resolveComposeFileForContainer should pick the only candidate that declare
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toEqual({ file: '/abs/base.yml' });
+    ).resolves.toMatchObject({ file: '/abs/base.yml' });
 });
 
 test('resolveComposeFileForContainer should skip a candidate that does not exist', async () => {
@@ -502,7 +507,7 @@ test('resolveComposeFileForContainer should skip a candidate that does not exist
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toEqual({ file: '/abs/base.yml' });
+    ).resolves.toMatchObject({ file: '/abs/base.yml' });
 });
 
 test('resolveComposeFileForContainer should warn and skip an unparseable candidate', async () => {
@@ -518,7 +523,7 @@ test('resolveComposeFileForContainer should warn and skip an unparseable candida
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toEqual({ file: '/abs/base.yml' });
+    ).resolves.toMatchObject({ file: '/abs/base.yml' });
     expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining(
             'Skipping compose file /abs/broken.yml for container zz_batch_compose_1',
@@ -697,9 +702,11 @@ test('triggerBatch should pull all, then rewrite, then swap (ordering)', async (
     const order: string[] = [];
     const c1 = buildContainer({ id: 'c1' });
     const c2 = buildContainer({ id: 'c2' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([['/abs/docker-compose.yml', [c1, c2]]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([['/abs/docker-compose.yml', [c1, c2]]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     jest.spyOn(dockercompose, 'pullContainer').mockImplementation(async () => {
         order.push('pull');
         return {} as ContainerUpdateContext;
@@ -722,9 +729,11 @@ test('triggerBatch should pull all, then rewrite, then swap (ordering)', async (
 test('triggerBatch should abort before any write or swap when a pull rejects', async () => {
     const c1 = buildContainer({ id: 'c1' });
     const bad = buildContainer({ id: 'bad' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([['/abs/docker-compose.yml', [c1, bad]]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([['/abs/docker-compose.yml', [c1, bad]]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     jest.spyOn(dockercompose, 'pullContainer').mockImplementation(
         async (container) => {
             if (container.id === 'bad') {
@@ -750,9 +759,11 @@ test('triggerBatch should pull but not rewrite or swap under dry-run', async () 
     dockercompose.configuration = { ...baseConfiguration, dryrun: true };
     const c1 = buildContainer({ id: 'c1' });
     const c2 = buildContainer({ id: 'c2' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([['/abs/docker-compose.yml', [c1, c2]]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([['/abs/docker-compose.yml', [c1, c2]]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     const pullSpy = jest
         .spyOn(dockercompose, 'pullContainer')
         .mockResolvedValue({} as ContainerUpdateContext);
@@ -778,9 +789,11 @@ test('writeComposeFile should rethrow when the write fails', async () => {
 test('triggerBatch should abort before any swap when a compose write fails', async () => {
     const c1 = buildContainer({ id: 'c1' });
     const c2 = buildContainer({ id: 'c2' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([['/abs/docker-compose.yml', [c1, c2]]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([['/abs/docker-compose.yml', [c1, c2]]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
         {} as ContainerUpdateContext,
     );
@@ -795,9 +808,11 @@ test('triggerBatch should abort before any swap when a compose write fails', asy
 test('triggerBatch should swap only the containers whose pull returned a context', async () => {
     const live = buildContainer({ id: 'live' });
     const gone = buildContainer({ id: 'gone' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([['/abs/docker-compose.yml', [live, gone]]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([['/abs/docker-compose.yml', [live, gone]]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     jest.spyOn(dockercompose, 'pullContainer').mockImplementation(async (c) =>
         c.id === 'gone' ? undefined : ({} as ContainerUpdateContext),
     );
@@ -891,9 +906,11 @@ test('triggerBatch should run the post-update epilogue once, after every swap, w
     const c1 = buildContainer({ id: 'c1', name: 'zz_batch_compose_1' });
     const c2 = buildContainer({ id: 'c2', name: 'zz_batch_compose_2' });
     const foreign = buildContainer({ id: 'c3', name: 'not_in_compose' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([['/abs/docker-compose.yml', [c1, c2]]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([['/abs/docker-compose.yml', [c1, c2]]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
         {} as ContainerUpdateContext,
     );
@@ -949,9 +966,11 @@ test('triggerBatch should run the post-update epilogue once, after every swap, w
 test('triggerBatch should report a failed member without aborting the epilogue', async () => {
     const good = buildContainer({ id: 'good', name: 'zz_batch_compose_1' });
     const bad = buildContainer({ id: 'bad', name: 'zz_batch_compose_2' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([['/abs/docker-compose.yml', [good, bad]]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([['/abs/docker-compose.yml', [good, bad]]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
         {} as ContainerUpdateContext,
     );
@@ -987,9 +1006,11 @@ test('triggerBatch should report a failed member without aborting the epilogue',
 
 test('triggerBatch should return void and skip the epilogue when no container is batchable', async () => {
     const foreign = buildContainer({ id: 'c1', name: 'not_in_compose' });
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map(),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map(),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     const postUpdateSpy = jest.spyOn(protectedApi, 'runPostUpdate');
     await expect(
         dockercompose.triggerBatch([foreign]),
@@ -2333,9 +2354,11 @@ function stubBatchWithFailedSwaps(
     failedIds: string[],
 ): void {
     const failed = new Set(failedIds);
-    jest.spyOn(dockercompose, 'groupByComposeFile').mockResolvedValue(
-        new Map([[composeFilePath, containers]]),
-    );
+    jest.spyOn(dockercompose, 'classifyContainers').mockResolvedValue({
+        groups: new Map([[composeFilePath, containers]]),
+        unprocessable: [],
+        hintsByContainerId: new Map(),
+    });
     jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
         {} as ContainerUpdateContext,
     );
@@ -2435,4 +2458,168 @@ test('triggerBatch should not revert a compose file that changed on disk since t
         `${composeFilePath} changed on disk since the rewrite, not reverting`,
     );
     expect(result.members[0].fileUpdated).toBe(true);
+});
+
+const composeYamlHintBase = `services:
+  zz_batch_compose_1:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+    environment:
+      - TZ=UTC
+      - PUID=1000
+`;
+
+const composeYamlHintOverride = `services:
+  zz_batch_compose_1:
+    labels:
+      - 'org.opencontainers.image.version=5.0.0'
+    command: ['./podinfo', '--level=debug']
+`;
+
+const composeYamlHintImageMatch = `services:
+  zz_batch_compose_1:
+    image: ghcr.io/stefanprodan/podinfo:5.0.0
+    environment:
+      TZ: UTC
+    user: app
+`;
+
+test('classifyContainers should union the hints of every candidate compose file', async () => {
+    mockedReadFile.mockImplementation(async (file: string) =>
+        file === '/abs/override.yml'
+            ? composeYamlHintOverride
+            : composeYamlHintBase,
+    );
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/base.yml,/abs/override.yml',
+        },
+    });
+
+    const { hintsByContainerId } = await dockercompose.classifyContainers([
+        container,
+    ]);
+
+    const hints = hintsByContainerId.get(container.id);
+    expect(hints).toBeDefined();
+    expect([...hints!.envKeys].sort()).toEqual(['PUID', 'TZ']);
+    expect([...hints!.labelKeys]).toEqual(['org.opencontainers.image.version']);
+    expect([...hints!.fields]).toEqual(['Cmd']);
+});
+
+test('classifyContainers should ignore a candidate that cannot be parsed', async () => {
+    mockedReadFile.mockImplementation(async (file: string) =>
+        file === '/abs/broken.yml' ? composeYamlTabs : composeYamlHintBase,
+    );
+    const container = buildContainer({
+        labels: {
+            'com.docker.compose.project.config_files':
+                '/abs/broken.yml,/abs/base.yml',
+        },
+    });
+
+    const { hintsByContainerId } = await dockercompose.classifyContainers([
+        container,
+    ]);
+
+    const hints = hintsByContainerId.get(container.id);
+    expect([...hints!.envKeys].sort()).toEqual(['PUID', 'TZ']);
+    expect([...hints!.labelKeys]).toEqual([]);
+});
+
+test('classifyContainers should hint a container without a service label through the image match', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlHintImageMatch);
+    const container = buildContainer({ labels: null });
+
+    const { hintsByContainerId } = await dockercompose.classifyContainers([
+        container,
+    ]);
+
+    const hints = hintsByContainerId.get(container.id);
+    expect([...hints!.envKeys]).toEqual(['TZ']);
+    expect([...hints!.fields]).toEqual(['User']);
+});
+
+test('classifyContainers should return empty hints when the file declares nothing', async () => {
+    const container = buildContainer();
+
+    const { hintsByContainerId } = await dockercompose.classifyContainers([
+        container,
+    ]);
+
+    expect(hintsByContainerId.get(container.id)).toEqual(emptyHints());
+});
+
+test('triggerBatch should attach the collected hints to every context before swapping', async () => {
+    mockedReadFile.mockResolvedValue(composeYamlHintBase);
+    const container = buildContainer({ id: 'c1' });
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(
+        {} as ContainerUpdateContext,
+    );
+    jest.spyOn(dockercompose, 'rewriteComposeFile').mockResolvedValue({
+        editedIds: new Set<string>(),
+        staleIds: new Set<string>(),
+    });
+    const swapAllSpy = jest
+        .spyOn(protectedApi, 'swapAll')
+        .mockResolvedValue([]);
+    jest.spyOn(protectedApi, 'runPostUpdate').mockResolvedValue([]);
+
+    await dockercompose.triggerBatch([container]);
+
+    expect(swapAllSpy).toHaveBeenCalledTimes(1);
+    const contexts = swapAllSpy.mock.calls[0][1];
+    expect([...contexts[0]!.userConfigHints!.envKeys].sort()).toEqual([
+        'PUID',
+        'TZ',
+    ]);
+});
+
+test('triggerBatch should refresh com.docker.compose.image through the real swap', async () => {
+    const container = buildContainer({ id: 'c1', name: 'zz_batch_compose_1' });
+    const createContainer = jest.fn(async () => ({
+        id: 'new-id',
+        start: jest.fn().mockResolvedValue(undefined),
+    }));
+    const ctx = {
+        dockerApi: { createContainer },
+        registry: {
+            getImageFullName: () => 'ghcr.io/stefanprodan/podinfo:6.0.0',
+        },
+        newImage: 'ghcr.io/stefanprodan/podinfo:6.0.0',
+        currentContainer: {
+            stop: jest.fn().mockResolvedValue(undefined),
+            rename: jest.fn().mockResolvedValue(undefined),
+            remove: jest.fn().mockResolvedValue(undefined),
+            wait: jest.fn().mockResolvedValue(undefined),
+        },
+        currentContainerSpec: {
+            Name: '/zz_batch_compose_1',
+            Id: 'c1',
+            HostConfig: {},
+            NetworkSettings: { Networks: {} },
+            State: { Running: true },
+            Config: {
+                Labels: {
+                    'com.docker.compose.image': 'sha256:old',
+                    'com.docker.compose.service': 'zz_batch_compose_1',
+                },
+            },
+        },
+        state: { Running: true },
+        currentImageSpec: { Id: 'sha256:old', Config: { Labels: {} } },
+        newImageId: 'sha256:new',
+    } as unknown as ContainerUpdateContext;
+    jest.spyOn(dockercompose, 'pullContainer').mockResolvedValue(ctx);
+    jest.spyOn(dockercompose, 'writeComposeFile').mockResolvedValue(undefined);
+    jest.spyOn(protectedApi, 'runPostUpdate').mockResolvedValue([]);
+    const createSpy = jest.spyOn(dockercompose, 'createContainer');
+
+    const result = await dockercompose.triggerBatch([container]);
+
+    expect(result?.members?.[0]?.status).toBe('updated');
+    expect(createSpy).toHaveBeenCalled();
+    expect(createSpy.mock.calls[0][1].Labels['com.docker.compose.image']).toBe(
+        'sha256:new',
+    );
 });
