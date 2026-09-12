@@ -761,6 +761,82 @@ test('swapContainer should run stop, rename, create, start and remove the aside 
     expect(wait).not.toHaveBeenCalled();
 });
 
+const buildDerivationCtx = (createContainer, specOverrides = {}) => ({
+    dockerApi: { createContainer },
+    registry: { getImageFullName: () => 'my-registry/test/test:1.2.3' },
+    newImage: 'my-registry/test/test:4.5.6',
+    currentContainer: {
+        stop: jest.fn().mockResolvedValue(undefined),
+        rename: jest.fn().mockResolvedValue(undefined),
+        remove: jest.fn().mockResolvedValue(undefined),
+        wait: jest.fn().mockResolvedValue(undefined),
+    },
+    currentContainerSpec: {
+        Name: '/container-name',
+        Id: '123456789',
+        Config: {
+            Env: ['FROM_IMAGE=inherited', 'FROM_USER=mine'],
+            Labels: {
+                'from.image': 'inherited',
+                'from.user': 'mine',
+                'com.docker.compose.image': 'sha256:old',
+            },
+        },
+        HostConfig: {},
+        NetworkSettings: { Networks: {} },
+        State: { Running: true },
+        ...specOverrides,
+    },
+    state: { Running: true },
+});
+
+test('swapContainer should build the create body from the derived config', async () => {
+    const createContainer = jest.fn(async () => ({
+        id: 'new-container-id',
+        start: jest.fn().mockResolvedValue(undefined),
+    }));
+    const ctx = buildDerivationCtx(createContainer);
+    ctx.currentImageSpec = {
+        Id: 'sha256:old',
+        Config: {
+            Env: ['FROM_IMAGE=inherited'],
+            Labels: { 'from.image': 'inherited' },
+        },
+    };
+    ctx.newImageId = 'sha256:new';
+
+    await expect(
+        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
+    ).resolves.toMatchObject({ success: true });
+
+    const body = createContainer.mock.calls[0][0]._body;
+    expect(body.Env).toEqual(['FROM_USER=mine']);
+    expect(body.Labels).toEqual({
+        'from.user': 'mine',
+        'com.docker.compose.image': 'sha256:new',
+    });
+});
+
+test('swapContainer should keep the verbatim body when the context has no image data', async () => {
+    const createContainer = jest.fn(async () => ({
+        id: 'new-container-id',
+        start: jest.fn().mockResolvedValue(undefined),
+    }));
+    const ctx = buildDerivationCtx(createContainer);
+
+    await expect(
+        docker.swapContainer({ name: 'container-name', id: '123456789' }, ctx),
+    ).resolves.toMatchObject({ success: true });
+
+    const body = createContainer.mock.calls[0][0]._body;
+    expect(body.Env).toEqual(['FROM_IMAGE=inherited', 'FROM_USER=mine']);
+    expect(body.Labels).toEqual({
+        'from.image': 'inherited',
+        'from.user': 'mine',
+        'com.docker.compose.image': 'sha256:old',
+    });
+});
+
 test('swapContainer should wait for auto-removal when HostConfig.AutoRemove is true', async () => {
     const stop = jest.fn().mockResolvedValue(undefined);
     const rename = jest.fn().mockResolvedValue(undefined);
@@ -1755,6 +1831,10 @@ test('bounceDependent should recreate a dependent referencing the host by id', a
     const { dockerApi, order, rename, wait, createContainer } =
         buildDependentApi(
             buildDependentSpec({
+                Config: {
+                    Image: 'dep/image:1.0.0',
+                    Env: ['FROM_IMAGE=inherited'],
+                },
                 HostConfig: {
                     NetworkMode: `container:${swap.oldContainerId}`,
                 },
@@ -1780,6 +1860,9 @@ test('bounceDependent should recreate a dependent referencing the host by id', a
     expect(
         createContainer.mock.calls[0][0]._body.HostConfig.NetworkMode,
     ).toEqual('container:new-host-id');
+    expect(createContainer.mock.calls[0][0]._body.Env).toEqual([
+        'FROM_IMAGE=inherited',
+    ]);
 });
 
 test('bounceDependent should recreate a dependent referencing the host by short id', async () => {
@@ -2770,10 +2853,14 @@ test('swapContainer should recreate the original from its spec when rename is un
             remove: jest.fn().mockResolvedValue(undefined),
         },
     });
+    const cloneContainer = jest.spyOn(docker, 'cloneContainer');
 
     const error = await swapAndCatch(ctx);
 
     expect(error.disposition).toBe('rolled_back');
+    const lastRung =
+        cloneContainer.mock.calls[cloneContainer.mock.calls.length - 1];
+    expect(lastRung).toHaveLength(2);
     expect(dockerApi.createContainer).toHaveBeenCalledTimes(2);
     expect(dockerApi.createContainer.mock.calls[0][0]._body.Image).toBe(
         'my-registry/test/test:4.5.6',

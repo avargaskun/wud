@@ -264,7 +264,8 @@ export function deriveUserConfig(
     imageConfig: ImageConfig | undefined,
     hints: UserConfigHints = emptyHints(),
 ): ContainerConfig {
-    const containerConfig: ContainerConfig = current.Config;
+    const containerConfig: ContainerConfig =
+        current.Config ?? ({} as ContainerConfig);
     const derived: ContainerConfig = { ...containerConfig };
 
     derived.Hostname = deriveHostname(

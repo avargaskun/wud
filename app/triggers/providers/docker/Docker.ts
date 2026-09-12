@@ -9,6 +9,11 @@ import Logger from 'bunyan';
 import { wudPostupdateRestart } from '../../../watchers/providers/docker/label';
 import { getPostupdateBounceCounter } from '../../../prometheus/postupdate';
 import { ContainerGoneError, SwapFailedError } from './errors';
+import {
+    deriveUserConfig,
+    emptyHints,
+    refreshComposeImageLabel,
+} from './config';
 import type { ContainerConfig } from './config';
 import type {
     ContainerUpdateContext,
@@ -644,6 +649,18 @@ class Docker extends Trigger {
     }
 
     /**
+     * The create config for the replacement: the container's own settings on top of the new image's defaults.
+     */
+    buildSwapConfig(ctx: ContainerUpdateContext): ContainerConfig {
+        const user = deriveUserConfig(
+            ctx.currentContainerSpec,
+            ctx.currentImageSpec?.Config,
+            ctx.userConfigHints ?? emptyHints(),
+        );
+        return refreshComposeImageLabel(user, ctx.newImageId);
+    }
+
+    /**
      * Get image full name.
      */
     getNewImageFullName(registry: Registry, container: Container): string {
@@ -910,6 +927,7 @@ class Docker extends Trigger {
         const containerToCreateInspect = this.cloneContainer(
             currentContainerSpec,
             newImage,
+            this.buildSwapConfig(ctx),
         );
 
         const originalName = currentContainerSpec.Name.replace('/', '');
