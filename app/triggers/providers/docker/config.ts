@@ -79,3 +79,166 @@ export function refreshComposeImageLabel(
         Labels: { ...config.Labels, [COMPOSE_IMAGE_LABEL]: newImageId },
     };
 }
+
+type PortMap = ContainerConfig['ExposedPorts'];
+type VolumeMap = ContainerConfig['Volumes'];
+
+const GENERATED_HOSTNAME = /^[0-9a-f]{12}$/;
+
+function splitEnv(entry: string): [string, string] {
+    const separator = entry.indexOf('=');
+    return separator === -1
+        ? [entry, entry]
+        : [entry.slice(0, separator), entry.slice(separator + 1)];
+}
+
+function deriveScalar(
+    value: string | undefined,
+    imageValue: string | undefined,
+    hinted: boolean,
+): string | undefined {
+    if (hinted) {
+        return value;
+    }
+    return (value ?? '') === (imageValue ?? '') ? '' : value;
+}
+
+function deriveHostname(hostname: string, hinted: boolean): string {
+    if (hinted) {
+        return hostname;
+    }
+    return GENERATED_HOSTNAME.test(hostname ?? '') ? '' : hostname;
+}
+
+function deriveEnv(
+    env: string[] | undefined,
+    imageEnvEntries: string[] | undefined,
+    hintedKeys: ReadonlySet<string>,
+): string[] {
+    const imageEnv = new Map<string, string>(
+        (imageEnvEntries ?? []).map(splitEnv),
+    );
+    return (env ?? []).filter((entry) => {
+        const [key, value] = splitEnv(entry);
+        return (
+            hintedKeys.has(key) ||
+            !imageEnv.has(key) ||
+            imageEnv.get(key) !== value
+        );
+    });
+}
+
+function deriveLabels(
+    labels: Record<string, string> | undefined,
+    imageLabels: Record<string, string> | undefined,
+    hintedKeys: ReadonlySet<string>,
+): Record<string, string> {
+    const fromImage = imageLabels ?? {};
+    const derived: Record<string, string> = {};
+    Object.entries(labels ?? {}).forEach(([key, value]) => {
+        if (
+            hintedKeys.has(key) ||
+            !(key in fromImage) ||
+            fromImage[key] !== value
+        ) {
+            derived[key] = value;
+        }
+    });
+    return derived;
+}
+
+function deriveExposedPorts(
+    ports: PortMap | undefined,
+    imagePorts: PortMap | undefined,
+    publishedPorts: Record<string, unknown> | undefined,
+): PortMap | undefined {
+    const fromImage = imagePorts ?? {};
+    const derived: PortMap = {};
+    Object.entries(ports ?? {}).forEach(([port, value]) => {
+        if (!(port in fromImage)) {
+            derived[port] = value;
+        }
+    });
+    Object.keys(publishedPorts ?? {}).forEach((port) => {
+        if (!(port in derived)) {
+            derived[port] = ports?.[port] ?? {};
+        }
+    });
+    return Object.keys(derived).length > 0 ? derived : undefined;
+}
+
+function deriveVolumes(
+    volumes: VolumeMap | undefined,
+    imageVolumes: VolumeMap | undefined,
+): VolumeMap | undefined {
+    const fromImage = imageVolumes ?? {};
+    const derived: VolumeMap = {};
+    Object.entries(volumes ?? {}).forEach(([volume, value]) => {
+        if (!(volume in fromImage)) {
+            derived[volume] = value;
+        }
+    });
+    return Object.keys(derived).length > 0 ? derived : undefined;
+}
+
+/**
+ * Recover the config the container was created with, by removing every value the
+ * daemon merged in from the image it runs. A value equal to the image's is treated
+ * as inherited unless a hint names its key.
+ */
+export function deriveUserConfig(
+    current: Dockerode.ContainerInspectInfo,
+    imageConfig: ImageConfig | undefined,
+    hints: UserConfigHints = emptyHints(),
+): ContainerConfig {
+    const containerConfig: ContainerConfig = current.Config;
+    const derived: ContainerConfig = { ...containerConfig };
+
+    derived.Hostname = deriveHostname(
+        containerConfig.Hostname,
+        hints.fields.has('Hostname'),
+    );
+
+    if (imageConfig === undefined) {
+        return derived;
+    }
+
+    derived.User = deriveScalar(
+        containerConfig.User,
+        imageConfig.User,
+        hints.fields.has('User'),
+    );
+    derived.WorkingDir = deriveScalar(
+        containerConfig.WorkingDir,
+        imageConfig.WorkingDir,
+        hints.fields.has('WorkingDir'),
+    );
+    derived.StopSignal = deriveScalar(
+        containerConfig.StopSignal,
+        imageConfig.StopSignal,
+        hints.fields.has('StopSignal'),
+    );
+    derived.Env = deriveEnv(
+        containerConfig.Env,
+        imageConfig.Env,
+        hints.envKeys,
+    );
+    derived.Labels = deriveLabels(
+        containerConfig.Labels,
+        imageConfig.Labels,
+        hints.labelKeys,
+    );
+    if (!hints.fields.has('ExposedPorts')) {
+        derived.ExposedPorts = deriveExposedPorts(
+            containerConfig.ExposedPorts,
+            imageConfig.ExposedPorts,
+            current.HostConfig?.PortBindings,
+        );
+    }
+    derived.Volumes = deriveVolumes(
+        containerConfig.Volumes,
+        imageConfig.Volumes,
+    );
+
+    return derived;
+}
