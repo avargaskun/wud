@@ -82,6 +82,7 @@ export function refreshComposeImageLabel(
 
 type PortMap = ContainerConfig['ExposedPorts'];
 type VolumeMap = ContainerConfig['Volumes'];
+type HealthcheckConfig = ContainerConfig['Healthcheck'];
 
 const GENERATED_HOSTNAME = /^[0-9a-f]{12}$/;
 
@@ -181,6 +182,78 @@ function deriveVolumes(
     return Object.keys(derived).length > 0 ? derived : undefined;
 }
 
+function normalizeArgv(argv: string | string[] | undefined): string[] {
+    if (argv === undefined || argv === null || argv === '') {
+        return [];
+    }
+    return typeof argv === 'string' ? [argv] : argv;
+}
+
+function argvEquals(left: string[], right: string[]): boolean {
+    return (
+        left.length === right.length &&
+        left.every((item, index) => item === right[index])
+    );
+}
+
+const HEALTHCHECK_FIELDS: HintedHealthcheckField[] = [
+    'Test',
+    'Interval',
+    'Timeout',
+    'StartPeriod',
+    'StartInterval',
+    'Retries',
+];
+
+function healthcheckFieldEquals(
+    field: HintedHealthcheckField,
+    healthcheck: HealthcheckConfig,
+    imageHealthcheck: HealthcheckConfig,
+): boolean {
+    if (field === 'Test') {
+        return argvEquals(
+            healthcheck?.Test ?? [],
+            imageHealthcheck?.Test ?? [],
+        );
+    }
+    return (healthcheck?.[field] ?? 0) === (imageHealthcheck?.[field] ?? 0);
+}
+
+function deriveHealthcheck(
+    healthcheck: HealthcheckConfig | undefined,
+    imageHealthcheck: HealthcheckConfig | undefined,
+    hintedFields: ReadonlySet<HintedHealthcheckField>,
+): HealthcheckConfig | undefined {
+    if (
+        imageHealthcheck === undefined ||
+        imageHealthcheck === null ||
+        healthcheck === undefined ||
+        healthcheck === null
+    ) {
+        return healthcheck;
+    }
+    const inherited = HEALTHCHECK_FIELDS.filter((field) =>
+        healthcheckFieldEquals(field, healthcheck, imageHealthcheck),
+    );
+    if (
+        inherited.length === HEALTHCHECK_FIELDS.length &&
+        hintedFields.size === 0
+    ) {
+        return undefined;
+    }
+    const derived: HealthcheckConfig = { ...healthcheck };
+    inherited
+        .filter((field) => !hintedFields.has(field))
+        .forEach((field) => {
+            if (field === 'Test') {
+                derived.Test = [];
+            } else {
+                derived[field] = 0;
+            }
+        });
+    return derived;
+}
+
 /**
  * Recover the config the container was created with, by removing every value the
  * daemon merged in from the image it runs. A value equal to the image's is treated
@@ -238,6 +311,31 @@ export function deriveUserConfig(
     derived.Volumes = deriveVolumes(
         containerConfig.Volumes,
         imageConfig.Volumes,
+    );
+
+    if (
+        !hints.fields.has('Entrypoint') &&
+        argvEquals(
+            normalizeArgv(containerConfig.Entrypoint),
+            normalizeArgv(imageConfig.Entrypoint),
+        )
+    ) {
+        derived.Entrypoint = undefined;
+        if (
+            !hints.fields.has('Cmd') &&
+            argvEquals(
+                normalizeArgv(containerConfig.Cmd),
+                normalizeArgv(imageConfig.Cmd),
+            )
+        ) {
+            derived.Cmd = undefined;
+        }
+    }
+
+    derived.Healthcheck = deriveHealthcheck(
+        containerConfig.Healthcheck,
+        imageConfig.Healthcheck,
+        hints.healthcheck,
     );
 
     return derived;

@@ -519,3 +519,210 @@ describe('deriveUserConfig immutability', () => {
         expect(JSON.parse(JSON.stringify(image))).toEqual(imageBefore);
     });
 });
+
+describe('deriveUserConfig Entrypoint and Cmd', () => {
+    test('drops both when both equal the image defaults', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: { Entrypoint: ['/init'], Cmd: ['./podinfo'] },
+            }),
+            imageConfig({ Entrypoint: ['/init'], Cmd: ['./podinfo'] }),
+        );
+        expect(derived.Entrypoint).toBeUndefined();
+        expect(derived.Cmd).toBeUndefined();
+    });
+
+    test('keeps a differing command while dropping an inherited entrypoint', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: { Entrypoint: ['/init'], Cmd: ['--serve'] },
+            }),
+            imageConfig({ Entrypoint: ['/init'], Cmd: ['./podinfo'] }),
+        );
+        expect(derived.Entrypoint).toBeUndefined();
+        expect(derived.Cmd).toEqual(['--serve']);
+    });
+
+    test('keeps both when the entrypoint was overridden, including a null command', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: { Entrypoint: ['/bin/sh'], Cmd: null },
+            }),
+            imageConfig({ Entrypoint: ['/init'], Cmd: ['./podinfo'] }),
+        );
+        expect(derived.Entrypoint).toEqual(['/bin/sh']);
+        expect(derived.Cmd).toBeNull();
+    });
+
+    test('treats null, an empty array and an empty string as equal', () => {
+        const derived = deriveUserConfig(
+            containerSpec({ Config: { Entrypoint: '', Cmd: [] } }),
+            imageConfig({ Entrypoint: null, Cmd: null }),
+        );
+        expect(derived.Entrypoint).toBeUndefined();
+        expect(derived.Cmd).toBeUndefined();
+    });
+
+    test('drops a string entrypoint equal to the image single element array', () => {
+        const derived = deriveUserConfig(
+            containerSpec({ Config: { Entrypoint: '/init' } }),
+            imageConfig({ Entrypoint: ['/init'] }),
+        );
+        expect(derived.Entrypoint).toBeUndefined();
+    });
+});
+
+describe('deriveUserConfig Healthcheck', () => {
+    const containerHealthcheck = {
+        Test: ['CMD', 'curl', '-f', 'http://localhost'],
+        Interval: 30,
+        Timeout: 5,
+        StartPeriod: 2,
+        StartInterval: 0,
+        Retries: 3,
+    };
+
+    test('drops a healthcheck fully equal to the image one', () => {
+        const derived = deriveUserConfig(
+            containerSpec({ Config: { Healthcheck: containerHealthcheck } }),
+            imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+        );
+        expect(derived.Healthcheck).toBeUndefined();
+    });
+
+    test('zeroes the inherited fields and keeps the differing one', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: {
+                    Healthcheck: { ...containerHealthcheck, Interval: 60 },
+                },
+            }),
+            imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+        );
+        expect(derived.Healthcheck).toEqual({
+            Test: [],
+            Interval: 60,
+            Timeout: 0,
+            StartPeriod: 0,
+            StartInterval: 0,
+            Retries: 0,
+        });
+    });
+
+    test('keeps the healthcheck verbatim when the image declares none', () => {
+        const derived = deriveUserConfig(
+            containerSpec({ Config: { Healthcheck: containerHealthcheck } }),
+            imageConfig(),
+        );
+        expect(derived.Healthcheck).toEqual(containerHealthcheck);
+    });
+
+    test('keeps a disabled healthcheck', () => {
+        const derived = deriveUserConfig(
+            containerSpec({ Config: { Healthcheck: { Test: ['NONE'] } } }),
+            imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+        );
+        expect(derived.Healthcheck.Test).toEqual(['NONE']);
+    });
+
+    test('treats a missing numeric field as equal to zero', () => {
+        const { StartInterval, ...withoutStartInterval } = containerHealthcheck;
+        expect(StartInterval).toEqual(0);
+        const derived = deriveUserConfig(
+            containerSpec({ Config: { Healthcheck: withoutStartInterval } }),
+            imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+        );
+        expect(derived.Healthcheck).toBeUndefined();
+    });
+});
+
+describe('deriveUserConfig Entrypoint, Cmd and Healthcheck hints', () => {
+    const containerHealthcheck = {
+        Test: ['CMD', 'curl', '-f', 'http://localhost'],
+        Interval: 30,
+        Timeout: 5,
+        StartPeriod: 2,
+        StartInterval: 0,
+        Retries: 3,
+    };
+
+    test('a hinted Cmd is kept while an inherited entrypoint still drops', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: { Entrypoint: ['/init'], Cmd: ['./podinfo'] },
+            }),
+            imageConfig({ Entrypoint: ['/init'], Cmd: ['./podinfo'] }),
+            hints({ fields: ['Cmd'] }),
+        );
+        expect(derived.Entrypoint).toBeUndefined();
+        expect(derived.Cmd).toEqual(['./podinfo']);
+    });
+
+    test('a hinted Entrypoint keeps both the entrypoint and the command', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: { Entrypoint: ['/init'], Cmd: ['./podinfo'] },
+            }),
+            imageConfig({ Entrypoint: ['/init'], Cmd: ['./podinfo'] }),
+            hints({ fields: ['Entrypoint'] }),
+        );
+        expect(derived.Entrypoint).toEqual(['/init']);
+        expect(derived.Cmd).toEqual(['./podinfo']);
+    });
+
+    test('a hinted healthcheck field is not zeroed while the others are', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: {
+                    Healthcheck: { ...containerHealthcheck, Interval: 60 },
+                },
+            }),
+            imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+            hints({ healthcheck: ['Timeout'] }),
+        );
+        expect(derived.Healthcheck).toEqual({
+            Test: [],
+            Interval: 60,
+            Timeout: 5,
+            StartPeriod: 0,
+            StartInterval: 0,
+            Retries: 0,
+        });
+    });
+
+    test('an all equal healthcheck with one hinted field is not collapsed', () => {
+        const derived = deriveUserConfig(
+            containerSpec({ Config: { Healthcheck: containerHealthcheck } }),
+            imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+            hints({ healthcheck: ['Interval'] }),
+        );
+        expect(derived.Healthcheck).toEqual({
+            Test: [],
+            Interval: 30,
+            Timeout: 0,
+            StartPeriod: 0,
+            StartInterval: 0,
+            Retries: 0,
+        });
+    });
+
+    test('does not mutate the entrypoint, command or healthcheck inputs', () => {
+        const current = containerSpec({
+            Config: {
+                Entrypoint: ['/init'],
+                Cmd: ['./podinfo'],
+                Healthcheck: { ...containerHealthcheck, Interval: 60 },
+            },
+        });
+        const image = imageConfig({
+            Entrypoint: ['/init'],
+            Cmd: ['./podinfo'],
+            Healthcheck: { ...containerHealthcheck },
+        });
+        const currentBefore = JSON.parse(JSON.stringify(current));
+        const imageBefore = JSON.parse(JSON.stringify(image));
+        deriveUserConfig(current, image, hints({ healthcheck: ['Timeout'] }));
+        expect(JSON.parse(JSON.stringify(current))).toEqual(currentBefore);
+        expect(JSON.parse(JSON.stringify(image))).toEqual(imageBefore);
+    });
+});
