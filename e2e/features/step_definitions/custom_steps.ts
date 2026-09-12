@@ -11,7 +11,9 @@ interface Container {
     name: string;
     status: string;
     agent?: string;
+    labels?: Record<string, string>;
     image: {
+        id: string;
         registry: { name: string };
         name: string;
         tag: { value: string };
@@ -89,6 +91,46 @@ Then(/^response body path (.*) must be exactly null$/, function (this: ApickliWo
 
 function substituteVariables(str: string, apickli: Apickli): string {
     return str.replace(/`([^`]*)`/g, (match, p1) => apickli.getGlobalVariable(p1) || match);
+}
+
+async function getContainerBySavedName(world: ApickliWorld, nameVar: string): Promise<Container> {
+    const name = world.apickli.getGlobalVariable(nameVar);
+    await new Promise<ResponseObject>((resolve, reject) => {
+        world.apickli.get('/api/containers', (error, response) => {
+            if (error) reject(error);
+            else resolve(response);
+        });
+    });
+    const response = world.apickli.getResponseObject();
+
+    let containers: unknown = response.body;
+
+    if (typeof containers === 'string') {
+        try {
+            containers = JSON.parse(containers);
+        } catch (e) {
+            world.attach(`Failed to parse response body: ${String(e)}`);
+            throw new Error('Response body is not valid JSON');
+        }
+    }
+
+    if (!response || !Array.isArray(containers)) {
+        throw new Error('Failed to retrieve containers or invalid response format');
+    }
+
+    const matches = (containers as Container[]).filter((c) => c.name === name);
+
+    if (matches.length === 0) {
+        throw new Error(`Container with name ${name} not found in current list`);
+    }
+
+    const running = matches.find((c) => c.status && c.status.toLowerCase() === 'running');
+
+    if (matches.length > 1) {
+        world.attach(`Found ${matches.length} containers with name ${name}`);
+    }
+
+    return running || matches[0];
 }
 
 Given(/^I set variable "([^"]*)" to "([^"]*)"$/, function (this: ApickliWorld, varName: string, value: string) {
@@ -471,4 +513,16 @@ Then(/^the compose file "([^"]*)" should pin service "([^"]*)" to "([^"]*)"$/, a
     assert.ok(imageLine, `service ${service} has no image: line in ${filePath}`);
     const actual: string = imageLine.trim().replace(/\s+#.*$/, '');
     assert.strictEqual(actual, `image: ${expected}`);
+});
+
+Then(/^the container with saved name "([^"]*)" should have label "([^"]*)" equal to "([^"]*)"$/, async function (this: ApickliWorld, nameVar: string, label: string, expected: string) {
+    const container = await getContainerBySavedName(this, nameVar);
+    const actual = container.labels ? container.labels[label] : undefined;
+    assert.strictEqual(actual, expected, `Label ${label} expected to be ${expected}, but is ${describeValue(actual)}`);
+});
+
+Then(/^the container with saved name "([^"]*)" should have label "([^"]*)" equal to its image id$/, async function (this: ApickliWorld, nameVar: string, label: string) {
+    const container = await getContainerBySavedName(this, nameVar);
+    const actual = container.labels ? container.labels[label] : undefined;
+    assert.strictEqual(actual, container.image.id, `Label ${label} expected to be ${container.image.id}, but is ${describeValue(actual)}`);
 });
