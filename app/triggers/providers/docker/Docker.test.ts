@@ -40,6 +40,7 @@ jest.mock('../../../registry', () => ({
                                         Promise.resolve({
                                             Name: '/container-name',
                                             Id: '123456798',
+                                            Image: 'sha256:old',
                                             State: {
                                                 Running: true,
                                             },
@@ -95,6 +96,16 @@ jest.mock('../../../registry', () => ({
                                         new Error('Error when removing image'),
                                     );
                                 },
+                                inspect: () =>
+                                    image === 'sha256:old'
+                                        ? Promise.resolve({
+                                              Id: 'sha256:old',
+                                              Config: {},
+                                          })
+                                        : Promise.resolve({
+                                              Id: 'sha256:new',
+                                              Config: {},
+                                          }),
                             }),
                         modem: {
                             followProgress: (pullStream, res) => res(),
@@ -535,6 +546,71 @@ test('clone should remove hostname and exposed ports when network mode is contai
     expect(clone.HostConfig.NetworkMode).toEqual('container:sidecar');
 });
 
+test('clone should use the supplied config instead of the container config', async () => {
+    const clone = docker.cloneContainer(
+        {
+            Name: '/test',
+            Id: '123456789',
+            HostConfig: {},
+            Config: {
+                Env: ['FROM=container'],
+                Labels: { a: 'container' },
+            },
+            NetworkSettings: {
+                Networks: {},
+            },
+        },
+        'test/test:2.0.0',
+        {
+            Env: ['FROM=derived'],
+            Labels: { a: 'derived' },
+        },
+    );
+    expect(clone.Env).toEqual(['FROM=derived']);
+    expect(clone.Labels).toEqual({ a: 'derived' });
+});
+
+test('clone should apply the container:* deletions to the supplied config', async () => {
+    const clone = docker.cloneContainer(
+        {
+            Name: '/test',
+            Id: '123456789',
+            HostConfig: {
+                NetworkMode: 'container:sidecar',
+            },
+            Config: {
+                Hostname: 'container-host',
+            },
+            NetworkSettings: {
+                Networks: {},
+            },
+        },
+        'test/test:2.0.0',
+        {
+            Hostname: 'derived-host',
+            ExposedPorts: { '8080/tcp': {} },
+        },
+    );
+    expect(clone.Hostname).toBeUndefined();
+    expect(clone.ExposedPorts).toBeUndefined();
+});
+
+test('inspectImage should return undefined and warn when the inspect fails', async () => {
+    const warn = jest.fn();
+    const fakeLogger = { warn, info: jest.fn(), debug: jest.fn() };
+    const dockerApi = {
+        getImage: () =>
+            Promise.resolve({
+                inspect: () => Promise.reject(new Error('boom')),
+            }),
+    };
+    const result = await docker.inspectImage(dockerApi, 'sha256:x', fakeLogger);
+    expect(result).toBeUndefined();
+    expect(warn).toHaveBeenCalledWith(
+        'Error when inspecting image sha256:x (boom)',
+    );
+});
+
 const happyContainer = {
     watcher: 'test',
     id: '123456789',
@@ -567,6 +643,30 @@ test('pullContainer should return an update context on the happy path', async ()
     expect(ctx.newImage).toBe('my-registry/test/test:4.5.6');
     expect(ctx.currentContainerSpec).toBeDefined();
     expect(ctx.state).toEqual({ Running: true });
+});
+
+test('pullContainer should capture both image specs on the happy path', async () => {
+    const ctx = await docker.pullContainer(happyContainer);
+    expect(ctx.currentImageSpec.Id).toBe('sha256:old');
+    expect(ctx.newImageId).toBe('sha256:new');
+});
+
+test('pullContainer should still pull when the old image inspect fails', async () => {
+    const pullImage = jest.spyOn(docker, 'pullImage');
+    jest.spyOn(docker, 'inspectImage').mockResolvedValueOnce(undefined);
+    const ctx = await docker.pullContainer(happyContainer);
+    expect(ctx.currentImageSpec).toBeUndefined();
+    expect(ctx.newImageId).toBe('sha256:new');
+    expect(pullImage).toHaveBeenCalled();
+});
+
+test('pullContainer should leave newImageId undefined when the new image inspect fails', async () => {
+    jest.spyOn(docker, 'inspectImage')
+        .mockResolvedValueOnce({ Id: 'sha256:old', Config: {} })
+        .mockResolvedValueOnce(undefined);
+    const ctx = await docker.pullContainer(happyContainer);
+    expect(ctx.currentImageSpec).toEqual({ Id: 'sha256:old', Config: {} });
+    expect(ctx.newImageId).toBeUndefined();
 });
 
 test('pullContainer should return undefined and warn when the container does not exist', async () => {

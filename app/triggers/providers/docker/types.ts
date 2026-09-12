@@ -1,6 +1,7 @@
 import Dockerode from 'dockerode';
 import type Registry from '../../../registries/Registry';
 import type { Container } from '../../../model/container';
+import type { UserConfigHints } from './config';
 
 /**
  * Handoff object returned by pullContainer and consumed by swapContainer.
@@ -12,6 +13,9 @@ export interface ContainerUpdateContext {
     newImage: string;
     currentContainer: Dockerode.Container;
     currentContainerSpec: Dockerode.ContainerInspectInfo;
+    currentImageSpec?: Dockerode.ImageInspectInfo;
+    newImageId?: string;
+    userConfigHints?: UserConfigHints;
     state: Dockerode.ContainerInspectInfo['State'];
 }
 
