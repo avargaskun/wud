@@ -9,6 +9,12 @@ import Logger from 'bunyan';
 import { wudPostupdateRestart } from '../../../watchers/providers/docker/label';
 import { getPostupdateBounceCounter } from '../../../prometheus/postupdate';
 import { ContainerGoneError, SwapFailedError } from './errors';
+import {
+    deriveUserConfig,
+    emptyHints,
+    refreshComposeImageLabel,
+} from './config';
+import type { ContainerConfig } from './config';
 import type {
     ContainerUpdateContext,
     DependentOutcome,
@@ -579,11 +585,30 @@ class Docker extends Trigger {
     }
 
     /**
+     * Inspect an image; undefined (with a warning) instead of throwing, the swap degrades gracefully without it.
+     */
+    async inspectImage(
+        dockerApi: Dockerode,
+        imageRef: string,
+        logContainer: Logger,
+    ): Promise<Dockerode.ImageInspectInfo | undefined> {
+        try {
+            return await (await dockerApi.getImage(imageRef)).inspect();
+        } catch (e: any) {
+            logContainer.warn(
+                `Error when inspecting image ${imageRef} (${e.message})`,
+            );
+            return undefined;
+        }
+    }
+
+    /**
      * Clone container specs.
      */
     cloneContainer(
         currentContainer: Dockerode.ContainerInspectInfo,
         newImage: string,
+        config: ContainerConfig = currentContainer.Config,
     ): Dockerode.ContainerCreateOptions {
         const containerName = currentContainer.Name.replace('/', '');
         const endpointsConfig = currentContainer.NetworkSettings.Networks;
@@ -601,7 +626,7 @@ class Docker extends Trigger {
             );
         }
         const containerClone = {
-            ...currentContainer.Config,
+            ...config,
             name: containerName,
             Image: newImage,
             HostConfig: currentContainer.HostConfig,
@@ -621,6 +646,18 @@ class Docker extends Trigger {
         }
 
         return containerClone;
+    }
+
+    /**
+     * The create config for the replacement: the container's own settings on top of the new image's defaults.
+     */
+    buildSwapConfig(ctx: ContainerUpdateContext): ContainerConfig {
+        const user = deriveUserConfig(
+            ctx.currentContainerSpec,
+            ctx.currentImageSpec?.Config,
+            ctx.userConfigHints ?? emptyHints(),
+        );
+        return refreshComposeImageLabel(user, ctx.newImageId);
     }
 
     /**
@@ -686,6 +723,12 @@ class Docker extends Trigger {
             logContainer,
         );
 
+        const currentImageSpec = await this.inspectImage(
+            dockerApi,
+            currentContainerSpec.Image,
+            logContainer,
+        );
+
         // Try to remove previous pulled images
         if (this.configuration.prune) {
             await this.pruneImages(
@@ -699,12 +742,20 @@ class Docker extends Trigger {
         // Pull new image ahead of time
         await this.pullImage(dockerApi, auth, newImage, logContainer);
 
+        const newImageSpec = await this.inspectImage(
+            dockerApi,
+            newImage,
+            logContainer,
+        );
+
         return {
             dockerApi,
             registry,
             newImage,
             currentContainer,
             currentContainerSpec,
+            currentImageSpec,
+            newImageId: newImageSpec?.Id,
             state: currentContainerSpec.State,
         };
     }
@@ -795,6 +846,7 @@ class Docker extends Trigger {
         }
 
         try {
+            // Verbatim clone on purpose: recreated on its own image, the merged config is already the faithful one.
             const respec = this.cloneContainer(
                 ctx.currentContainerSpec,
                 ctx.currentContainerSpec.Config.Image,
@@ -876,6 +928,7 @@ class Docker extends Trigger {
         const containerToCreateInspect = this.cloneContainer(
             currentContainerSpec,
             newImage,
+            this.buildSwapConfig(ctx),
         );
 
         const originalName = currentContainerSpec.Name.replace('/', '');
@@ -1191,6 +1244,7 @@ class Docker extends Trigger {
                 return { ...outcome, status: 'bounced', method: 'restart' };
             }
 
+            // Verbatim clone on purpose: recreated on its own image, the merged config is already the faithful one.
             const specToCreate = this.cloneContainer(
                 depSpec,
                 depSpec.Config.Image,
