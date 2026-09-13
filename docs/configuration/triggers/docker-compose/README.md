@@ -5,7 +5,7 @@ The `dockercompose` trigger lets you update docker-compose.yml files & replace e
 
 The trigger will:
 - Update the related docker-compose.yml file
-- Clone the existing container specification
+- Work out the container's own settings, by reading the keys its compose service declares and comparing the running container with the image it was created from
 - Pull the new image
 - Stop the existing container (if it is running)
 - Rename the existing container aside, to `<name>_wud_old_<id>`
@@ -64,6 +64,22 @@ Other service shapes are never matched to a container at all, so the container i
 !> A trigger request that explicitly names such a container returns **HTTP 400**, on the single-container endpoint as well as the batch one. The same applies to a container whose compose file cannot be resolved at all — no label and no configured file, none of the candidate files exists, none of them parses, or none of them declares the container's image — and to a container that is not watched on the local host. Such a request used to answer `200` with an empty body while doing nothing; it now fails with the reason in the response body (see the [API documentation](/api/container/?id=response)).
 
 ?> The trigger API response reports the outcome per member: `fileUpdated: true` when the service's `image:` line was rewritten, `false` when the compose file could not be rewritten for that container, or when its `image:` line was reverted because the update failed. The field is omitted for digest updates, where no file change is expected because the tag does not change.
+
+### What the replacement container inherits
+
+The replacement is not a byte-for-byte copy of the old container. What Docker reports for a running container is the container's own settings already merged with the defaults baked into its image, and recreating from that merged view pins the old image's defaults forever. WUD instead subtracts the old image's configuration from the container's, creates the new container from what is left, and lets the daemon fill the rest in from the **new** image — so the new image's `ENV`, `CMD`, `ENTRYPOINT`, `WORKDIR`, `USER`, `HEALTHCHECK` and `LABEL` values apply, exactly as they would to a `docker compose up -d` on the new tag. An auto-generated hostname (12 hexadecimal digits, the short ID of the container it was generated for) is left empty as well, so the daemon derives it from the new container instead of carrying a long-gone container's ID.
+
+**Every key the service declares in its compose file(s) is kept as-is**, even when its value happens to equal the old image's default. The trigger reads the *keys* of `environment`, `labels`, `command`, `entrypoint`, `user`, `working_dir`, `stop_signal`, `hostname`, `expose` and `healthcheck` from every candidate file and keeps the container's current value for each of them. Only keys are read, never values, so `${VAR}` interpolation is irrelevant — a key is declared whatever it resolves to. Keys are collected from all the candidate files of the project, so a service declared in an override file contributes its keys too.
+
+!> Keys that reach the service through `env_file:`, an `extends:` base or a `<<:` merge are **not** seen by the trigger, which does not resolve them. Those fall back to the comparison with the old image, and there a value byte-identical to the old image's default cannot be told apart from an inherited one: if the new image changes that default, the new container takes the new value. Declaring the key in the service itself — `environment:` rather than `env_file:` — is what makes it exempt.
+
+### After an update: `docker compose up -d`
+
+The `com.docker.compose.image` label is refreshed to the image the container now runs, instead of staying frozen at the image it was originally created from. A **digest** update therefore leaves the next `docker compose up -d` a no-op, where it previously recreated the container on the image it was already running.
+
+A **tag** update still leaves exactly **one** compose-driven recreate pending. Compose also compares `com.docker.compose.config-hash`, which covers the `image:` line WUD rewrote, and WUD cannot compute that hash without the compose engine. The next `docker compose up -d` therefore recreates the service once — on the image it already runs — and is a no-op after that. Delegating the recreate to Compose itself is tracked as an opt-in follow-up in [#50](https://github.com/avargaskun/wud/issues/50).
+
+?> Every other `com.docker.compose.*` label, `com.docker.compose.config-hash` included, is left exactly as it was.
 
 ### When an update fails
 

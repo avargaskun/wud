@@ -6,6 +6,7 @@ services:
       - 'wud.watch=true'
       - 'wud.tag.include=^6\.0\.0$'
       - 'wud.compose.file=/compose/docker-compose.yml'
+      - 'org.opencontainers.image.version=5.0.0'
   zz_batch_compose_2:
     container_name: zz_batch_compose_2
     image: ghcr.io/stefanprodan/podinfo:5.0.0
