@@ -846,6 +846,7 @@ class Docker extends Trigger {
         }
 
         try {
+            // Verbatim clone on purpose: recreated on its own image, the merged config is already the faithful one.
             const respec = this.cloneContainer(
                 ctx.currentContainerSpec,
                 ctx.currentContainerSpec.Config.Image,
@@ -1243,6 +1244,7 @@ class Docker extends Trigger {
                 return { ...outcome, status: 'bounced', method: 'restart' };
             }
 
+            // Verbatim clone on purpose: recreated on its own image, the merged config is already the faithful one.
             const specToCreate = this.cloneContainer(
                 depSpec,
                 depSpec.Config.Image,

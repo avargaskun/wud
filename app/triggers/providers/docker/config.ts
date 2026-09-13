@@ -314,6 +314,7 @@ export function deriveUserConfig(
         imageConfig.Volumes,
     );
 
+    // An overridden entrypoint owns the command: both stay, a null Cmd included, so the daemon cannot refill it.
     if (
         !hints.fields.has('Entrypoint') &&
         argvEquals(
