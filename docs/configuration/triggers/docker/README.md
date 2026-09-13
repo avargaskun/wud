@@ -4,7 +4,7 @@
 The `docker` trigger lets you replace existing containers with their updated versions.
 
 The trigger will: 
-- Clone the existing container specification
+- Work out the container's own settings, by comparing the running container with the image it was created from
 - Pull the new image
 - Stop the existing container (if it is running)
 - Rename the existing container aside, to `<name>_wud_old_<id>`
@@ -13,6 +13,14 @@ The trigger will:
 - Remove the renamed-aside container
 - Remove the previous image (optionally)
 - Bounce the dependent containers declared with the `wud.postupdate.restart` label (optionally)
+
+### What the replacement container inherits
+
+The replacement is not a byte-for-byte copy of the old container. What Docker reports for a running container is the container's own settings already merged with the defaults baked into its image, and recreating from that merged view pins the old image's defaults forever. WUD instead subtracts the old image's configuration from the container's, creates the new container from what is left, and lets the daemon fill the rest in from the **new** image. The new image's `ENV`, `CMD`, `ENTRYPOINT`, `WORKDIR`, `USER`, `HEALTHCHECK` and `LABEL` values therefore apply to the replacement, just as they would to a container you created yourself from the new image.
+
+An auto-generated hostname is re-derived along the way. A container created without an explicit hostname is given its own short ID as hostname; carrying that string over meant every replacement answered to a long-gone container's ID. A hostname that has the shape of a generated one — 12 lowercase hexadecimal digits — is now left empty so the daemon derives it from the new container.
+
+!> **A setting whose value is identical to the old image's default follows the new image.** WUD has only the running container and the image it ran to compare, so a value you set by hand to exactly what the image already declared cannot be told apart from an inherited one, and is treated as inherited. If the new image changes that default, the new container takes the new value. For example, with `ENV PUID=1000` in the old image, `-e PUID=1000` on the container and `ENV PUID=911` in the new image, the replacement runs with `911`. The same ambiguity applies to a hostname you set deliberately to 12 hexadecimal digits. This limitation applies in full to the `docker` trigger, which has no compose file to consult; the [dockercompose](/configuration/triggers/docker-compose/?id=what-the-replacement-container-inherits) trigger keeps every key its compose file declares, whatever the value.
 
 ### When an update fails
 
