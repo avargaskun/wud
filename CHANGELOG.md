@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.2.2](https://github.com/avargaskun/wud/compare/v9.2.1...v9.2.2) (2026-09-13)
+
+
+### Bug Fixes
+
+* recreate on the new image's defaults with fresh compose labels (fixes [#49](https://github.com/avargaskun/wud/issues/49)) ([1dbf5e6](https://github.com/avargaskun/wud/commit/1dbf5e62a8716c276f9a9a2e11494d971cba6ba9))
+
 ## [9.2.1](https://github.com/avargaskun/wud/compare/v9.2.0...v9.2.1) (2026-08-09)
 
 
