@@ -1,6 +1,6 @@
 import type Dockerode from 'dockerode';
 
-/** @types/dockerode 3.3.47 declares no StopSignal on either config; the intersection is the whole fix. */
+/** @types/dockerode declares StopSignal on neither Config type, so both aliases add it. */
 export type ContainerConfig = Dockerode.ContainerInspectInfo['Config'] & {
     StopSignal?: string;
 };
@@ -104,7 +104,10 @@ function deriveScalar(
     return (value ?? '') === (imageValue ?? '') ? '' : value;
 }
 
-function deriveHostname(hostname: string, hinted: boolean): string {
+function deriveHostname(
+    hostname: string | undefined,
+    hinted: boolean,
+): string | undefined {
     if (hinted) {
         return hostname;
     }
@@ -264,8 +267,7 @@ export function deriveUserConfig(
     imageConfig: ImageConfig | undefined,
     hints: UserConfigHints = emptyHints(),
 ): ContainerConfig {
-    const containerConfig: ContainerConfig =
-        current.Config ?? ({} as ContainerConfig);
+    const containerConfig: ContainerConfig = current.Config;
     const derived: ContainerConfig = { ...containerConfig };
 
     derived.Hostname = deriveHostname(

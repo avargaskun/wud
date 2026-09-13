@@ -321,6 +321,19 @@ describe('deriveUserConfig ExposedPorts', () => {
         expect(derived.ExposedPorts).toEqual({ '80/tcp': {} });
     });
 
+    test('adds a published port the container does not expose', () => {
+        const derived = deriveUserConfig(
+            containerSpec({
+                Config: {},
+                HostConfig: {
+                    PortBindings: { '9090/tcp': [{ HostPort: '9090' }] },
+                },
+            }),
+            imageConfig(),
+        );
+        expect(derived.ExposedPorts).toEqual({ '9090/tcp': {} });
+    });
+
     test('is undefined when nothing is left', () => {
         const derived = deriveUserConfig(
             containerSpec({ Config: { ExposedPorts: { '80/tcp': {} } } }),
@@ -631,6 +644,15 @@ describe('deriveUserConfig Healthcheck', () => {
         const derived = deriveUserConfig(
             containerSpec({ Config: { Healthcheck: withoutStartInterval } }),
             imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+        );
+        expect(derived.Healthcheck).toBeUndefined();
+    });
+
+    test('stays undefined when the container declares none despite a hint', () => {
+        const derived = deriveUserConfig(
+            containerSpec({ Config: {} }),
+            imageConfig({ Healthcheck: { ...containerHealthcheck } }),
+            hints({ healthcheck: ['Interval'] }),
         );
         expect(derived.Healthcheck).toBeUndefined();
     });

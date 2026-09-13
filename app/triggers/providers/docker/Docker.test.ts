@@ -1,5 +1,7 @@
 // @ts-nocheck
 import { ValidationError } from 'joi';
+import type Dockerode from 'dockerode';
+import type Logger from 'bunyan';
 import Docker from './Docker';
 import { ContainerGoneError, SwapFailedError } from './errors';
 import log from '../../../log';
@@ -41,6 +43,7 @@ jest.mock('../../../registry', () => ({
                                             Name: '/container-name',
                                             Id: '123456798',
                                             Image: 'sha256:old',
+                                            Config: {},
                                             State: {
                                                 Running: true,
                                             },
@@ -597,7 +600,11 @@ test('clone should apply the container:* deletions to the supplied config', asyn
 
 test('inspectImage should return undefined and warn when the inspect fails', async () => {
     const warn = jest.fn();
-    const fakeLogger = { warn, info: jest.fn(), debug: jest.fn() };
+    const fakeLogger: Pick<Logger, 'warn' | 'info' | 'debug'> = {
+        warn,
+        info: jest.fn(),
+        debug: jest.fn(),
+    };
     const dockerApi = {
         getImage: () =>
             Promise.resolve({
@@ -761,7 +768,10 @@ test('swapContainer should run stop, rename, create, start and remove the aside 
     expect(wait).not.toHaveBeenCalled();
 });
 
-const buildDerivationCtx = (createContainer, specOverrides = {}) => ({
+const buildDerivationCtx = (
+    createContainer: jest.Mock,
+    specOverrides: Partial<Dockerode.ContainerInspectInfo> = {},
+) => ({
     dockerApi: { createContainer },
     registry: { getImageFullName: () => 'my-registry/test/test:1.2.3' },
     newImage: 'my-registry/test/test:4.5.6',
@@ -1150,6 +1160,7 @@ test('trigger should not use fallback when multi-network create succeeds', async
                     Promise.resolve({
                         Name: '/container-name',
                         Id: '123456798',
+                        Config: {},
                         State: {
                             Running: false,
                         },
@@ -1240,6 +1251,7 @@ test('trigger should fallback to primary then connect secondary networks', async
                     Promise.resolve({
                         Name: '/container-name',
                         Id: '123456798',
+                        Config: {},
                         State: {
                             Running: false,
                         },
@@ -1342,6 +1354,7 @@ test('trigger should throw when fallback cannot connect a secondary network', as
                     Promise.resolve({
                         Name: '/container-name',
                         Id: '123456798',
+                        Config: {},
                         State: {
                             Running: false,
                         },
@@ -1428,6 +1441,7 @@ test('trigger should log an error with the orphan id when the fallback cleanup r
                     Promise.resolve({
                         Name: '/container-name',
                         Id: '123456798',
+                        Config: {},
                         State: {
                             Running: false,
                         },

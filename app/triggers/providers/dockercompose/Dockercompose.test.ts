@@ -475,7 +475,10 @@ test('resolveComposeFileForContainer should pick the last candidate that declare
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toMatchObject({ file: '/abs/override.yml' });
+    ).resolves.toEqual({
+        file: '/abs/override.yml',
+        parsedCandidates: [expect.any(Object), expect.any(Object)],
+    });
 });
 
 test('resolveComposeFileForContainer should pick the only candidate that declares the image', async () => {
@@ -490,7 +493,10 @@ test('resolveComposeFileForContainer should pick the only candidate that declare
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toMatchObject({ file: '/abs/base.yml' });
+    ).resolves.toEqual({
+        file: '/abs/base.yml',
+        parsedCandidates: [expect.any(Object), expect.any(Object)],
+    });
 });
 
 test('resolveComposeFileForContainer should skip a candidate that does not exist', async () => {
@@ -507,7 +513,10 @@ test('resolveComposeFileForContainer should skip a candidate that does not exist
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toMatchObject({ file: '/abs/base.yml' });
+    ).resolves.toEqual({
+        file: '/abs/base.yml',
+        parsedCandidates: [expect.any(Object)],
+    });
 });
 
 test('resolveComposeFileForContainer should warn and skip an unparseable candidate', async () => {
@@ -523,7 +532,10 @@ test('resolveComposeFileForContainer should warn and skip an unparseable candida
     });
     await expect(
         dockercompose.resolveComposeFileForContainer(container, new Map()),
-    ).resolves.toMatchObject({ file: '/abs/base.yml' });
+    ).resolves.toEqual({
+        file: '/abs/base.yml',
+        parsedCandidates: [expect.any(Object)],
+    });
     expect(warnSpy).toHaveBeenCalledWith(
         expect.stringContaining(
             'Skipping compose file /abs/broken.yml for container zz_batch_compose_1',
