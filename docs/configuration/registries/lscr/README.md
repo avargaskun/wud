@@ -9,6 +9,20 @@ The `lscr` registry lets you configure [LSCR](https://fleet.linuxserver.io/) int
 |----------------------------------------------|:-------------:|-----------------|------------------------------------------|----------------------------|
 | `WUD_REGISTRY_LSCR_{REGISTRY_NAME}_USERNAME` | :red_circle:  | Github username |                                          |                            |
 | `WUD_REGISTRY_LSCR_{REGISTRY_NAME}_TOKEN`    | :red_circle:  | Github token    | Github password or Github Personal Token |                            |
+| `WUD_REGISTRY_LSCR_{REGISTRY_NAME}_INCREMENTALTAGS` | :white_circle: | Fetch only tags pushed since the last cycle instead of re-listing the whole repository | `true`, `false` | `true` |
+
+### Incremental tag listing
+
+LSCR is backed by GHCR (it even authenticates against `ghcr.io/token`), so it shares GHCR's tag
+listing behaviour and this optimisation.
+
+When `INCREMENTALTAGS` is enabled (the default), WUD remembers the tag list from the previous cycle
+and asks the registry only for the tags added since then, merging the delta into the cached list.
+Tags are listed in creation order and are never reordered, which is what makes this safe.
+
+If the remembered position no longer exists — for example because the tag it pointed at was deleted —
+WUD logs an `info` message and transparently falls back to a full listing, which re-establishes the
+position for the next cycle. Set the variable to `false` to always list the whole repository.
 
 ### Examples
 
