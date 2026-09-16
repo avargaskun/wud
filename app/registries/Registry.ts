@@ -17,7 +17,7 @@ export interface RegistryManifest {
 
 export interface RegistryTagsList {
     name: string;
-    tags: string[];
+    tags: string[] | null;
 }
 
 export interface RegistryManifestResponse {
@@ -95,6 +95,13 @@ export class Registry extends Component {
      * Get Tags.
      */
     async getTags(image: ContainerImage): Promise<string[]> {
+        return this.sortTagsDesc(await this.crawlAllTags(image));
+    }
+
+    /**
+     * Crawl all pages of the registry tag list; returns tags in registry order.
+     */
+    protected async crawlAllTags(image: ContainerImage): Promise<string[]> {
         this.log.debug(`Get ${image.name} tags`);
         const tags: string[] = [];
         let page: AxiosResponse<RegistryTagsList> | undefined = undefined;
@@ -114,10 +121,14 @@ export class Registry extends Component {
             tags.push(...pageTags);
         }
 
-        // Sort alpha then reverse to get higher values first
-        tags.sort();
-        tags.reverse();
         return tags;
+    }
+
+    /**
+     * Sort alpha then reverse to get higher values first.
+     */
+    protected sortTagsDesc(tags: string[]): string[] {
+        return [...tags].sort().reverse();
     }
 
     /**
