@@ -21,6 +21,10 @@ class Ghcr extends BaseRegistry {
         return this.maskSensitiveFields(['token']);
     }
 
+    supportsIncrementalTagListing(): boolean {
+        return true;
+    }
+
     match(imageUrl: string) {
         return this.matchUrlPattern(imageUrl, /^.*\.?ghcr.io$/);
     }

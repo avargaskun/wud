@@ -53,3 +53,7 @@ test('normalizeImage should return the proper registry v2 endpoint', async () =>
         },
     });
 });
+
+test('supportsIncrementalTagListing should be false (trueforge is lexically ordered)', async () => {
+    expect(trueforge.supportsIncrementalTagListing()).toBe(false);
+});

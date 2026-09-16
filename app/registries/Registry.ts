@@ -41,6 +41,8 @@ export interface RegistryManifestResponse {
     }[];
 }
 
+const WATERMARK_OFFSET = 3;
+
 /**
  * Docker Registry Abstract class.
  */
@@ -48,6 +50,8 @@ export class Registry extends Component {
     protected axiosInstance: AxiosInstance;
 
     private tagListsInFlight: Map<string, Promise<string[]>> = new Map();
+
+    private tagListCache: Map<string, string[]> = new Map();
 
     constructor() {
         super();
@@ -124,9 +128,91 @@ export class Registry extends Component {
      */
     private async resolveTagList(
         image: ContainerImage,
-        _key: string,
+        key: string,
     ): Promise<string[]> {
-        return this.sortTagsDesc(await this.crawlAllTags(image));
+        if (this.isIncrementalTagListingEnabled()) {
+            const cached = this.tagListCache.get(key);
+            // Guard here as well as in fetchTagsSinceWatermark: both "too short" and
+            // "watermark broken" return undefined, so a repository with <= 3 tags would
+            // otherwise emit the fallback line below on every cycle forever.
+            if (cached && cached.length > WATERMARK_OFFSET) {
+                const delta = await this.fetchTagsSinceWatermark(image, cached);
+                if (delta !== undefined) {
+                    const merged = this.mergeTagDelta(cached, delta);
+                    this.tagListCache.set(key, merged);
+                    this.log.debug(
+                        `${image.name}: incremental tag fetch returned ${delta.length} new tag(s) (${merged.length} total)`,
+                    );
+                    return this.sortTagsDesc(merged);
+                }
+                this.log.info(
+                    `${image.name}: incremental tag listing watermark is no longer valid; falling back to a full tag crawl`,
+                );
+                this.tagListCache.delete(key);
+            }
+        }
+        const tags = await this.crawlAllTags(image);
+        if (this.isIncrementalTagListingEnabled()) {
+            this.tagListCache.set(key, tags);
+        }
+        return this.sortTagsDesc(tags);
+    }
+
+    /**
+     * Fetch the tags added since the cached watermark.
+     *
+     * Returns undefined when the registry response contradicts the cached list
+     * (the caller must then full-crawl); an empty array means nothing is new.
+     */
+    private async fetchTagsSinceWatermark(
+        image: ContainerImage,
+        cached: string[],
+    ): Promise<string[] | undefined> {
+        if (cached.length < WATERMARK_OFFSET + 1) {
+            return undefined;
+        }
+        const watermarkIndex = cached.length - WATERMARK_OFFSET;
+        const expectedEcho = cached.slice(watermarkIndex + 1);
+
+        let page = await this.getTagsPage(image, cached[watermarkIndex]);
+        let pageTags = page?.data?.tags ?? [];
+
+        if (pageTags.length < expectedEcho.length) {
+            return undefined;
+        }
+        for (let i = 0; i < expectedEcho.length; i += 1) {
+            if (pageTags[i] !== expectedEcho[i]) {
+                return undefined;
+            }
+        }
+
+        const collected: string[] = pageTags.slice(expectedEcho.length);
+        let link: string | undefined = page?.headers?.link;
+        // An empty page carrying a Link header would restart pagination from the
+        // beginning, because getTagsPage drops `last=` when lastItem is undefined.
+        while (link !== undefined && pageTags.length > 0) {
+            page = await this.getTagsPage(
+                image,
+                pageTags[pageTags.length - 1],
+                link,
+            );
+            pageTags = page?.data?.tags ?? [];
+            link = page?.headers?.link;
+            collected.push(...pageTags);
+        }
+        return collected;
+    }
+
+    /**
+     * Append a delta to the cached registry-order tag list.
+     */
+    private mergeTagDelta(cached: string[], delta: string[]): string[] {
+        if (delta.length === 0) {
+            return cached;
+        }
+        const deltaSet = new Set(delta);
+        // A tag deleted then re-pushed reappears at the end of the creation-ordered list
+        return [...cached.filter((t) => !deltaSet.has(t)), ...delta];
     }
 
     /**
@@ -145,10 +231,22 @@ export class Registry extends Component {
     }
 
     /**
+     * Whether incremental tag listing is both supported and consented to.
+     */
+    isIncrementalTagListingEnabled(): boolean {
+        if (!this.supportsIncrementalTagListing()) {
+            return false;
+        }
+        const configured = this.configuration?.incrementaltags;
+        return configured !== false && configured !== 'false';
+    }
+
+    /**
      * Drop the tag list state kept for this registry instance.
      */
     async deregisterComponent(): Promise<void> {
         this.tagListsInFlight.clear();
+        this.tagListCache.clear();
     }
 
     /**

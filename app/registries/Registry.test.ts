@@ -52,6 +52,12 @@ test('getTags should sort tags z -> a', async () => {
 describe('getTags in-flight dedupe', () => {
     const image = { name: 'test', registry: { url: 'test' } };
 
+    class IncrementalRegistry extends Registry {
+        supportsIncrementalTagListing() {
+            return true;
+        }
+    }
+
     const buildRegistry = () => {
         const registryMocked = new Registry();
         registryMocked.log = log;
@@ -154,6 +160,22 @@ describe('getTags in-flight dedupe', () => {
         expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(2);
         resolvers.forEach((resolve) => resolve(tagsPage()));
         await Promise.all([first, second]);
+    });
+
+    test('deregisterComponent should clear the cached tag lists', async () => {
+        const registryMocked = new IncrementalRegistry();
+        registryMocked.log = log;
+        registryMocked.getTagsPage = jest.fn().mockImplementation(async () => ({
+            headers: {},
+            data: { tags: ['v1', 'v2', 'v3', 'v4'] },
+        }));
+        await registryMocked.getTags(image);
+        await registryMocked.deregisterComponent();
+        registryMocked.getTagsPage.mockClear();
+
+        await registryMocked.getTags(image);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(1);
+        expect(registryMocked.getTagsPage.mock.calls[0][1]).toBeUndefined();
     });
 });
 

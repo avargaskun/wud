@@ -1,5 +1,7 @@
+import { AxiosResponse } from 'axios';
 import { ContainerImage } from '../../../model/container';
 import { ComponentConfiguration } from '../../../registry/Component';
+import { RegistryTagsList } from '../../Registry';
 import Ghcr from './Ghcr';
 
 describe('GitHub Container Registry', () => {
@@ -109,5 +111,92 @@ describe('GitHub Container Registry', () => {
         ghcr.configuration = { username: 'testuser' };
         const auth = await ghcr.getAuthPull();
         expect(auth).toBeUndefined();
+    });
+
+    describe('incremental tag listing', () => {
+        const image = {
+            name: 'user/repo',
+            registry: { url: 'https://ghcr.io/v2' },
+        } as ContainerImage;
+
+        const page = (tags: string[] | null, link?: string) =>
+            ({
+                data: { tags },
+                headers: link ? { link } : {},
+            }) as AxiosResponse<RegistryTagsList>;
+
+        const stubPages = (
+            ...pages: AxiosResponse<RegistryTagsList>[]
+        ): jest.Mock => {
+            const getTagsPage = jest.fn();
+            pages.forEach((p) => getTagsPage.mockResolvedValueOnce(p));
+            ghcr.getTagsPage = getTagsPage;
+            return getTagsPage;
+        };
+
+        test('supportsIncrementalTagListing should be true', async () => {
+            expect(ghcr.supportsIncrementalTagListing()).toBe(true);
+        });
+
+        test('should resume from the registry-order watermark', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v4', 'v5', 'v6']),
+            );
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v6',
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(1);
+            expect(getTagsPage.mock.calls[0][1]).toEqual('v3');
+        });
+
+        test('should watermark on registry order, not sorted order', async () => {
+            const getTagsPage = stubPages(
+                page(['b', 'a', 'd', 'c', 'e']),
+                page(['c', 'e', 'f']),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'f',
+                'e',
+                'd',
+                'c',
+                'b',
+                'a',
+            ]);
+            expect(getTagsPage.mock.calls[0][1]).toEqual('d');
+        });
+
+        test('should return the cached list when the delta is empty', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v4', 'v5']),
+            );
+
+            const first = await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual(first);
+            expect(getTagsPage).toHaveBeenCalledTimes(1);
+        });
     });
 });
