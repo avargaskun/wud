@@ -101,6 +101,16 @@ describe('GitHub Container Registry', () => {
         ).not.toThrow();
     });
 
+    test('should validate configuration with only incrementaltags', async () => {
+        expect(() =>
+            ghcr.validateConfiguration({ incrementaltags: false }),
+        ).not.toThrow();
+    });
+
+    test('should throw when username is provided without token', async () => {
+        expect(() => ghcr.validateConfiguration({ username: 'x' })).toThrow();
+    });
+
     test('should return undefined auth pull when missing username', async () => {
         ghcr.configuration = { token: 'test-token' };
         const auth = await ghcr.getAuthPull();
