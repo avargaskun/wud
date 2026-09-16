@@ -49,6 +49,114 @@ test('getTags should sort tags z -> a', async () => {
     ).resolves.toStrictEqual(['v3', 'v2', 'v1']);
 });
 
+describe('getTags in-flight dedupe', () => {
+    const image = { name: 'test', registry: { url: 'test' } };
+
+    const buildRegistry = () => {
+        const registryMocked = new Registry();
+        registryMocked.log = log;
+        return registryMocked;
+    };
+
+    const tagsPage = () => ({
+        headers: {},
+        data: { tags: ['v1', 'v2', 'v3'] },
+    });
+
+    test('concurrent calls for the same image should issue a single crawl', async () => {
+        const registryMocked = buildRegistry();
+        registryMocked.getTagsPage = jest
+            .fn()
+            .mockImplementation(async () => tagsPage());
+        const results = await Promise.all([
+            registryMocked.getTags(image),
+            registryMocked.getTags(image),
+        ]);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(1);
+        expect(results[0]).toStrictEqual(['v3', 'v2', 'v1']);
+        expect(results[1]).toStrictEqual(['v3', 'v2', 'v1']);
+    });
+
+    test('concurrent calls for different images should issue two crawls', async () => {
+        const registryMocked = buildRegistry();
+        registryMocked.getTagsPage = jest
+            .fn()
+            .mockImplementation(async () => tagsPage());
+        await Promise.all([
+            registryMocked.getTags(image),
+            registryMocked.getTags({
+                name: 'other',
+                registry: { url: 'test' },
+            }),
+        ]);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(2);
+    });
+
+    test('concurrent calls should share the same rejection', async () => {
+        const registryMocked = buildRegistry();
+        const error = new Error('registry unreachable');
+        registryMocked.getTagsPage = jest.fn().mockImplementation(async () => {
+            throw error;
+        });
+        const settled = await Promise.allSettled([
+            registryMocked.getTags(image),
+            registryMocked.getTags(image),
+        ]);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(1);
+        expect(settled[0].status).toEqual('rejected');
+        expect(settled[0].reason).toBe(error);
+        expect(settled[1].status).toEqual('rejected');
+        expect(settled[1].reason).toBe(error);
+    });
+
+    test('a call after a rejection should re-fetch', async () => {
+        const registryMocked = buildRegistry();
+        registryMocked.getTagsPage = jest
+            .fn()
+            .mockRejectedValueOnce(new Error('registry unreachable'))
+            .mockImplementation(async () => tagsPage());
+        await expect(registryMocked.getTags(image)).rejects.toThrow(
+            'registry unreachable',
+        );
+        await expect(registryMocked.getTags(image)).resolves.toStrictEqual([
+            'v3',
+            'v2',
+            'v1',
+        ]);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(2);
+    });
+
+    test('sequential calls should crawl again on a base registry', async () => {
+        const registryMocked = buildRegistry();
+        registryMocked.getTagsPage = jest
+            .fn()
+            .mockImplementation(async () => tagsPage());
+        await registryMocked.getTags(image);
+        await registryMocked.getTags(image);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(2);
+    });
+
+    test('supportsIncrementalTagListing should be false when not overridden', () => {
+        expect(new Registry().supportsIncrementalTagListing()).toBe(false);
+    });
+
+    test('deregisterComponent should clear in-flight requests', async () => {
+        const registryMocked = buildRegistry();
+        const resolvers = [];
+        registryMocked.getTagsPage = jest
+            .fn()
+            .mockImplementation(
+                () => new Promise((resolve) => resolvers.push(resolve)),
+            );
+        const first = registryMocked.getTags(image);
+        await registryMocked.deregisterComponent();
+        const second = registryMocked.getTags(image);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(2);
+        resolvers.forEach((resolve) => resolve(tagsPage()));
+        await Promise.all([first, second]);
+    });
+});
+
 test('getImageManifestDigest should return digest for application/vnd.docker.distribution.manifest.list.v2+json then application/vnd.docker.distribution.manifest.v2+json', async () => {
     const registryMocked = new Registry();
     registryMocked.log = log;

@@ -47,6 +47,8 @@ export interface RegistryManifestResponse {
 export class Registry extends Component {
     protected axiosInstance: AxiosInstance;
 
+    private tagListsInFlight: Map<string, Promise<string[]>> = new Map();
+
     constructor() {
         super();
         this.axiosInstance = axios.create();
@@ -93,9 +95,60 @@ export class Registry extends Component {
 
     /**
      * Get Tags.
+     *
+     * The returned array is shared between concurrent callers and must not be mutated.
      */
     async getTags(image: ContainerImage): Promise<string[]> {
+        const key = this.getTagListCacheKey(image);
+        const inFlight = this.tagListsInFlight.get(key);
+        if (inFlight) {
+            this.log.debug(
+                `Reuse in-flight tag list request for ${image.name}`,
+            );
+            return inFlight;
+        }
+        const request = this.resolveTagList(image, key);
+        this.tagListsInFlight.set(key, request);
+        try {
+            return await request;
+        } finally {
+            // Deregistration may have cleared the map and a newer request may already own the key
+            if (this.tagListsInFlight.get(key) === request) {
+                this.tagListsInFlight.delete(key);
+            }
+        }
+    }
+
+    /**
+     * Resolve the sorted tag list for an image.
+     */
+    private async resolveTagList(
+        image: ContainerImage,
+        _key: string,
+    ): Promise<string[]> {
         return this.sortTagsDesc(await this.crawlAllTags(image));
+    }
+
+    /**
+     * Key identifying an image tag list within this registry instance.
+     */
+    private getTagListCacheKey(image: ContainerImage): string {
+        return `${image.registry.url}|${image.name}`;
+    }
+
+    /**
+     * To be overridden by registries whose tag list is append-only and whose
+     * last= cursor is positional.
+     */
+    supportsIncrementalTagListing(): boolean {
+        return false;
+    }
+
+    /**
+     * Drop the tag list state kept for this registry instance.
+     */
+    async deregisterComponent(): Promise<void> {
+        this.tagListsInFlight.clear();
     }
 
     /**
