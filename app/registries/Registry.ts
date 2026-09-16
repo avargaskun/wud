@@ -132,9 +132,7 @@ export class Registry extends Component {
     ): Promise<string[]> {
         if (this.isIncrementalTagListingEnabled()) {
             const cached = this.tagListCache.get(key);
-            // Guard here as well as in fetchTagsSinceWatermark: both "too short" and
-            // "watermark broken" return undefined, so a repository with <= 3 tags would
-            // otherwise emit the fallback line below on every cycle forever.
+            // Without this a short repository would log the fallback below every cycle
             if (cached && cached.length > WATERMARK_OFFSET) {
                 const delta = await this.fetchTagsSinceWatermark(image, cached);
                 if (delta !== undefined) {
@@ -188,8 +186,7 @@ export class Registry extends Component {
 
         const collected: string[] = pageTags.slice(expectedEcho.length);
         let link: string | undefined = page?.headers?.link;
-        // An empty page carrying a Link header would restart pagination from the
-        // beginning, because getTagsPage drops `last=` when lastItem is undefined.
+        // An empty page has no cursor, and getTagsPage without one restarts from page one
         while (link !== undefined && pageTags.length > 0) {
             page = await this.getTagsPage(
                 image,
