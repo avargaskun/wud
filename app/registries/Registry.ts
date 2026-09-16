@@ -130,7 +130,8 @@ export class Registry extends Component {
         image: ContainerImage,
         key: string,
     ): Promise<string[]> {
-        if (this.isIncrementalTagListingEnabled()) {
+        const incremental = this.isIncrementalTagListingEnabled();
+        if (incremental) {
             const cached = this.tagListCache.get(key);
             // Without this a short repository would log the fallback below every cycle
             if (cached && cached.length > WATERMARK_OFFSET) {
@@ -150,7 +151,7 @@ export class Registry extends Component {
             }
         }
         const tags = await this.crawlAllTags(image);
-        if (this.isIncrementalTagListingEnabled()) {
+        if (incremental) {
             this.tagListCache.set(key, tags);
         }
         return this.sortTagsDesc(tags);
