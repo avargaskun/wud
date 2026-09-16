@@ -162,6 +162,29 @@ describe('getTags in-flight dedupe', () => {
         await Promise.all([first, second]);
     });
 
+    test('a settling stale request should not clear a newer in-flight entry', async () => {
+        const registryMocked = buildRegistry();
+        const resolvers = [];
+        registryMocked.getTagsPage = jest
+            .fn()
+            .mockImplementation(
+                () => new Promise((resolve) => resolvers.push(resolve)),
+            );
+
+        const first = registryMocked.getTags(image);
+        await registryMocked.deregisterComponent();
+        const second = registryMocked.getTags(image);
+
+        resolvers[0](tagsPage());
+        await first;
+
+        const third = registryMocked.getTags(image);
+        expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(2);
+
+        resolvers[1](tagsPage());
+        await Promise.all([second, third]);
+    });
+
     test('deregisterComponent should clear the cached tag lists', async () => {
         const registryMocked = new IncrementalRegistry();
         registryMocked.log = log;
