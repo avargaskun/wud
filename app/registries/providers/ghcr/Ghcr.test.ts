@@ -125,6 +125,9 @@ describe('GitHub Container Registry', () => {
                 headers: link ? { link } : {},
             }) as AxiosResponse<RegistryTagsList>;
 
+        const nextLink =
+            '<https://ghcr.io/v2/user/repo/tags/list?n=1000&last=v6>; rel="next"';
+
         const stubPages = (
             ...pages: AxiosResponse<RegistryTagsList>[]
         ): jest.Mock => {
@@ -197,6 +200,206 @@ describe('GitHub Container Registry', () => {
 
             await expect(ghcr.getTags(image)).resolves.toEqual(first);
             expect(getTagsPage).toHaveBeenCalledTimes(1);
+        });
+
+        test('should full-crawl when the delta cursor no longer exists', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(null),
+                page(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']),
+                page(['v5', 'v6']),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v6',
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(2);
+
+            getTagsPage.mockClear();
+
+            await ghcr.getTags(image);
+            expect(getTagsPage).toHaveBeenCalledTimes(1);
+            expect(getTagsPage.mock.calls[0][1]).toEqual('v4');
+        });
+
+        test('should full-crawl when the delta echo does not match', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v9', 'v5', 'v6']),
+                page(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v6',
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(2);
+            expect(getTagsPage.mock.calls[1][1]).toBeUndefined();
+        });
+
+        test('should full-crawl when the delta is shorter than the echo', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v4']),
+                page(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v6',
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(2);
+            expect(getTagsPage.mock.calls[1][1]).toBeUndefined();
+        });
+
+        test('should follow every page of a multi-page delta', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v4', 'v5', 'v6'], nextLink),
+                page(['v7', 'v8']),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v8',
+                'v7',
+                'v6',
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(2);
+            expect(getTagsPage.mock.calls[1][1]).toEqual('v6');
+            expect(getTagsPage.mock.calls[1][2]).toEqual(nextLink);
+        });
+
+        test('should stop paginating on an empty page carrying a link header', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v4', 'v5', 'v6'], nextLink),
+                page([], nextLink),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v6',
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(2);
+        });
+
+        test('should full-crawl a list shorter than the watermark window', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3']),
+                page(['v1', 'v2', 'v3']),
+            );
+            const infoSpy = jest.spyOn(ghcr.log, 'info');
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(1);
+            expect(getTagsPage.mock.calls[0][1]).toBeUndefined();
+            expect(infoSpy).not.toHaveBeenCalled();
+        });
+
+        test('should keep a re-pushed tag once, at its new position', async () => {
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v4', 'v5', 'v2']),
+                page(['v5', 'v2']),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            const merged = await ghcr.getTags(image);
+            expect(merged).toEqual(['v5', 'v4', 'v3', 'v2', 'v1']);
+            expect(merged.filter((tag) => tag === 'v2')).toHaveLength(1);
+
+            getTagsPage.mockClear();
+
+            await ghcr.getTags(image);
+            expect(getTagsPage).toHaveBeenCalledTimes(1);
+            expect(getTagsPage.mock.calls[0][1]).toEqual('v4');
+        });
+
+        test('should full-crawl when incremental tag listing is disabled', async () => {
+            ghcr.configuration = {
+                username: 'testuser',
+                token: 'testtoken',
+                incrementaltags: false,
+            };
+            const getTagsPage = stubPages(
+                page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                page(['v1', 'v2', 'v3', 'v4', 'v5', 'v6']),
+            );
+
+            await ghcr.getTags(image);
+            getTagsPage.mockClear();
+
+            await expect(ghcr.getTags(image)).resolves.toEqual([
+                'v6',
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(getTagsPage).toHaveBeenCalledTimes(1);
+            expect(getTagsPage.mock.calls[0][1]).toBeUndefined();
+        });
+
+        test('should be enabled on a default registry', async () => {
+            const ghcrDefault = new Ghcr();
+            await ghcrDefault.register(
+                'registry',
+                'ghcr',
+                'public',
+                '' as unknown as ComponentConfiguration,
+            );
+            expect(ghcrDefault.configuration).toStrictEqual({});
+            expect(ghcrDefault.isIncrementalTagListingEnabled()).toBe(true);
+
+            ghcr.configuration = '' as unknown as ComponentConfiguration;
+            expect(ghcr.isIncrementalTagListingEnabled()).toBe(true);
         });
     });
 });
