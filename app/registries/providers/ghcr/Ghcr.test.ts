@@ -411,5 +411,12 @@ describe('GitHub Container Registry', () => {
             ghcr.configuration = '' as unknown as ComponentConfiguration;
             expect(ghcr.isIncrementalTagListingEnabled()).toBe(true);
         });
+
+        test('should be disabled by an uncoerced string false', async () => {
+            ghcr.configuration = {
+                incrementaltags: 'false',
+            } as unknown as ComponentConfiguration;
+            expect(ghcr.isIncrementalTagListingEnabled()).toBe(false);
+        });
     });
 });
