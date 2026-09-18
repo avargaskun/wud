@@ -60,3 +60,7 @@ lexical filter:
 
 A lexical `last=` cannot be used as a watermark: a newly pushed tag can sort *before* the remembered
 one, so it would fall outside every subsequent page and be missed permanently.
+
+The remembered position lives in memory only, so a restart discards it and the next cycle lists every
+repository in full. Set `WUD_TAGCACHE_ENABLED` to `true` to persist it across restarts — see the
+[tag cache](/configuration/storage/?id=tag-cache) documentation.
