@@ -2,6 +2,7 @@
 import { getVersion } from './configuration';
 import log from './log';
 import * as store from './store';
+import * as tagcache from './tagcache';
 import * as registry from './registry';
 import * as api from './api';
 import * as prometheus from './prometheus';
@@ -15,6 +16,9 @@ async function main() {
 
     // Init store
     await store.init({ memory: isAgent });
+
+    // Init tag cache
+    await tagcache.init();
 
     if (!isAgent) {
         // Start Prometheus registry
