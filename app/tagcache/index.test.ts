@@ -163,6 +163,17 @@ describe('disk tier', () => {
         expect(await mtimeOf(name)).toBeGreaterThan(backDated);
     });
 
+    test('setTagList should not rewrite the file after hydrating it from disk', async () => {
+        await tagcache.setTagList('key', ['a', 'b']);
+        const [name] = await listDir();
+        const backDated = await backDate(name, 60000);
+        await tagcache.init({ enabled: true, path: tmp });
+        const hydrated = await tagcache.getTagList('key');
+        expect(hydrated).toEqual(['a', 'b']);
+        await tagcache.setTagList('key', hydrated as string[]);
+        expect(await mtimeOf(name)).toEqual(backDated);
+    });
+
     test('getTagList should treat a corrupted file as a miss', async () => {
         await tagcache.setTagList('key', ['v1']);
         const [name] = await listDir();
@@ -250,8 +261,9 @@ describe('disk tier', () => {
             await tagcache.setTagList('key', ['a', 'b', 'c']);
             await fs.promises.mkdir(tmp, { recursive: true });
             await tagcache.setTagList('key', ['a', 'b', 'c']);
-            const [name] = await listDir();
-            expect((await readEntry(name)).tags).toEqual(['a', 'b', 'c']);
+            const entries = await listDir();
+            expect(entries).toHaveLength(1);
+            expect((await readEntry(entries[0])).tags).toEqual(['a', 'b', 'c']);
         });
     });
 
