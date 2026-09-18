@@ -34,3 +34,29 @@ GCR \
 GHCR \
 HUB \
 QUAY
+
+### Incremental tag listing
+
+Only **GHCR** and **LSCR** support fetching just the tags added since the previous cycle
+(`WUD_REGISTRY_GHCR_{REGISTRY_NAME}_INCREMENTALTAGS` / `WUD_REGISTRY_LSCR_{REGISTRY_NAME}_INCREMENTALTAGS`).
+Every other registry lists the whole repository on every cycle.
+
+The requirement is that the registry lists tags in creation order (so the list only ever grows at the
+end) and that the `last=` pagination parameter resolves an exact position rather than acting as a
+lexical filter:
+
+| Registry | List ordering | `last=` semantics | Incremental viable |
+|---|---|---|---|
+| `ghcr.io` | creation order, append-only | positional (exact match) | Yes |
+| `lscr.io` | creation order (GHCR-backed) | positional (exact match) | Yes |
+| `registry-1.docker.io` (HUB) | lexical | lexical filter | No |
+| `quay.io` | collated lexical | lexical filter | No |
+| `registry.gitlab.com` | lexical | lexical filter | No |
+| `codeberg.org` / FORGEJO / GITEA | lexical | lexical filter | No |
+| `oci.trueforge.org` | lexical | lexical filter | No |
+| `gcr.io` | whole list in one response | n/a | n/a — already a single request |
+| `public.ecr.aws` | opaque cursor | opaque token only, arbitrary values rejected | No |
+| ACR | lexical | lexical filter | No |
+
+A lexical `last=` cannot be used as a watermark: a newly pushed tag can sort *before* the remembered
+one, so it would fall outside every subsequent page and be missed permanently.

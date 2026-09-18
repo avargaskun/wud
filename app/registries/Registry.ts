@@ -17,7 +17,7 @@ export interface RegistryManifest {
 
 export interface RegistryTagsList {
     name: string;
-    tags: string[];
+    tags: string[] | null;
 }
 
 export interface RegistryManifestResponse {
@@ -41,11 +41,17 @@ export interface RegistryManifestResponse {
     }[];
 }
 
+const WATERMARK_OFFSET = 3;
+
 /**
  * Docker Registry Abstract class.
  */
 export class Registry extends Component {
     protected axiosInstance: AxiosInstance;
+
+    private tagListsInFlight: Map<string, Promise<string[]>> = new Map();
+
+    private tagListCache: Map<string, string[]> = new Map();
 
     constructor() {
         super();
@@ -93,8 +99,158 @@ export class Registry extends Component {
 
     /**
      * Get Tags.
+     *
+     * The returned array is shared between concurrent callers and must not be mutated.
      */
     async getTags(image: ContainerImage): Promise<string[]> {
+        const key = this.getTagListCacheKey(image);
+        const inFlight = this.tagListsInFlight.get(key);
+        if (inFlight) {
+            this.log.debug(
+                `Reuse in-flight tag list request for ${image.name}`,
+            );
+            return inFlight;
+        }
+        const request = this.resolveTagList(image, key);
+        this.tagListsInFlight.set(key, request);
+        try {
+            return await request;
+        } finally {
+            // Deregistration may have cleared the map and a newer request may already own the key
+            if (this.tagListsInFlight.get(key) === request) {
+                this.tagListsInFlight.delete(key);
+            }
+        }
+    }
+
+    /**
+     * Resolve the sorted tag list for an image.
+     */
+    private async resolveTagList(
+        image: ContainerImage,
+        key: string,
+    ): Promise<string[]> {
+        const incremental = this.isIncrementalTagListingEnabled();
+        if (incremental) {
+            const cached = this.tagListCache.get(key);
+            // Without this a short repository would log the fallback below every cycle
+            if (cached && cached.length > WATERMARK_OFFSET) {
+                const delta = await this.fetchTagsSinceWatermark(image, cached);
+                if (delta !== undefined) {
+                    const merged = this.mergeTagDelta(cached, delta);
+                    this.tagListCache.set(key, merged);
+                    this.log.debug(
+                        `${image.name}: incremental tag fetch returned ${delta.length} new tag(s) (${merged.length} total)`,
+                    );
+                    return this.sortTagsDesc(merged);
+                }
+                this.log.info(
+                    `${image.name}: incremental tag listing watermark is no longer valid; falling back to a full tag crawl`,
+                );
+                this.tagListCache.delete(key);
+            }
+        }
+        const tags = await this.crawlAllTags(image);
+        if (incremental) {
+            this.tagListCache.set(key, tags);
+        }
+        return this.sortTagsDesc(tags);
+    }
+
+    /**
+     * Fetch the tags added since the cached watermark.
+     *
+     * Returns undefined when the registry response contradicts the cached list
+     * (the caller must then full-crawl); an empty array means nothing is new.
+     */
+    private async fetchTagsSinceWatermark(
+        image: ContainerImage,
+        cached: string[],
+    ): Promise<string[] | undefined> {
+        if (cached.length < WATERMARK_OFFSET + 1) {
+            return undefined;
+        }
+        const watermarkIndex = cached.length - WATERMARK_OFFSET;
+        const expectedEcho = cached.slice(watermarkIndex + 1);
+
+        let page = await this.getTagsPage(image, cached[watermarkIndex]);
+        let pageTags = page?.data?.tags ?? [];
+
+        if (pageTags.length < expectedEcho.length) {
+            return undefined;
+        }
+        for (let i = 0; i < expectedEcho.length; i += 1) {
+            if (pageTags[i] !== expectedEcho[i]) {
+                return undefined;
+            }
+        }
+
+        const collected: string[] = pageTags.slice(expectedEcho.length);
+        let link: string | undefined = page?.headers?.link;
+        // An empty page has no cursor, and getTagsPage without one restarts from page one
+        while (link !== undefined && pageTags.length > 0) {
+            page = await this.getTagsPage(
+                image,
+                pageTags[pageTags.length - 1],
+                link,
+            );
+            pageTags = page?.data?.tags ?? [];
+            link = page?.headers?.link;
+            collected.push(...pageTags);
+        }
+        return collected;
+    }
+
+    /**
+     * Append a delta to the cached registry-order tag list.
+     */
+    private mergeTagDelta(cached: string[], delta: string[]): string[] {
+        if (delta.length === 0) {
+            return cached;
+        }
+        const deltaSet = new Set(delta);
+        // A tag deleted then re-pushed reappears at the end of the creation-ordered list
+        return [...cached.filter((t) => !deltaSet.has(t)), ...delta];
+    }
+
+    /**
+     * Key identifying an image tag list within this registry instance.
+     */
+    private getTagListCacheKey(image: ContainerImage): string {
+        return `${image.registry.url}|${image.name}`;
+    }
+
+    /**
+     * To be overridden by registries whose tag list is append-only and whose
+     * last= cursor is positional.
+     */
+    supportsIncrementalTagListing(): boolean {
+        return false;
+    }
+
+    /**
+     * Whether incremental tag listing is both supported and consented to.
+     */
+    isIncrementalTagListingEnabled(): boolean {
+        if (!this.supportsIncrementalTagListing()) {
+            return false;
+        }
+        const configured = this.configuration?.incrementaltags;
+        return configured !== false && configured !== 'false';
+    }
+
+    /**
+     * Drop the tag list state kept for this registry instance.
+     */
+    async deregisterComponent(): Promise<void> {
+        this.tagListsInFlight.clear();
+        this.tagListCache.clear();
+    }
+
+    /**
+     * Crawl all pages of the registry tag list; returns tags in registry order.
+     */
+    protected async crawlAllTags(image: ContainerImage): Promise<string[]> {
         this.log.debug(`Get ${image.name} tags`);
         const tags: string[] = [];
         let page: AxiosResponse<RegistryTagsList> | undefined = undefined;
@@ -114,10 +270,14 @@ export class Registry extends Component {
             tags.push(...pageTags);
         }
 
-        // Sort alpha then reverse to get higher values first
-        tags.sort();
-        tags.reverse();
         return tags;
+    }
+
+    /**
+     * Sort alpha then reverse to get higher values first.
+     */
+    protected sortTagsDesc(tags: string[]): string[] {
+        return [...tags].sort().reverse();
     }
 
     /**

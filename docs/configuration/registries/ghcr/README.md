@@ -9,6 +9,21 @@ The `ghcr` registry lets you configure [GHCR](https://docs.github.com/en/package
 | -------------------------------------------- |:--------------:| --------------- | ---------------------------------------- | -------------------------- | 
 | `WUD_REGISTRY_GHCR_{REGISTRY_NAME}_USERNAME` | :white_circle: | Github username |                                          |                            |
 | `WUD_REGISTRY_GHCR_{REGISTRY_NAME}_TOKEN`    | :white_circle: | Github token    | Github password or Github Personal Token |                            |
+| `WUD_REGISTRY_GHCR_{REGISTRY_NAME}_INCREMENTALTAGS` | :white_circle: | Fetch only tags pushed since the last cycle instead of re-listing the whole repository | `true`, `false` | `true` |
+
+### Incremental tag listing
+
+Large repositories can expose tens of thousands of tags (`ghcr.io/immich-app/immich-server` alone
+lists over 30,000), and re-listing all of them for every container on every cycle is enough to hit
+GHCR's anonymous rate limit (HTTP 429).
+
+When `INCREMENTALTAGS` is enabled (the default), WUD remembers the tag list from the previous cycle
+and asks GHCR only for the tags added since then, merging the delta into the cached list. GHCR lists
+tags in creation order and never reorders them, which is what makes this safe.
+
+If the remembered position no longer exists — for example because the tag it pointed at was deleted —
+WUD logs an `info` message and transparently falls back to a full listing, which re-establishes the
+position for the next cycle. Set the variable to `false` to always list the whole repository.
 
 ### Examples
 

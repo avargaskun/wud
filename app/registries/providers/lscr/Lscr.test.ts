@@ -21,7 +21,12 @@ test('validatedConfiguration should initialize when configuration is valid', asy
     ).toStrictEqual({
         username: 'user',
         token: 'token',
+        incrementaltags: true,
     });
+});
+
+test('supportsIncrementalTagListing should be true', async () => {
+    expect(lscr.supportsIncrementalTagListing()).toBe(true);
 });
 
 test('validatedConfiguration should throw error when configuration is missing', async () => {

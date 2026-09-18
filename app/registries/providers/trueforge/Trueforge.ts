@@ -12,6 +12,11 @@ class Trueforge extends Ghcr {
         });
     }
 
+    // oci.trueforge.org is lexically ordered; a positional watermark would silently drop tags.
+    supportsIncrementalTagListing(): boolean {
+        return false;
+    }
+
     /**
      * Return true if image has not registry url.
      */
