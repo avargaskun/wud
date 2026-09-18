@@ -1,7 +1,12 @@
+import bunyan from 'bunyan';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import logger from '../log';
 import * as tagcache from './index';
+
+const TAG_CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const TMP_GRACE_MS = 60 * 60 * 1000;
 
 describe('memory tier', () => {
     beforeEach(async () => {
@@ -213,5 +218,89 @@ describe('disk tier', () => {
         await tagcache.setTagList(`${'x'.repeat(120)}|a`, ['v1']);
         await tagcache.setTagList(`${'x'.repeat(120)}|b`, ['v2']);
         expect(await listDir()).toHaveLength(2);
+    });
+
+    describe('failure modes', () => {
+        test('init should disable the disk tier when the path is not usable', async () => {
+            await fs.promises.writeFile(path.join(tmp, 'blocker'), 'x');
+            await expect(
+                tagcache.init({
+                    enabled: true,
+                    path: path.join(tmp, 'blocker', 'cache'),
+                }),
+            ).resolves.toBeUndefined();
+            expect(tagcache.getConfiguration().enabled).toEqual(false);
+            const tags = ['v1'];
+            await tagcache.setTagList('key', tags);
+            expect(await tagcache.getTagList('key')).toBe(tags);
+        });
+
+        test('setTagList should not throw when the write fails', async () => {
+            await fs.promises.rm(tmp, { recursive: true, force: true });
+            const tags = ['v1'];
+            await expect(
+                tagcache.setTagList('key', tags),
+            ).resolves.toBeUndefined();
+            expect(await tagcache.getTagList('key')).toBe(tags);
+        });
+
+        test('setTagList should retry a write that previously failed', async () => {
+            await tagcache.setTagList('key', ['a', 'b']);
+            await fs.promises.rm(tmp, { recursive: true, force: true });
+            await tagcache.setTagList('key', ['a', 'b', 'c']);
+            await fs.promises.mkdir(tmp, { recursive: true });
+            await tagcache.setTagList('key', ['a', 'b', 'c']);
+            const [name] = await listDir();
+            expect((await readEntry(name)).tags).toEqual(['a', 'b', 'c']);
+        });
+    });
+
+    describe('pruning', () => {
+        test('init should remove expired entries and keep fresh ones', async () => {
+            await tagcache.setTagList('stale', ['v1']);
+            await tagcache.setTagList('fresh', ['v2']);
+            const [staleName] = (await listDir()).filter((name) =>
+                name.startsWith('stale-'),
+            );
+            await backDate(staleName, TAG_CACHE_TTL_MS + 1000);
+            await tagcache.init({ enabled: true, path: tmp });
+            const entries = await listDir();
+            expect(entries).toHaveLength(1);
+            expect(entries[0]).toMatch(/^fresh-/);
+        });
+
+        test('init should remove abandoned temp files', async () => {
+            const name = 'key.json.1.abcdef.tmp';
+            await fs.promises.writeFile(path.join(tmp, name), 'x');
+            await backDate(name, TMP_GRACE_MS + 1000);
+            await tagcache.init({ enabled: true, path: tmp });
+            expect(await listDir()).toEqual([]);
+        });
+
+        test('init should keep a temp file that may still be in flight', async () => {
+            const name = 'key.json.1.abcdef.tmp';
+            await fs.promises.writeFile(path.join(tmp, name), 'x');
+            await tagcache.init({ enabled: true, path: tmp });
+            expect(await listDir()).toEqual([name]);
+        });
+
+        test('init should log how many entries were pruned', async () => {
+            await tagcache.setTagList('key', ['v1']);
+            const [name] = await listDir();
+            await backDate(name, TAG_CACHE_TTL_MS + 1000);
+            const info = jest.spyOn(
+                Object.getPrototypeOf(logger) as bunyan,
+                'info',
+            );
+            try {
+                await tagcache.init({ enabled: true, path: tmp });
+                expect(info).toHaveBeenCalledWith(
+                    'Pruned 1 stale tag cache file(s)',
+                );
+            } finally {
+                info.mockRestore();
+            }
+            expect(await listDir()).toEqual([]);
+        });
     });
 });

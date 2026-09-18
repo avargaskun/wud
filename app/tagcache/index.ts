@@ -11,6 +11,8 @@ const DEFAULT_PATH = '/tagcache';
 const TAG_CACHE_SCHEMA_VERSION = 1;
 const SLUG_MAX_LENGTH = 100;
 const HASH_LENGTH = 16;
+const TAG_CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const TMP_GRACE_MS = 60 * 60 * 1000;
 
 export interface TagCacheConfiguration {
     enabled: boolean;
@@ -40,6 +42,8 @@ const memory: Map<string, string[]> = new Map();
  * What was last successfully written to disk, per key -- not what the memory tier holds.
  */
 const persisted: Map<string, string[]> = new Map();
+
+const warnedKeys: Set<string> = new Set();
 
 let configuration: TagCacheConfiguration = {
     enabled: false,
@@ -114,17 +118,56 @@ async function writeAtomic(file: string, payload: TagCacheFile): Promise<void> {
     }
 }
 
+async function prune(): Promise<void> {
+    const entries = await fs.promises.readdir(configuration.path);
+    const now = Date.now();
+    let removed = 0;
+    for (const entry of entries) {
+        const file = path.join(configuration.path, entry);
+        try {
+            const isTmp = entry.endsWith('.tmp');
+            if (!isTmp && !entry.endsWith('.json')) {
+                continue;
+            }
+            const age = now - (await fs.promises.stat(file)).mtimeMs;
+            if (age > (isTmp ? TMP_GRACE_MS : TAG_CACHE_TTL_MS)) {
+                await fs.promises.rm(file, { force: true });
+                removed += 1;
+            }
+        } catch {
+            continue;
+        }
+    }
+    if (removed > 0) {
+        log.info(`Pruned ${removed} stale tag cache file(s)`);
+    }
+}
+
 /**
  * Init the tag cache.
  */
 export async function init(options?: TagCacheInitOptions): Promise<void> {
     memory.clear();
     persisted.clear();
+    warnedKeys.clear();
     configuration = resolveConfiguration(options);
     if (!configuration.enabled) {
         return;
     }
-    await fs.promises.mkdir(configuration.path, { recursive: true });
+    try {
+        await fs.promises.mkdir(configuration.path, { recursive: true });
+    } catch (e) {
+        log.warn(
+            `Tag cache directory ${configuration.path} is not usable (${(e as Error).message}); tag cache persistence is disabled`,
+        );
+        configuration = { ...configuration, enabled: false };
+        return;
+    }
+    try {
+        await prune();
+    } catch (e) {
+        log.warn(`Unable to prune the tag cache (${(e as Error).message})`);
+    }
 }
 
 /**
@@ -170,13 +213,22 @@ export async function setTagList(key: string, tags: string[]): Promise<void> {
     if (unchanged) {
         return;
     }
-    await writeAtomic(pathFor(key), {
-        version: TAG_CACHE_SCHEMA_VERSION,
-        key,
-        tags,
-        updatedAt: Date.now(),
-    });
-    persisted.set(key, tags);
+    try {
+        await writeAtomic(pathFor(key), {
+            version: TAG_CACHE_SCHEMA_VERSION,
+            key,
+            tags,
+            updatedAt: Date.now(),
+        });
+        persisted.set(key, tags);
+    } catch (e) {
+        if (!warnedKeys.has(key)) {
+            warnedKeys.add(key);
+            log.warn(
+                `Unable to persist the tag cache entry for ${key} (${(e as Error).message})`,
+            );
+        }
+    }
 }
 
 /**
