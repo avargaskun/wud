@@ -2,14 +2,12 @@
   
 If you want the state to persist after the container removal, you need to mount  ```/store``` as a volume.
 
-### Variables
+### Tag cache
 
 | Env var                 | Required       | Description                                            | Supported values | Default value when missing |
 | ----------------------- |:--------------:| ------------------------------------------------------ | ---------------- | -------------------------- |
 | `WUD_TAGCACHE_ENABLED`  | :white_circle: | Persist incremental tag-listing state across restarts  | `true`, `false`  | `false`                    |
 | `WUD_TAGCACHE_PATH`     | :white_circle: | Directory holding the persisted tag lists              | any path         | `/tagcache`                |
-
-### Tag cache
 
 The registries that support [incremental tag listing](/configuration/registries/?id=incremental-tag-listing) (GHCR and LSCR) remember the tag list from the previous cycle so that they only have to ask for the tags added since. That list lives in memory only, so every restart re-lists every tag of every watched repository.
 
@@ -19,7 +17,7 @@ Set `WUD_TAGCACHE_ENABLED` to `true` to keep it on disk as well; the remembered 
 - It is a **separate** volume from `/store`, so it can live on throwaway storage.
 - One small JSON file is written per image, and only when that image's tag list actually changed.
 - Entries untouched for 90 days are pruned at startup.
-- The directory is safe to delete at any time — so is any single file in it. It repopulates itself on the next cycle.
+- The directory, or any single file in it, is safe to delete — the tag cache repopulates itself after the next WUD restart (or, for a single file, as soon as that image's tag list next changes). Delete it while WUD is stopped if you want it rebuilt immediately.
 
 ### Examples
 
