@@ -3,6 +3,7 @@ import { ContainerImage } from '../../../model/container';
 import { ComponentConfiguration } from '../../../registry/Component';
 import { RegistryTagsList } from '../../Registry';
 import Ghcr from './Ghcr';
+import * as tagcache from '../../../tagcache';
 
 describe('GitHub Container Registry', () => {
     let ghcr: Ghcr;
@@ -124,6 +125,10 @@ describe('GitHub Container Registry', () => {
     });
 
     describe('incremental tag listing', () => {
+        beforeEach(async () => {
+            await tagcache.init({ enabled: false });
+        });
+
         const image = {
             name: 'user/repo',
             registry: { url: 'https://ghcr.io/v2' },
