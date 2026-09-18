@@ -92,7 +92,8 @@ async function readFromDisk(key: string): Promise<string[] | undefined> {
         if (
             parsed?.version !== TAG_CACHE_SCHEMA_VERSION ||
             parsed.key !== key ||
-            !Array.isArray(parsed.tags)
+            !Array.isArray(parsed.tags) ||
+            !parsed.tags.every((tag) => typeof tag === 'string')
         ) {
             return undefined;
         }
@@ -225,7 +226,7 @@ export async function setTagList(key: string, tags: string[]): Promise<void> {
         if (!warnedKeys.has(key)) {
             warnedKeys.add(key);
             log.warn(
-                `Unable to persist the tag cache entry for ${key} (${(e as Error).message})`,
+                `Unable to persist the tag cache entry for ${key} at ${pathFor(key)} (${(e as Error).message})`,
             );
         }
     }

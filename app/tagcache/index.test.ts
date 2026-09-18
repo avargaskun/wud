@@ -216,6 +216,23 @@ describe('disk tier', () => {
         expect(await tagcache.getTagList('key')).toBeUndefined();
     });
 
+    test('getTagList should treat a non string tag as a miss', async () => {
+        await tagcache.setTagList('key', ['v1']);
+        const [name] = await listDir();
+        await fs.promises.writeFile(
+            path.join(tmp, name),
+            JSON.stringify({
+                version: 1,
+                key: 'key',
+                tags: ['v1', 2],
+                updatedAt: Date.now(),
+            }),
+            'utf-8',
+        );
+        await tagcache.init({ enabled: true, path: tmp });
+        expect(await tagcache.getTagList('key')).toBeUndefined();
+    });
+
     test('should derive a filesystem safe file name from the key', async () => {
         await tagcache.setTagList(
             'ghcr.private|https://ghcr.io/v2|immich-app/immich-server',
