@@ -1,4 +1,7 @@
 import { AxiosResponse } from 'axios';
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import { ContainerImage } from '../../../model/container';
 import { ComponentConfiguration } from '../../../registry/Component';
 import { RegistryTagsList } from '../../Registry';
@@ -265,6 +268,59 @@ describe('GitHub Container Registry', () => {
             ]);
             expect(getTagsPage).toHaveBeenCalledTimes(2);
             expect(getTagsPage.mock.calls[1][1]).toBeUndefined();
+        });
+
+        test('should replace the persisted tag list when the watermark goes stale', async () => {
+            const tmp = await fs.promises.mkdtemp(
+                path.join(os.tmpdir(), 'wud-ghcr-'),
+            );
+            await tagcache.init({ enabled: true, path: tmp });
+            try {
+                const getTagsPage = stubPages(
+                    page(['v1', 'v2', 'v3', 'v4', 'v5']),
+                    page(['v9', 'v5', 'v6']),
+                    page(['v2', 'v3', 'v4', 'v5', 'v6', 'v7']),
+                );
+
+                await ghcr.getTags(image);
+                getTagsPage.mockClear();
+                const infoSpy = jest.spyOn(ghcr.log, 'info');
+
+                await expect(ghcr.getTags(image)).resolves.toEqual([
+                    'v7',
+                    'v6',
+                    'v5',
+                    'v4',
+                    'v3',
+                    'v2',
+                ]);
+                expect(getTagsPage).toHaveBeenCalledTimes(2);
+                expect(getTagsPage.mock.calls[1][1]).toBeUndefined();
+                expect(infoSpy).toHaveBeenCalledTimes(1);
+
+                const entries = await fs.promises.readdir(tmp);
+                const persisted = entries.filter((entry) =>
+                    entry.endsWith('.json'),
+                );
+                expect(persisted).toHaveLength(1);
+                expect(entries).toEqual(persisted);
+                const content = JSON.parse(
+                    await fs.promises.readFile(
+                        path.join(tmp, persisted[0]),
+                        'utf-8',
+                    ),
+                );
+                expect(content.tags).toEqual([
+                    'v2',
+                    'v3',
+                    'v4',
+                    'v5',
+                    'v6',
+                    'v7',
+                ]);
+            } finally {
+                await fs.promises.rm(tmp, { recursive: true, force: true });
+            }
         });
 
         test('should full-crawl when the delta is shorter than the echo', async () => {
