@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.3.0](https://github.com/avargaskun/wud/compare/v9.2.2...v9.3.0) (2026-09-18)
+
+
+### Features
+
+* resume GHCR tag listing from a watermark instead of crawling every tag ([#53](https://github.com/avargaskun/wud/issues/53)) ([#54](https://github.com/avargaskun/wud/issues/54)) ([69bf490](https://github.com/avargaskun/wud/commit/69bf49099a9918666b3004ef417b6b0d99cce587))
+
 ## [9.2.2](https://github.com/avargaskun/wud/compare/v9.2.1...v9.2.2) (2026-09-13)
 
 
