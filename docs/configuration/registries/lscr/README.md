@@ -24,6 +24,10 @@ If the remembered position no longer exists — for example because the tag it p
 WUD logs an `info` message and transparently falls back to a full listing, which re-establishes the
 position for the next cycle. Set the variable to `false` to always list the whole repository.
 
+By default, the remembered position lives in memory only, so a restart discards it and the next
+cycle lists the whole repository again. Set `WUD_TAGCACHE_ENABLED` to `true` to persist it across
+restarts — see the [tag cache](/configuration/storage/?id=tag-cache) documentation.
+
 ### Examples
 
 <!-- tabs:start -->

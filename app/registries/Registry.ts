@@ -8,6 +8,7 @@ import log, { registerAxiosErrorLogging } from '../log';
 import Component from '../registry/Component';
 import { getSummaryTags } from '../prometheus/registry';
 import { ContainerImage } from '../model/container';
+import { deleteTagList, getTagList, setTagList } from '../tagcache';
 
 export interface RegistryManifest {
     digest?: string;
@@ -50,8 +51,6 @@ export class Registry extends Component {
     protected axiosInstance: AxiosInstance;
 
     private tagListsInFlight: Map<string, Promise<string[]>> = new Map();
-
-    private tagListCache: Map<string, string[]> = new Map();
 
     constructor() {
         super();
@@ -132,13 +131,13 @@ export class Registry extends Component {
     ): Promise<string[]> {
         const incremental = this.isIncrementalTagListingEnabled();
         if (incremental) {
-            const cached = this.tagListCache.get(key);
+            const cached = await getTagList(key);
             // Without this a short repository would log the fallback below every cycle
             if (cached && cached.length > WATERMARK_OFFSET) {
                 const delta = await this.fetchTagsSinceWatermark(image, cached);
                 if (delta !== undefined) {
                     const merged = this.mergeTagDelta(cached, delta);
-                    this.tagListCache.set(key, merged);
+                    await setTagList(key, merged);
                     this.log.debug(
                         `${image.name}: incremental tag fetch returned ${delta.length} new tag(s) (${merged.length} total)`,
                     );
@@ -147,12 +146,12 @@ export class Registry extends Component {
                 this.log.info(
                     `${image.name}: incremental tag listing watermark is no longer valid; falling back to a full tag crawl`,
                 );
-                this.tagListCache.delete(key);
+                await deleteTagList(key);
             }
         }
         const tags = await this.crawlAllTags(image);
         if (incremental) {
-            this.tagListCache.set(key, tags);
+            await setTagList(key, tags);
         }
         return this.sortTagsDesc(tags);
     }
@@ -214,10 +213,10 @@ export class Registry extends Component {
     }
 
     /**
-     * Key identifying an image tag list within this registry instance.
+     * Key uniquely identifying an image tag list across all registry instances.
      */
     private getTagListCacheKey(image: ContainerImage): string {
-        return `${image.registry.url}|${image.name}`;
+        return `${this.getId()}|${image.registry.url}|${image.name}`;
     }
 
     /**
@@ -240,11 +239,12 @@ export class Registry extends Component {
     }
 
     /**
-     * Drop the tag list state kept for this registry instance.
+     * Drop the in-flight tag list requests owned by this registry instance.
+     *
+     * The cached tag lists deliberately survive: deregistration happens on SIGTERM.
      */
     async deregisterComponent(): Promise<void> {
         this.tagListsInFlight.clear();
-        this.tagListCache.clear();
     }
 
     /**

@@ -82,6 +82,15 @@ test('getStoreConfiguration should return configured store', async () => {
     });
 });
 
+test('getTagCacheConfiguration should return configured tag cache', async () => {
+    configuration.wudEnvVars.WUD_TAGCACHE_ENABLED = 'true';
+    configuration.wudEnvVars.WUD_TAGCACHE_PATH = '/tmp/tagcache';
+    expect(configuration.getTagCacheConfiguration()).toStrictEqual({
+        enabled: 'true',
+        path: '/tmp/tagcache',
+    });
+});
+
 test('getServerConfiguration should return configured api (new vars)', async () => {
     configuration.wudEnvVars.WUD_SERVER_PORT = '4000';
     expect(configuration.getServerConfiguration()).toStrictEqual({

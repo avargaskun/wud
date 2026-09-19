@@ -112,6 +112,13 @@ export function getStoreConfiguration() {
 }
 
 /**
+ * Get Tag cache configuration.
+ */
+export function getTagCacheConfiguration() {
+    return get('wud.tagcache', wudEnvVars);
+}
+
+/**
  * Get Server configurations.
  */
 export function getServerConfiguration() {

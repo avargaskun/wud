@@ -1,5 +1,9 @@
 // @ts-nocheck
+import fs from 'fs';
+import os from 'os';
+import path from 'path';
 import log from '../log';
+import * as tagcache from '../tagcache';
 
 jest.mock('axios');
 jest.mock('../prometheus/registry', () => ({
@@ -49,7 +53,7 @@ test('getTags should sort tags z -> a', async () => {
     ).resolves.toStrictEqual(['v3', 'v2', 'v1']);
 });
 
-describe('getTags in-flight dedupe', () => {
+describe('getTags caching and dedupe', () => {
     const image = { name: 'test', registry: { url: 'test' } };
 
     class IncrementalRegistry extends Registry {
@@ -57,6 +61,10 @@ describe('getTags in-flight dedupe', () => {
             return true;
         }
     }
+
+    beforeEach(async () => {
+        await tagcache.init({ enabled: false });
+    });
 
     const buildRegistry = () => {
         const registryMocked = new Registry();
@@ -185,7 +193,7 @@ describe('getTags in-flight dedupe', () => {
         await Promise.all([second, third]);
     });
 
-    test('deregisterComponent should clear the cached tag lists', async () => {
+    test('deregisterComponent should clear in-flight requests but keep the cached tag list', async () => {
         const registryMocked = new IncrementalRegistry();
         registryMocked.log = log;
         registryMocked.getTagsPage = jest.fn().mockImplementation(async () => ({
@@ -195,10 +203,76 @@ describe('getTags in-flight dedupe', () => {
         await registryMocked.getTags(image);
         await registryMocked.deregisterComponent();
         registryMocked.getTagsPage.mockClear();
+        registryMocked.getTagsPage.mockImplementation(async () => ({
+            headers: {},
+            data: { tags: ['v3', 'v4'] },
+        }));
 
-        await registryMocked.getTags(image);
+        await expect(registryMocked.getTags(image)).resolves.toStrictEqual([
+            'v4',
+            'v3',
+            'v2',
+            'v1',
+        ]);
         expect(registryMocked.getTagsPage).toHaveBeenCalledTimes(1);
-        expect(registryMocked.getTagsPage.mock.calls[0][1]).toBeUndefined();
+        expect(registryMocked.getTagsPage.mock.calls[0][1]).toEqual('v2');
+    });
+
+    test('a restarted registry should resume from the persisted tag list', async () => {
+        const tmp = await fs.promises.mkdtemp(
+            path.join(os.tmpdir(), 'wud-registry-'),
+        );
+        try {
+            await tagcache.init({ enabled: true, path: tmp });
+            const first = new IncrementalRegistry();
+            await first.register('registry', 'ghcr', 'test', {});
+            first.getTagsPage = jest.fn().mockImplementation(async () => ({
+                headers: {},
+                data: { tags: ['v1', 'v2', 'v3', 'v4'] },
+            }));
+            await first.getTags(image);
+
+            await tagcache.init({ enabled: true, path: tmp });
+
+            const second = new IncrementalRegistry();
+            await second.register('registry', 'ghcr', 'test', {});
+            second.getTagsPage = jest.fn().mockImplementation(async () => ({
+                headers: {},
+                data: { tags: ['v3', 'v4', 'v5'] },
+            }));
+            await expect(second.getTags(image)).resolves.toStrictEqual([
+                'v5',
+                'v4',
+                'v3',
+                'v2',
+                'v1',
+            ]);
+            expect(second.getTagsPage).toHaveBeenCalledTimes(1);
+            expect(second.getTagsPage.mock.calls[0][1]).toEqual('v2');
+        } finally {
+            await fs.promises.rm(tmp, { recursive: true, force: true });
+        }
+    });
+
+    test('two registry instances should not share a cached tag list', async () => {
+        const first = new IncrementalRegistry();
+        await first.register('registry', 'ghcr', 'one', {});
+        first.getTagsPage = jest.fn().mockImplementation(async () => ({
+            headers: {},
+            data: { tags: ['v1', 'v2', 'v3', 'v4'] },
+        }));
+        await first.getTags(image);
+
+        const second = new IncrementalRegistry();
+        await second.register('registry', 'ghcr', 'two', {});
+        second.getTagsPage = jest.fn().mockImplementation(async () => ({
+            headers: {},
+            data: { tags: ['v1', 'v2', 'v3', 'v4'] },
+        }));
+        await second.getTags(image);
+
+        expect(second.getTagsPage).toHaveBeenCalledTimes(1);
+        expect(second.getTagsPage.mock.calls[0][1]).toBeUndefined();
     });
 });
 
