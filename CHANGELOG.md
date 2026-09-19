@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.4.0](https://github.com/avargaskun/wud/compare/v9.3.0...v9.4.0) (2026-09-19)
+
+
+### Features
+
+* persist the incremental tag-listing watermark to an opt-in disk cache ([#56](https://github.com/avargaskun/wud/issues/56)) ([bf2880d](https://github.com/avargaskun/wud/commit/bf2880df6011e0896c5743bc031629d05120150e))
+
 ## [9.3.0](https://github.com/avargaskun/wud/compare/v9.2.2...v9.3.0) (2026-09-18)
 
 
