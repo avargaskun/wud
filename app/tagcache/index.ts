@@ -11,7 +11,7 @@ const DEFAULT_PATH = '/tagcache';
 const TAG_CACHE_SCHEMA_VERSION = 1;
 const SLUG_MAX_LENGTH = 100;
 const HASH_LENGTH = 16;
-const TAG_CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const TAG_CACHE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 const TMP_GRACE_MS = 60 * 60 * 1000;
 
 export interface TagCacheConfiguration {

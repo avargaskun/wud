@@ -16,7 +16,7 @@ Set `WUD_TAGCACHE_ENABLED` to `true` to keep it on disk as well; the remembered 
 - The cache is only used by registries that support incremental tag listing and have not opted out of it with `INCREMENTALTAGS`.
 - It is a **separate** volume from `/store`, so it can live on throwaway storage.
 - One small JSON file is written per image, and only when that image's tag list actually changed.
-- Entries untouched for 90 days are pruned at startup.
+- Entries untouched for 180 days are pruned at startup.
 - The directory, or any single file in it, is safe to delete — the tag cache repopulates itself after the next WUD restart (or, for a single file, as soon as that image's tag list next changes). Delete it while WUD is stopped if you want it rebuilt immediately.
 
 ### Examples

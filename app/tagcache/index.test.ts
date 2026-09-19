@@ -5,7 +5,7 @@ import path from 'path';
 import logger from '../log';
 import * as tagcache from './index';
 
-const TAG_CACHE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
+const TAG_CACHE_TTL_MS = 180 * 24 * 60 * 60 * 1000;
 const TMP_GRACE_MS = 60 * 60 * 1000;
 
 describe('memory tier', () => {
