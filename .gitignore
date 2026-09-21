@@ -111,3 +111,12 @@ ecr_test_credentials.json
 # Disposable runtime copy of the e2e compose fixture (rewritten in place by the dockercompose trigger)
 test/compose-stack/docker-compose.active.yml
 test/compose-stack/docker-compose.mirror.active.yml
+
+# Agent tooling: .claude/ is ignored except what is shared on purpose
+.claude/*
+!.claude/settings.json
+!.claude/runbooks/
+.worktrees/
+
+# Agent workflow artifacts (plans, critiques, scratch) stay local
+ralph/
