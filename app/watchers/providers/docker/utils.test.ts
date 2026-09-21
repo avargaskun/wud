@@ -14,7 +14,6 @@ jest.mock('../../../log', () => ({
     error: jest.fn(),
     debug: jest.fn(),
     child: jest.fn().mockReturnThis(),
-    registerAxiosErrorLogging: jest.fn(),
 }));
 jest.mock('../../../model/container');
 
