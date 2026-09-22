@@ -78,6 +78,10 @@ wud_registry_response{quantile="0.999",type="hub",name="hub"} 1.046
 wud_registry_response_sum{type="hub",name="hub"} 14.61
 wud_registry_response_count{type="hub",name="hub"} 18
 
+# HELP wud_registry_retry_count Total count of registry requests retried after a throttled or transient response
+# TYPE wud_registry_retry_count counter
+wud_registry_retry_count{type="ghcr",name="public",status="429"} 9
+
 # HELP wud_trigger_count Total count of trigger events
 # TYPE wud_trigger_count counter
 wud_trigger_count{type="mock",name="example",status="success"} 1

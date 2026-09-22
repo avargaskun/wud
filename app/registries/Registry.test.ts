@@ -10,6 +10,7 @@ jest.mock('../prometheus/registry', () => ({
     getSummaryTags: () => ({
         observe: () => {},
     }),
+    getRetryCounter: () => undefined,
 }));
 
 import Registry from './Registry';

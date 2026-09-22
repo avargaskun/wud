@@ -4,11 +4,20 @@ import axios, {
     AxiosResponse,
     AxiosInstance,
 } from 'axios';
-import log, { registerAxiosErrorLogging } from '../log';
+import log, { logAxiosError } from '../log';
 import Component from '../registry/Component';
-import { getSummaryTags } from '../prometheus/registry';
+import { getRetryCounter, getSummaryTags } from '../prometheus/registry';
 import { ContainerImage } from '../model/container';
 import { deleteTagList, getTagList, setTagList } from '../tagcache';
+import {
+    HttpErrorResponse,
+    MAX_ATTEMPTS,
+    computeDelay,
+    getErrorResponse,
+    isRetryable,
+    parseRetryHint,
+} from './retry';
+import { recordRetry } from './retryStats';
 
 export interface RegistryManifest {
     digest?: string;
@@ -55,7 +64,6 @@ export class Registry extends Component {
     constructor() {
         super();
         this.axiosInstance = axios.create();
-        registerAxiosErrorLogging(this.axiosInstance, () => this.log);
     }
 
     /**
@@ -486,9 +494,6 @@ export class Registry extends Component {
         headers?: any;
         resolveWithFullResponse?: boolean;
     }): Promise<T | AxiosResponse<T>> {
-        const start = new Date().getTime();
-
-        // Request options
         const axiosOptions: AxiosRequestConfig = {
             url,
             method,
@@ -501,15 +506,36 @@ export class Registry extends Component {
             axiosOptions,
         );
 
-        try {
-            const response = (await this.axiosInstance(
-                axiosOptionsWithAuth,
-            )) as AxiosResponse<T>;
-            this.observePrometheusSummaryTags(start);
-            return resolveWithFullResponse ? response : response.data;
-        } catch (error) {
-            this.observePrometheusSummaryTags(start);
-            throw error;
+        for (let attempt = 1; ; attempt += 1) {
+            const start = new Date().getTime();
+            try {
+                const response = (await this.axiosInstance(
+                    axiosOptionsWithAuth,
+                )) as AxiosResponse<T>;
+                this.observePrometheusSummaryTags(start);
+                return resolveWithFullResponse ? response : response.data;
+            } catch (error) {
+                this.observePrometheusSummaryTags(start);
+                const hint = parseRetryHint(error);
+                const delay =
+                    attempt < MAX_ATTEMPTS && isRetryable(error)
+                        ? computeDelay(attempt, hint?.ms)
+                        : undefined;
+                if (delay === undefined) {
+                    logAxiosError(this.log, error, 'warn');
+                    throw error;
+                }
+                const { status } = getErrorResponse(error) as HttpErrorResponse;
+                const hintLabel = hint
+                    ? `${hint.ms} ms from ${hint.source}`
+                    : 'none';
+                logAxiosError(this.log, error, 'debug');
+                this.log.debug(
+                    `Retrying in ${delay} ms (attempt ${attempt + 1}/${MAX_ATTEMPTS}, status ${status}, hint ${hintLabel})`,
+                );
+                this.countRetry(status);
+                await this.sleep(delay);
+            }
         }
     }
 
@@ -523,6 +549,23 @@ export class Registry extends Component {
                 (end - start) / 1000,
             );
         }
+    }
+
+    private countRetry(status: number) {
+        recordRetry();
+        // The metric is undefined in Agent mode because Prometheus is disabled
+        getRetryCounter()?.inc({
+            type: this.type,
+            name: this.name,
+            status: String(status),
+        });
+    }
+
+    protected sleep(ms: number): Promise<void> {
+        return new Promise((resolve) => {
+            // A pending retry must not hold the process open on shutdown
+            setTimeout(resolve, ms).unref();
+        });
     }
 
     getImageFullName(image: ContainerImage, tagOrDigest: string) {

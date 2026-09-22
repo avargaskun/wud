@@ -61,8 +61,9 @@ upstream `8.3.0`) and has grown its own features since. The image is published a
 - **Faster GHCR / LSCR checks** — tag listing resumes from where the previous cycle stopped instead of
   crawling every tag of every image, with an opt-in on-disk cache (`WUD_TAGCACHE_ENABLED`) so it survives
   restarts. ([docs](docs/configuration/storage/README.md))
-- **Smaller things** — custom icon URLs for containers, cheaper handling of Docker create/destroy events, and
-  the container `auto` setting respected by API-triggered updates.
+- **Smaller things** — custom icon URLs for containers, cheaper handling of Docker create/destroy events,
+  the container `auto` setting respected by API-triggered updates, and registry calls that retry a `429` /
+  `502` / `503` / `504` (honouring `Retry-After`) instead of marking the container as errored for the cycle.
 
 **Safer updates**
 
