@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.4.1](https://github.com/avargaskun/wud/compare/v9.4.0...v9.4.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* retry throttled and transient registry responses (fixes [#59](https://github.com/avargaskun/wud/issues/59)) ([#63](https://github.com/avargaskun/wud/issues/63)) ([6dd33ce](https://github.com/avargaskun/wud/commit/6dd33ce58dc82a7021dae72be95b2cf1bce11fcd))
+
 ## [9.4.0](https://github.com/avargaskun/wud/compare/v9.3.0...v9.4.0) (2026-09-19)
 
 
