@@ -43,7 +43,7 @@ const GHCR_429 =
 const dockerodeError = (statusCode: number, message: string) =>
     Object.assign(
         new Error(`(HTTP code ${statusCode}) unexpected - ${message} `),
-        { statusCode, reason: 'unexpected', json: { message } },
+        { statusCode, reason: 'unexpected', json: null },
     );
 
 const fakeDockerApi = (

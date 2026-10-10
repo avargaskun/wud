@@ -15,7 +15,7 @@ const dockerodeError = (
         {
             statusCode,
             reason: 'unexpected',
-            ...(options.withJson === false ? {} : { json: { message } }),
+            json: options.withJson ? { message } : null,
         },
     );
 
@@ -27,9 +27,9 @@ describe('classifyPullError', () => {
         expect(decision?.hint?.ms).toBeCloseTo(0.306189);
     });
 
-    test('should read the hint from message when json is absent', () => {
+    test('should read the hint from json.message when provided', () => {
         const decision = classifyPullError(
-            dockerodeError(429, GHCR_429, { withJson: false }),
+            dockerodeError(429, GHCR_429, { withJson: true }),
         );
         expect(decision?.hint?.ms).toBeCloseTo(0.306189);
     });
@@ -74,6 +74,36 @@ describe('classifyPullError', () => {
         ).toBe(502);
     });
 
+    test('should classify a daemon 500 wrapping a containerd-wording upstream 503', () => {
+        expect(
+            classifyPullError(
+                dockerodeError(
+                    500,
+                    'unexpected status from HEAD request to https://ghcr.io/v2/immich-app/immich-server/manifests/v3.3.1: 503 Service Unavailable',
+                ),
+            ),
+        ).toEqual({ status: 503, hint: undefined });
+    });
+
+    test('should classify a containerd-wording progress-stream line reporting an upstream 502', () => {
+        expect(
+            classifyPullError(
+                new PullError(
+                    IMAGE,
+                    'unexpected status from GET request to https://ghcr.io/v2/x/blobs/sha256:abc: 502 Bad Gateway',
+                ),
+            )?.status,
+        ).toBe(502);
+    });
+
+    test('should classify a distribution-wording status with no reason phrase', () => {
+        expect(
+            classifyPullError(
+                new PullError(IMAGE, 'received unexpected HTTP status: 504'),
+            )?.status,
+        ).toBe(504);
+    });
+
     test.each([
         ['manifest unknown', dockerodeError(404, 'manifest unknown')],
         [
@@ -92,6 +122,20 @@ describe('classifyPullError', () => {
             new PullError(
                 IMAGE,
                 'filesystem layer verification failed for digest sha256:abc',
+            ),
+        ],
+        [
+            'digest containing a retryable status code',
+            new PullError(
+                IMAGE,
+                'filesystem layer verification failed for digest sha256:5035030',
+            ),
+        ],
+        [
+            'daemon 500 matching neither upstream-status pattern',
+            dockerodeError(
+                500,
+                'failed to register layer: Error processing tar file(exit status 1): unexpected EOF',
             ),
         ],
         [

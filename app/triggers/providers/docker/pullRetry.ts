@@ -6,7 +6,8 @@ import {
 import { PullError } from './errors';
 
 const THROTTLED_PATTERN = /toomanyrequests/i;
-const UPSTREAM_STATUS_PATTERN = /HTTP status:?\s*(502|503|504)\b/;
+const UPSTREAM_STATUS_PATTERN =
+    /HTTP status:?\s*(502|503|504)\b|\b(502|503|504) (?:Bad Gateway|Service Unavailable|Gateway Timeout)\b/;
 
 interface DockerodeErrorShape {
     statusCode?: unknown;
@@ -29,7 +30,8 @@ function statusFromText(text: string): number | undefined {
         return 429;
     }
     const match = UPSTREAM_STATUS_PATTERN.exec(text);
-    return match ? Number(match[1]) : undefined;
+    const status = match?.[1] ?? match?.[2];
+    return status === undefined ? undefined : Number(status);
 }
 
 export function classifyPullError(error: unknown): RetryDecision | undefined {
