@@ -9,14 +9,7 @@ import Component from '../registry/Component';
 import { getRetryCounter, getSummaryTags } from '../prometheus/registry';
 import { ContainerImage } from '../model/container';
 import { deleteTagList, getTagList, setTagList } from '../tagcache';
-import {
-    HttpErrorResponse,
-    MAX_ATTEMPTS,
-    computeDelay,
-    getErrorResponse,
-    isRetryable,
-    parseRetryHint,
-} from './retry';
+import { classifyHttpError, formatRetryMessage, withRetry } from './retry';
 import { recordRetry } from './retryStats';
 
 export interface RegistryManifest {
@@ -506,36 +499,36 @@ export class Registry extends Component {
             axiosOptions,
         );
 
-        for (let attempt = 1; ; attempt += 1) {
-            const start = new Date().getTime();
-            try {
-                const response = (await this.axiosInstance(
-                    axiosOptionsWithAuth,
-                )) as AxiosResponse<T>;
-                this.observePrometheusSummaryTags(start);
-                return resolveWithFullResponse ? response : response.data;
-            } catch (error) {
-                this.observePrometheusSummaryTags(start);
-                const hint = parseRetryHint(error);
-                const delay =
-                    attempt < MAX_ATTEMPTS && isRetryable(error)
-                        ? computeDelay(attempt, hint?.ms)
-                        : undefined;
-                if (delay === undefined) {
-                    logAxiosError(this.log, error, 'warn');
-                    throw error;
-                }
-                const { status } = getErrorResponse(error) as HttpErrorResponse;
-                const hintLabel = hint
-                    ? `${hint.ms} ms from ${hint.source}`
-                    : 'none';
-                logAxiosError(this.log, error, 'debug');
-                this.log.debug(
-                    `Retrying in ${delay} ms (attempt ${attempt + 1}/${MAX_ATTEMPTS}, status ${status}, hint ${hintLabel})`,
-                );
-                this.countRetry(status);
-                await this.sleep(delay);
-            }
+        try {
+            return await withRetry(
+                async () => {
+                    const start = new Date().getTime();
+                    try {
+                        const response = (await this.axiosInstance(
+                            axiosOptionsWithAuth,
+                        )) as AxiosResponse<T>;
+                        this.observePrometheusSummaryTags(start);
+                        return resolveWithFullResponse
+                            ? response
+                            : response.data;
+                    } catch (error) {
+                        this.observePrometheusSummaryTags(start);
+                        throw error;
+                    }
+                },
+                {
+                    classify: classifyHttpError,
+                    onRetry: (event) => {
+                        logAxiosError(this.log, event.error, 'debug');
+                        this.log.debug(formatRetryMessage(event));
+                        this.countRetry(event.decision.status);
+                    },
+                    sleep: (ms) => this.sleep(ms),
+                },
+            );
+        } catch (error) {
+            logAxiosError(this.log, error, 'warn');
+            throw error;
         }
     }
 
