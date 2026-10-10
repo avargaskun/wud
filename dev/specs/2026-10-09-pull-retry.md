@@ -109,7 +109,9 @@ so it lives beside the trigger. In order:
    a **500** whose text carries the real cause (`received unexpected HTTP status: 503 Service
    Unavailable`), so a 500 is classified by text, not rejected outright:
    - `/toomanyrequests/i` → 429
-   - `/HTTP status:?\s*(502|503|504)\b/` → that status
+   - distribution's `HTTP status: <code>` wording, with or without the colon or a reason phrase, or
+     the containerd image store's `… <code> <reason phrase>` status line (e.g. `unexpected status
+     from HEAD request to https://ghcr.io/v2/…: 503 Service Unavailable`) → that status
 3. Anything else → `undefined` (fail fast): `manifest unknown`, `unauthorized`, `no space left on
    device`, digest mismatch, and errors with no `statusCode` that are not a `PullError` (e.g.
    `ECONNREFUSED` on the daemon socket).
