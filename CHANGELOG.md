@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.4.2](https://github.com/avargaskun/wud/compare/v9.4.1...v9.4.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* retry image pulls and reject failed pull streams (fixes [#67](https://github.com/avargaskun/wud/issues/67)) ([#68](https://github.com/avargaskun/wud/issues/68)) ([0ec609c](https://github.com/avargaskun/wud/commit/0ec609c9ff7d0d65058469ea7a20e9cc3f3ad455))
+
 ## [9.4.1](https://github.com/avargaskun/wud/compare/v9.4.0...v9.4.1) (2026-09-22)
 
 
