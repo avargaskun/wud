@@ -2,10 +2,18 @@ import {
     CAP_MS,
     FLOOR_MS,
     MAX_ATTEMPTS,
+    RetryClassifier,
+    RetryEvent,
+    RetryHint,
+    classifyHttpError,
     computeDelay,
+    formatRetryMessage,
     getErrorResponse,
     isRetryable,
+    isRetryableStatus,
+    parseDurationHint,
     parseRetryHint,
+    withRetry,
 } from './retry';
 
 const httpError = (
@@ -248,5 +256,204 @@ describe('computeDelay', () => {
         const delay = computeDelay(1);
         expect(delay).toBeGreaterThanOrEqual(250);
         expect(delay).toBeLessThan(500);
+    });
+});
+
+describe('isRetryableStatus', () => {
+    test.each([429, 502, 503, 504])('should retry status %i', (status) => {
+        expect(isRetryableStatus(status)).toBe(true);
+    });
+
+    test.each([400, 401, 404, 500, 501])(
+        'should not retry status %i',
+        (status) => {
+            expect(isRetryableStatus(status)).toBe(false);
+        },
+    );
+});
+
+describe('parseDurationHint', () => {
+    test('should parse the hint in a dockerode 429 message', () => {
+        expect(
+            parseDurationHint(
+                '(HTTP code 429) unexpected - toomanyrequests: retry-after: 306.189µs, allowed: 44000/minute ',
+            ),
+        ).toBeCloseTo(0.306189);
+    });
+
+    test.each([
+        ['1m30s', 90000],
+        ['250ms', 250],
+        ['2s', 2000],
+        ['500μs', 0.5],
+        ['500µs', 0.5],
+    ])('should parse retry-after: %s', (duration, ms) => {
+        expect(parseDurationHint(`retry-after: ${duration}`)).toBeCloseTo(ms);
+    });
+
+    test('should return undefined when the text carries no hint', () => {
+        expect(parseDurationHint('manifest unknown')).toBeUndefined();
+    });
+});
+
+describe('classifyHttpError', () => {
+    test('should return the status and body hint of a throttled response', () => {
+        const decision = classifyHttpError(
+            httpError(429, { data: ghcrBody('982.701µs') }),
+        );
+        expect(decision?.status).toBe(429);
+        expect(decision?.hint?.source).toBe('body');
+        expect(decision?.hint?.ms).toBeCloseTo(0.982701);
+    });
+
+    test('should return the status without a hint when there is none', () => {
+        expect(classifyHttpError(httpError(503))).toEqual({
+            status: 503,
+            hint: undefined,
+        });
+    });
+
+    test.each([400, 401, 404, 500])(
+        'should not classify status %i as retryable',
+        (status) => {
+            expect(classifyHttpError(httpError(status))).toBeUndefined();
+        },
+    );
+
+    test('should not classify a plain Error', () => {
+        expect(classifyHttpError(new Error('boom'))).toBeUndefined();
+    });
+});
+
+describe('formatRetryMessage', () => {
+    const cases: [RetryHint | undefined, string][] = [
+        [{ ms: 0.982701, source: 'body' }, 'hint 0.982701 ms from body'],
+        [{ ms: 2000, source: 'header' }, 'hint 2000 ms from header'],
+        [{ ms: 0.306189, source: 'message' }, 'hint 0.306189 ms from message'],
+        [undefined, 'hint none'],
+    ];
+
+    test.each(cases)('should describe hint %j', (hint, hintText) => {
+        expect(
+            formatRetryMessage({
+                error: new Error('boom'),
+                attempt: 2,
+                delay: 312,
+                decision: { status: 429, hint },
+            }),
+        ).toBe(
+            `Retrying in 312 ms (attempt 2/${MAX_ATTEMPTS}, status 429, ${hintText})`,
+        );
+    });
+});
+
+describe('withRetry', () => {
+    const throttled = () => httpError(429, { data: ghcrBody('982.701µs') });
+
+    const run = <T>(
+        attemptFn: () => Promise<T>,
+        options: { classify?: RetryClassifier; random?: () => number } = {},
+    ) => {
+        const sleeps: number[] = [];
+        const events: RetryEvent[] = [];
+        const promise = withRetry(attemptFn, {
+            classify: options.classify ?? classifyHttpError,
+            onRetry: (event) => {
+                events.push(event);
+            },
+            sleep: async (ms) => {
+                sleeps.push(ms);
+            },
+            random: options.random ?? (() => 0),
+        });
+        return { promise, sleeps, events };
+    };
+
+    test('should resolve on the first attempt without sleeping', async () => {
+        const attemptFn = jest.fn().mockResolvedValue('ok');
+        const { promise, sleeps, events } = run(attemptFn);
+        await expect(promise).resolves.toBe('ok');
+        expect(attemptFn).toHaveBeenCalledTimes(1);
+        expect(sleeps).toEqual([]);
+        expect(events).toEqual([]);
+    });
+
+    test('should retry a retryable failure and resolve', async () => {
+        const error = throttled();
+        const attemptFn = jest
+            .fn()
+            .mockRejectedValueOnce(error)
+            .mockResolvedValue('ok');
+        const { promise, sleeps, events } = run(attemptFn);
+        await expect(promise).resolves.toBe('ok');
+        expect(attemptFn).toHaveBeenCalledTimes(2);
+        expect(sleeps).toEqual([250]);
+        expect(events).toHaveLength(1);
+        expect(events[0].error).toBe(error);
+        expect(events[0].attempt).toBe(2);
+        expect(events[0].delay).toBe(250);
+        expect(events[0].decision.status).toBe(429);
+    });
+
+    test('should rethrow the last error once attempts are exhausted', async () => {
+        const errors = [throttled(), throttled(), throttled(), throttled()];
+        const attemptFn = jest.fn();
+        errors.forEach((error) => attemptFn.mockRejectedValueOnce(error));
+        const { promise, sleeps, events } = run(attemptFn);
+        await expect(promise).rejects.toBe(errors[3]);
+        expect(attemptFn).toHaveBeenCalledTimes(MAX_ATTEMPTS);
+        expect(sleeps).toEqual([250, 500, 1000]);
+        expect(events.map((event) => event.attempt)).toEqual([2, 3, 4]);
+    });
+
+    test('should rethrow a non-retryable failure without sleeping', async () => {
+        const error = httpError(404);
+        const attemptFn = jest.fn().mockRejectedValue(error);
+        const { promise, sleeps } = run(attemptFn);
+        await expect(promise).rejects.toBe(error);
+        expect(attemptFn).toHaveBeenCalledTimes(1);
+        expect(sleeps).toEqual([]);
+    });
+
+    test('should not wait for a hint over the cap', async () => {
+        const error = httpError(429, { headers: { 'retry-after': '120' } });
+        const attemptFn = jest.fn().mockRejectedValue(error);
+        const { promise, sleeps } = run(attemptFn);
+        await expect(promise).rejects.toBe(error);
+        expect(sleeps).toEqual([]);
+    });
+
+    test('should wait at least as long as the hint', async () => {
+        const attemptFn = jest
+            .fn()
+            .mockRejectedValueOnce(
+                httpError(503, { headers: { 'Retry-After': '2' } }),
+            )
+            .mockResolvedValue('ok');
+        const { promise, sleeps } = run(attemptFn);
+        await expect(promise).resolves.toBe('ok');
+        expect(sleeps).toEqual([2000]);
+    });
+
+    test('should pass random through to the delay', async () => {
+        const attemptFn = jest
+            .fn()
+            .mockRejectedValueOnce(throttled())
+            .mockResolvedValue('ok');
+        const { promise, sleeps } = run(attemptFn, { random: () => 0.5 });
+        await expect(promise).resolves.toBe('ok');
+        expect(sleeps).toEqual([375]);
+    });
+
+    test('should use the classifier it is given', async () => {
+        const attemptFn = jest
+            .fn()
+            .mockRejectedValueOnce(new Error('daemon text'))
+            .mockResolvedValue('ok');
+        const { promise, events } = run(attemptFn, {
+            classify: () => ({ status: 503 }),
+        });
+        await expect(promise).resolves.toBe('ok');
+        expect(events[0].decision).toEqual({ status: 503 });
     });
 });

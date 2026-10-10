@@ -5,7 +5,7 @@ The `docker` trigger lets you replace existing containers with their updated ver
 
 The trigger will: 
 - Work out the container's own settings, by comparing the running container with the image it was created from
-- Pull the new image
+- Pull the new image, retrying up to 3 times when the registry or the daemon answers `429`, `502`, `503` or `504`
 - Stop the existing container (if it is running)
 - Rename the existing container aside, to `<name>_wud_old_<id>`
 - Create the new container

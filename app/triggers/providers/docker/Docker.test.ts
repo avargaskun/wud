@@ -942,6 +942,61 @@ test('triggerBatch should not swap any container when a pull rejects', async () 
     jest.restoreAllMocks();
 });
 
+const throttledPull = () =>
+    Object.assign(
+        new Error(
+            '(HTTP code 429) unexpected - toomanyrequests: retry-after: 306.189µs, allowed: 44000/minute ',
+        ),
+        { statusCode: 429 },
+    );
+
+const batchMembers = [
+    { ...happyContainer, name: 'a' },
+    { ...happyContainer, name: 'b', updateKind: { remoteValue: '7.8.9' } },
+];
+
+test('triggerBatch should swap no container when a member exhausts its pull retries', async () => {
+    const error = throttledPull();
+    jest.spyOn(docker, 'sleep').mockResolvedValue(undefined);
+    const pullOnce = jest
+        .spyOn(docker, 'pullOnce')
+        .mockImplementation(async (dockerApi, auth, image) => {
+            if (image.endsWith(':7.8.9')) {
+                throw error;
+            }
+        });
+    const swapSpy = jest.spyOn(docker, 'swapContainer');
+    await expect(docker.triggerBatch(batchMembers)).rejects.toBe(error);
+    expect(
+        pullOnce.mock.calls.filter(([, , image]) => image.endsWith(':7.8.9')),
+    ).toHaveLength(4);
+    expect(swapSpy).not.toHaveBeenCalled();
+    jest.restoreAllMocks();
+});
+
+test('triggerBatch should swap every member when a throttled pull recovers', async () => {
+    jest.spyOn(docker, 'sleep').mockResolvedValue(undefined);
+    let throttled = false;
+    jest.spyOn(docker, 'pullOnce').mockImplementation(
+        async (dockerApi, auth, image) => {
+            if (image.endsWith(':7.8.9') && !throttled) {
+                throttled = true;
+                throw throttledPull();
+            }
+        },
+    );
+    const swapSpy = jest
+        .spyOn(docker, 'swapContainer')
+        .mockImplementation(async (c) => buildSwapMock(c));
+    const result = await docker.triggerBatch(batchMembers);
+    expect(swapSpy).toHaveBeenCalledTimes(2);
+    expect(result.members.map((member) => member.status)).toEqual([
+        'updated',
+        'updated',
+    ]);
+    jest.restoreAllMocks();
+});
+
 test('triggerBatch should pull all but swap none under dry-run', async () => {
     docker.configuration = { ...configurationValid, dryrun: true };
     const pullSpy = jest.spyOn(docker, 'pullContainer').mockResolvedValue({});
