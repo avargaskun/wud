@@ -2,9 +2,9 @@ export const MAX_ATTEMPTS = 4;
 export const FLOOR_MS = 250;
 export const CAP_MS = 30_000;
 
-export const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
-export const DURATION_UNITS_MS: Record<string, number> = {
+const DURATION_UNITS_MS: Record<string, number> = {
     ns: 1e-6,
     us: 1e-3,
     µs: 1e-3,
@@ -16,10 +16,10 @@ export const DURATION_UNITS_MS: Record<string, number> = {
 };
 
 const DURATION_TOKEN = '\\d+(?:\\.\\d+)?(?:ns|us|\\u00b5s|\\u03bcs|ms|s|m|h)';
-export const BODY_HINT_PATTERN = new RegExp(
+const BODY_HINT_PATTERN = new RegExp(
     `[Rr]etry-[Aa]fter:\\s*((?:${DURATION_TOKEN})+)`,
 );
-export const DURATION_TOKEN_PATTERN = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/g;
+const DURATION_TOKEN_PATTERN = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/g;
 
 export interface HttpErrorResponse {
     status: number;
