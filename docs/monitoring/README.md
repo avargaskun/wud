@@ -86,6 +86,10 @@ wud_registry_retry_count{type="ghcr",name="public",status="429"} 9
 # TYPE wud_trigger_count counter
 wud_trigger_count{type="mock",name="example",status="success"} 1
 
+# HELP wud_trigger_pull_retry_count Total count of image pulls retried after a throttled or transient response
+# TYPE wud_trigger_pull_retry_count counter
+wud_trigger_pull_retry_count{type="dockercompose",name="default",status="429"} 1
+
 # HELP wud_watcher_total The number of watched containers
 # TYPE wud_watcher_total gauge
 wud_watcher_total{type="docker",name="local"} 6
@@ -125,6 +129,18 @@ Counts the dependent containers bounced after an update by the `docker` / `docke
 | `status` | `bounced` (restarted or recreated), `skipped` (not applicable or deliberately not bounced — e.g. unresolved name, batch member, health-gate failure; see the `reason` in the trigger API response) or `failed`   |
 
 ?> Bounces performed by an [Agent](/configuration/agents/) are counted on the **Controller**, from the outcomes the Agent reports back — Prometheus is not exposed in Agent mode.
+
+#### `wud_trigger_pull_retry_count`
+
+Counts image pulls by the `docker` / `dockercompose` triggers that were retried after a throttled or transient failure. A pull answered with `429`, `502`, `503` or `504` — by the daemon itself, or by the registry behind it as reported in the daemon's error text — is retried up to 3 times with the same backoff as registry requests. One increment per retry.
+
+| Label    | Description                                       |
+| -------- | ------------------------------------------------- |
+| `type`   | The trigger type (`docker`, `dockercompose`)      |
+| `name`   | The trigger name                                  |
+| `status` | The status that caused the retry (`429`, `502`, `503`, `504`) |
+
+?> Pulls performed by an [Agent](/configuration/agents/) are not counted — Prometheus is not exposed in Agent mode. Set `WUD_LOG_LEVEL=debug` on the Agent to see its `Retrying in … ms` lines.
 
 #### Standard process metrics
 ```bash
