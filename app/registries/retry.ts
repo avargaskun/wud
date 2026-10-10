@@ -2,9 +2,9 @@ export const MAX_ATTEMPTS = 4;
 export const FLOOR_MS = 250;
 export const CAP_MS = 30_000;
 
-const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
+export const RETRYABLE_STATUSES = new Set([429, 502, 503, 504]);
 
-const DURATION_UNITS_MS: Record<string, number> = {
+export const DURATION_UNITS_MS: Record<string, number> = {
     ns: 1e-6,
     us: 1e-3,
     µs: 1e-3,
@@ -16,10 +16,10 @@ const DURATION_UNITS_MS: Record<string, number> = {
 };
 
 const DURATION_TOKEN = '\\d+(?:\\.\\d+)?(?:ns|us|\\u00b5s|\\u03bcs|ms|s|m|h)';
-const BODY_HINT_PATTERN = new RegExp(
+export const BODY_HINT_PATTERN = new RegExp(
     `[Rr]etry-[Aa]fter:\\s*((?:${DURATION_TOKEN})+)`,
 );
-const DURATION_TOKEN_PATTERN = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/g;
+export const DURATION_TOKEN_PATTERN = /(\d+(?:\.\d+)?)(ns|us|µs|μs|ms|s|m|h)/g;
 
 export interface HttpErrorResponse {
     status: number;
@@ -29,7 +29,28 @@ export interface HttpErrorResponse {
 
 export interface RetryHint {
     ms: number;
-    source: 'header' | 'body';
+    source: 'header' | 'body' | 'message';
+}
+
+export interface RetryDecision {
+    status: number;
+    hint?: RetryHint;
+}
+
+export type RetryClassifier = (error: unknown) => RetryDecision | undefined;
+
+export interface RetryEvent {
+    error: unknown;
+    attempt: number;
+    delay: number;
+    decision: RetryDecision;
+}
+
+export interface RetryOptions {
+    classify: RetryClassifier;
+    onRetry: (event: RetryEvent) => void;
+    sleep: (ms: number) => Promise<void>;
+    random?: () => number;
 }
 
 export function getErrorResponse(
@@ -48,9 +69,13 @@ export function getErrorResponse(
     return response as HttpErrorResponse;
 }
 
+export function isRetryableStatus(status: number): boolean {
+    return RETRYABLE_STATUSES.has(status);
+}
+
 export function isRetryable(error: unknown): boolean {
     const response = getErrorResponse(error);
-    return response !== undefined && RETRYABLE_STATUSES.has(response.status);
+    return response !== undefined && isRetryableStatus(response.status);
 }
 
 function getHeader(
@@ -80,12 +105,8 @@ function parseRetryAfterHeader(value: string, now: number): number | undefined {
     return Number.isNaN(date) ? undefined : Math.max(0, date - now);
 }
 
-function parseBodyHint(data: unknown): number | undefined {
-    if (data === undefined || data === null) {
-        return undefined;
-    }
-    const text = typeof data === 'string' ? data : JSON.stringify(data);
-    const match = BODY_HINT_PATTERN.exec(text ?? '');
+export function parseDurationHint(text: string): number | undefined {
+    const match = BODY_HINT_PATTERN.exec(text);
     if (!match) {
         return undefined;
     }
@@ -94,6 +115,14 @@ function parseBodyHint(data: unknown): number | undefined {
         total += Number(amount) * DURATION_UNITS_MS[unit];
     }
     return Number.isFinite(total) ? total : undefined;
+}
+
+function parseBodyHint(data: unknown): number | undefined {
+    if (data === undefined || data === null) {
+        return undefined;
+    }
+    const text = typeof data === 'string' ? data : JSON.stringify(data);
+    return parseDurationHint(text ?? '');
 }
 
 export function parseRetryHint(
@@ -126,4 +155,45 @@ export function computeDelay(
     const backoff = FLOOR_MS * 2 ** (retryNumber - 1);
     const delay = Math.max(hintMs ?? 0, backoff) + random() * backoff;
     return Math.min(Math.floor(delay), CAP_MS);
+}
+
+export function classifyHttpError(error: unknown): RetryDecision | undefined {
+    const response = getErrorResponse(error);
+    if (!response || !isRetryableStatus(response.status)) {
+        return undefined;
+    }
+    return { status: response.status, hint: parseRetryHint(error) };
+}
+
+export function formatRetryMessage({
+    attempt,
+    delay,
+    decision,
+}: RetryEvent): string {
+    const { status, hint } = decision;
+    const hintLabel = hint ? `${hint.ms} ms from ${hint.source}` : 'none';
+    return `Retrying in ${delay} ms (attempt ${attempt}/${MAX_ATTEMPTS}, status ${status}, hint ${hintLabel})`;
+}
+
+export async function withRetry<T>(
+    attemptFn: () => Promise<T>,
+    { classify, onRetry, sleep, random = Math.random }: RetryOptions,
+): Promise<T> {
+    for (let attempt = 1; ; attempt += 1) {
+        try {
+            return await attemptFn();
+        } catch (error) {
+            const decision =
+                attempt < MAX_ATTEMPTS ? classify(error) : undefined;
+            const delay =
+                decision === undefined
+                    ? undefined
+                    : computeDelay(attempt, decision.hint?.ms, random);
+            if (decision === undefined || delay === undefined) {
+                throw error;
+            }
+            onRetry({ error, attempt: attempt + 1, delay, decision });
+            await sleep(delay);
+        }
+    }
 }
