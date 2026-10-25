@@ -3,7 +3,7 @@ import type { Apickli, ResponseObject } from 'apickli';
 import * as assert from 'assert';
 import * as fs from 'fs/promises';
 import * as path from 'path';
-import registryOracle from '../support/registry_oracle';
+import registryOracle, { ORACLE_STEP_TIMEOUT_MS } from '../support/registry_oracle';
 import type { ApickliWorld } from '../support/world';
 
 interface Container {
@@ -21,7 +21,7 @@ interface Container {
     updateAvailable: boolean;
 }
 
-Given(/^I resolve the latest version for image "([^"]*)" on registry "([^"]*)" with strategy "([^"]*)" and pattern "([^"]*)" and value "([^"]*)" as "([^"]*)"$/, async function (this: ApickliWorld, imageName: string, registry: string, strategy: string, pattern: string, value: string, varName: string) {
+Given(/^I resolve the latest version for image "([^"]*)" on registry "([^"]*)" with strategy "([^"]*)" and pattern "([^"]*)" and value "([^"]*)" as "([^"]*)"$/, { timeout: ORACLE_STEP_TIMEOUT_MS }, async function (this: ApickliWorld, imageName: string, registry: string, strategy: string, pattern: string, value: string, varName: string) {
     let version;
     if (strategy === 'static') {
         version = value;
@@ -31,12 +31,12 @@ Given(/^I resolve the latest version for image "([^"]*)" on registry "([^"]*)" w
     this.apickli.setGlobalVariable(varName, version);
 });
 
-Given(/^I get the latest version for image "([^"]*)" on registry "([^"]*)" with pattern "([^"]*)" and store it in "([^"]*)"$/, async function (this: ApickliWorld, imageName: string, registry: string, pattern: string, varName: string) {
+Given(/^I get the latest version for image "([^"]*)" on registry "([^"]*)" with pattern "([^"]*)" and store it in "([^"]*)"$/, { timeout: ORACLE_STEP_TIMEOUT_MS }, async function (this: ApickliWorld, imageName: string, registry: string, pattern: string, varName: string) {
     const version = await registryOracle.getLatestVersion(registry, imageName, pattern);
     this.apickli.setGlobalVariable(varName, version);
 });
 
-Given(/^I get the latest digest for image "([^"]*)" on registry "([^"]*)" with tag "([^"]*)" and store it in "([^"]*)"$/, async function (this: ApickliWorld, imageName: string, registry: string, tag: string, varName: string) {
+Given(/^I get the latest digest for image "([^"]*)" on registry "([^"]*)" with tag "([^"]*)" and store it in "([^"]*)"$/, { timeout: ORACLE_STEP_TIMEOUT_MS }, async function (this: ApickliWorld, imageName: string, registry: string, tag: string, varName: string) {
     const digest = await registryOracle.getLatestDigest(registry, imageName, tag);
     this.apickli.setGlobalVariable(varName, digest);
 });

@@ -47,6 +47,13 @@ jobs:
       - name: Login to Amazon ECR
         uses: aws-actions/amazon-ecr-login@v2
 
+      - name: Restore E2E oracle tag cache
+        uses: actions/cache/restore@v4
+        with:
+          path: e2e/.oracle-cache
+          key: oracle-tags-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: oracle-tags-
+
       - name: Test E2E
         id: test-e2e
         working-directory: ./e2e
@@ -66,9 +73,17 @@ jobs:
           GITLAB_TOKEN: ${{ secrets.GITLAB_TOKEN }}
           TRUEFORGE_USERNAME: ${{ secrets.TRUEFORGE_USERNAME }}
           TRUEFORGE_TOKEN: ${{ secrets.TRUEFORGE_TOKEN }}
+          ORACLE_TAG_CACHE_DIR: ${{ github.workspace }}/e2e/.oracle-cache
         run: |
           npm ci
           npm test
+
+      - name: Save E2E oracle tag cache
+        if: always() && hashFiles('e2e/.oracle-cache/*.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: e2e/.oracle-cache
+          key: oracle-tags-${{ github.run_id }}-${{ github.run_attempt }}
 
       - name: Debug E2E Failure
         if: failure() && steps.test-e2e.outcome == 'failure'

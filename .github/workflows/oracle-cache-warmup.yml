@@ -1,0 +1,44 @@
+name: Warm E2E Oracle Cache
+
+# Scheduled runs use the default branch (dev), whose caches every PR and dev push can restore.
+on:
+  schedule:
+    - cron: '17 5 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  warmup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Restore E2E oracle tag cache
+        uses: actions/cache/restore@v4
+        with:
+          path: e2e/.oracle-cache
+          key: oracle-tags-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: oracle-tags-
+
+      - name: Refresh GHCR tag lists
+        working-directory: ./e2e
+        env:
+          ORACLE_TAG_CACHE_DIR: ${{ github.workspace }}/e2e/.oracle-cache
+        run: |
+          npm ci
+          npm run oracle:warmup
+
+      - name: Save E2E oracle tag cache
+        if: always() && hashFiles('e2e/.oracle-cache/*.json') != ''
+        uses: actions/cache/save@v4
+        with:
+          path: e2e/.oracle-cache
+          key: oracle-tags-${{ github.run_id }}-${{ github.run_attempt }}

@@ -83,7 +83,10 @@ Deleting a branch that is **not** checked out anywhere is safe and needs no cere
    tags of `linuxserver/radarr` over 16 pages; roughly 4 full runs within an hour earns
    `TOOMANYREQUESTS`, failing `api-container.feature:30` and cascading into two `prometheus.feature`
    scenarios via an unresolved `EXPECTED_TAG`. Transient and unrelated to the code under test — re-run
-   rather than investigate, but confirm the failures are exactly those three.
+   rather than investigate, but confirm the failures are exactly those three. Setting
+   `ORACLE_TAG_CACHE_DIR=$PWD/.oracle-cache` for `npm test` / `npm run cucumber` makes repeat runs
+   fetch one page instead of 16 (CI does this via `actions/cache`, kept warm by the daily
+   `Warm E2E Oracle Cache` workflow); WUD's own crawl is unaffected.
 
 9. **Start the stack through the npm scripts, never the raw `scripts/*.sh`.** Only the npm scripts wrap
    the harness in `dotenvx run -f ../.env`; `scripts/start-wud.sh` and `scripts/run-e2e-tests.sh` load
