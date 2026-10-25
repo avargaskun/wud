@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.4.3](https://github.com/avargaskun/wud/compare/v9.4.2...v9.4.3) (2026-10-25)
+
+
+### Bug Fixes
+
+* shut down cleanly on SIGTERM (fixes [#70](https://github.com/avargaskun/wud/issues/70)) ([#71](https://github.com/avargaskun/wud/issues/71)) ([f53a157](https://github.com/avargaskun/wud/commit/f53a157b52f4c0cabb17d3b537415b4422c13bbd))
+
 ## [9.4.2](https://github.com/avargaskun/wud/compare/v9.4.1...v9.4.2) (2026-10-10)
 
 
