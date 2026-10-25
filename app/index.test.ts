@@ -37,6 +37,10 @@ jest.mock('./prometheus', () => ({
     init: jest.fn(),
 }));
 
+jest.mock('./shutdown', () => ({
+    registerShutdownHandlers: jest.fn(),
+}));
+
 describe('Main Application', () => {
     beforeEach(async () => {
         jest.clearAllMocks();
@@ -77,6 +81,19 @@ describe('Main Application', () => {
         expect(tagcache.init.mock.invocationCallOrder[0]).toBeLessThan(
             registry.init.mock.invocationCallOrder[0],
         );
+    });
+
+    test('should register shutdown handlers before initializing components', async () => {
+        const store = await import('./store');
+        const { registerShutdownHandlers } = await import('./shutdown');
+
+        await import('./index');
+        await new Promise((resolve) => setImmediate(resolve));
+
+        expect(registerShutdownHandlers).toHaveBeenCalledTimes(1);
+        expect(
+            registerShutdownHandlers.mock.invocationCallOrder[0],
+        ).toBeLessThan(store.init.mock.invocationCallOrder[0]);
     });
 
     test('should initialize all components in correct order in agent mode', async () => {

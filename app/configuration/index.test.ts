@@ -16,6 +16,17 @@ test('getLogLevel should return debug when overridden', async () => {
     expect(configuration.getLogLevel()).toStrictEqual('debug');
 });
 
+test('getLogFormat should return text by default', async () => {
+    delete configuration.wudEnvVars.WUD_LOG_FORMAT;
+    expect(configuration.getLogFormat()).toStrictEqual('text');
+});
+
+test('getLogFormat should return json when overridden', async () => {
+    configuration.wudEnvVars.WUD_LOG_FORMAT = 'json';
+    expect(configuration.getLogFormat()).toStrictEqual('json');
+    delete configuration.wudEnvVars.WUD_LOG_FORMAT;
+});
+
 test('getWatcherConfiguration should return empty object by default', async () => {
     delete configuration.wudEnvVars.WUD_WATCHER_WATCHER1_X;
     delete configuration.wudEnvVars.WUD_WATCHER_WATCHER1_Y;

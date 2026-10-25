@@ -5,6 +5,7 @@ import * as migrate from './migrate';
 jest.mock('../configuration', () => ({
     getVersion: () => '2.0.0',
     getLogLevel: () => 'info',
+    getLogFormat: () => 'json',
 }));
 jest.mock('./migrate');
 

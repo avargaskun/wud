@@ -1,11 +1,16 @@
 import bunyan from 'bunyan';
 import { AxiosError } from 'axios';
-import { getLogLevel } from '../configuration';
+import { getLogFormat, getLogLevel } from '../configuration';
+import { PrettyStream } from './pretty';
 
 // Init Bunyan logger
 const logger = bunyan.createLogger({
     name: 'whats-up-docker',
-    level: getLogLevel(),
+    streams: [
+        getLogFormat() === 'json'
+            ? { level: getLogLevel(), stream: process.stdout }
+            : { level: getLogLevel(), type: 'raw', stream: new PrettyStream() },
+    ],
 });
 
 export const logAxiosError = (
