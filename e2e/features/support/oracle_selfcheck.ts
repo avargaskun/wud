@@ -14,7 +14,14 @@ import * as os from 'os';
 import * as path from 'path';
 import { OutgoingHttpHeaders } from 'http';
 import { EventEmitter } from 'events';
-import registryOracle, { errorMessage } from './registry_oracle';
+import registryOracle, {
+    MAX_ATTEMPTS,
+    ORACLE_STEP_TIMEOUT_MS,
+    TRAVERSAL_DEADLINE_MS,
+    backoffDelay,
+    errorMessage,
+    listCachedGhcrImages,
+} from './registry_oracle';
 
 interface StubResponse {
     statusCode: number;
@@ -257,12 +264,14 @@ async function main(): Promise<void> {
 
     // 2 - exhausted retries
     await runCase(2, 'exhausted retries throw (always 429)', async () => {
-        install((url) => (url.includes('/token') ? TOKEN_OK : { statusCode: 429, body: 'TOOMANYREQUESTS: rate limit' }));
+        install((url) => (url.includes('/token')
+            ? TOKEN_OK
+            : { statusCode: 429, headers: { 'retry-after': '0' }, body: 'TOOMANYREQUESTS: rate limit' }));
         const error = await expectRejection(() => registryOracle.getLatestVersion('ghcr.public', 'selfcheck/case2', '.*'));
         assert.ok(/429/.test(error.message), `message must name the status: ${error.message}`);
         assert.ok(error.message.includes('/tags/list'), `message must name the URL: ${error.message}`);
-        assert.strictEqual(countRequests('/tags/list'), 5, 'expected 5 attempts');
-        return `threw after 5 attempts: ${error.message.slice(0, 60)}...`;
+        assert.strictEqual(countRequests('/tags/list'), MAX_ATTEMPTS, `expected ${MAX_ATTEMPTS} attempts`);
+        return `threw after ${MAX_ATTEMPTS} attempts: ${error.message.slice(0, 60)}...`;
     });
 
     // 3 - non-retryable status
@@ -521,6 +530,37 @@ async function main(): Promise<void> {
         }
         return 'corrupt and foreign files ignored, then overwritten';
     });
+
+    // 17 - default backoff spans a per-minute rate-limit window but fits the step timeout
+    await runCase(17, 'default backoff outlasts a throttled minute', async () => {
+        let shortest = Infinity;
+        let longest = 0;
+        for (let sample = 0; sample < 1000; sample += 1) {
+            let total = 0;
+            for (let attempt = 1; attempt < MAX_ATTEMPTS; attempt += 1) {
+                const delay = backoffDelay(attempt, {});
+                assert.ok(delay <= 20000, `attempt ${attempt} waited ${delay}ms, above the 20s cap`);
+                total += delay;
+            }
+            shortest = Math.min(shortest, total);
+            longest = Math.max(longest, total);
+        }
+        assert.ok(shortest >= 50000, `retries must span ~a minute, shortest schedule was ${shortest}ms`);
+        assert.ok(longest <= 80000, `retries must leave room for the walk, longest schedule was ${longest}ms`);
+        assert.ok(longest < TRAVERSAL_DEADLINE_MS, 'a throttled page must fit the traversal deadline');
+        assert.ok(ORACLE_STEP_TIMEOUT_MS > TRAVERSAL_DEADLINE_MS, 'the oracle must fail before cucumber times the step out');
+        return `retry schedule spans ${Math.round(shortest / 1000)}-${Math.round(longest / 1000)}s over ${MAX_ATTEMPTS} attempts`;
+    });
+
+    // 18 - the warm-up refreshes whatever the suite has cached
+    await runCase(18, 'cached GHCR images are discoverable', async () => withCacheDir(async (dir) => {
+        writeTagCache(dir, 'selfcheck/case18a', ['1.0.0']);
+        writeTagCache(dir, 'selfcheck/case18b', ['1.0.0']);
+        fs.writeFileSync(path.join(dir, 'ghcr.io_selfcheck_corrupt.json'), '{not json');
+        fs.writeFileSync(path.join(dir, 'notes.txt'), 'ignored');
+        assert.deepStrictEqual(listCachedGhcrImages(), ['selfcheck/case18a', 'selfcheck/case18b']);
+        return 'two valid cache files listed; corrupt and non-JSON files skipped';
+    }));
 
     let failed = 0;
     results.forEach((r) => {

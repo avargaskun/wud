@@ -5,12 +5,14 @@ import * as path from 'path';
 import * as semver from 'semver';
 import { IncomingHttpHeaders, IncomingMessage } from 'http';
 
-const MAX_ATTEMPTS = 5;
+export const MAX_ATTEMPTS = 8;
 const WATERMARK_OFFSET = 3;
-const BASE_BACKOFF_MS = 500;
+const BASE_BACKOFF_MS = 1000;
+const MAX_BACKOFF_MS = 20000;
 const MAX_RETRY_AFTER_MS = 10000;
 const PAGE_CAP = 200;
-const TRAVERSAL_DEADLINE_MS = 90000;
+export const TRAVERSAL_DEADLINE_MS = 90000;
+export const ORACLE_STEP_TIMEOUT_MS = 120 * 1000;
 const ORACLE_BUDGET_MS = 5 * 60 * 1000;
 const BODY_EXCERPT_LENGTH = 200;
 
@@ -124,7 +126,7 @@ function isRetryableStatus(statusCode: number, body: string): boolean {
     return false;
 }
 
-function backoffDelay(attempt: number, headers: IncomingHttpHeaders): number {
+export function backoffDelay(attempt: number, headers: IncomingHttpHeaders): number {
     const retryAfter = headers['retry-after'];
     if (typeof retryAfter === 'string' && retryAfter.trim() !== '') {
         const seconds = Number(retryAfter);
@@ -137,7 +139,7 @@ function backoffDelay(attempt: number, headers: IncomingHttpHeaders): number {
         }
     }
     const base = BASE_BACKOFF_MS * 2 ** (attempt - 1);
-    return Math.round(base * (0.75 + Math.random() * 0.5));
+    return Math.min(Math.round(base * (0.75 + Math.random() * 0.5)), MAX_BACKOFF_MS);
 }
 
 /**
@@ -304,6 +306,32 @@ function loadTagCache(host: string, image: string, label: string): string[] | nu
         console.warn(`[oracle] ${label}: ignoring unreadable tag cache ${file}: ${errorMessage(e)}`);
     }
     return null;
+}
+
+/**
+ * Images with a valid persisted GHCR tag list, so a warm-up can refresh whatever the suite cached.
+ */
+export function listCachedGhcrImages(): string[] {
+    const dir = process.env.ORACLE_TAG_CACHE_DIR;
+    if (!dir || !fs.existsSync(dir)) {
+        return [];
+    }
+    const prefix = 'ghcr.io/v2/';
+    return fs.readdirSync(dir)
+        .filter((name) => name.startsWith('ghcr.io_') && name.endsWith('.json'))
+        .flatMap((name) => {
+            try {
+                const parsed: unknown = JSON.parse(fs.readFileSync(path.join(dir, name), 'utf8'));
+                const endpoint = (parsed as Partial<TagCacheFile> | null)?.endpoint;
+                if (typeof endpoint === 'string' && endpoint.startsWith(prefix) && isTagCacheFile(parsed, endpoint)) {
+                    return [endpoint.slice(prefix.length)];
+                }
+            } catch {
+                // An unreadable file is simply not a warm-up candidate.
+            }
+            return [];
+        })
+        .sort();
 }
 
 function saveTagCache(host: string, image: string, tags: string[], label: string): void {
