@@ -54,11 +54,35 @@ In `.github/workflows/reusable-tests.yml`, around `Test E2E`:
 
 PR runs restore from `dev`'s entries; their own saves stay scoped to the PR.
 
+### Daily warm-up
+
+Validation runs come in bursts (feature PR, push to `dev`, release PR, release push) separated by
+weeks, longer than the 7-day cache expiry; and within a burst the PR's own entry is invisible to
+the others while the push and release PR start seconds apart. Saves alone would leave three of
+those four runs cold.
+
+`.github/workflows/oracle-cache-warmup.yml` runs daily (and on `workflow_dispatch`). Scheduled runs
+use the default branch, `dev`, so the entry it saves is restorable by every PR and push. It
+restores the newest entry, runs `npm run oracle:warmup` — which refreshes a seed list plus every
+image already in the cache — and saves a new entry. Once warm that is ~1 request per image a day.
+
+GitHub disables scheduled workflows after 60 days without repository activity; re-enable it from
+the Actions tab or trigger it by hand.
+
+### Retry budget
+
+The oracle gave up on a 429 after 5 attempts within ~7.5s, well inside GHCR's per-minute window.
+It now makes 8 attempts with exponential backoff from 1s capped at 20s per wait (53–79s total), and
+the three oracle steps get a 120s cucumber timeout so the oracle's own 90s traversal deadline, not
+cucumber's 60s default, decides when to give up.
+
 ## Risks
 
 - A cached tag deleted upstream stays in the list. If it were the newest match, the oracle would
   expect a tag WUD can no longer see. linuxserver does not delete release tags; accepted.
-- A cold cache (first run, or 7 days without a run) costs the same full walk as today.
+- A cold cache (first run, or a lapsed warm-up) costs the same full walk as today.
+- A lookup that keeps getting throttled now holds its step for up to ~80s instead of ~8s before
+  failing.
 
 ## Testing
 
@@ -69,4 +93,7 @@ New `oracle_selfcheck.ts` cases, stubbing `https`:
 - the cache file is written after a full walk and after a delta;
 - unset `ORACLE_TAG_CACHE_DIR`: no file is read or written;
 - GitLab never uses the cache;
-- unreadable or mismatched cache file degrades to a full walk.
+- unreadable or mismatched cache file degrades to a full walk;
+- the default retry schedule spans 50–80s, stays under the traversal deadline, and the step
+  timeout exceeds that deadline;
+- the warm-up lists only images with a valid cache file.
