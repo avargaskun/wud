@@ -8,8 +8,11 @@ import * as api from './api';
 import * as prometheus from './prometheus';
 import * as agentServer from './agent/api';
 import * as agentManager from './agent';
+import { registerShutdownHandlers } from './shutdown';
 
 async function main() {
+    registerShutdownHandlers();
+
     const isAgent = process.argv.includes('--agent');
     const mode = isAgent ? 'Agent' : 'Controller';
     log.info(`WUD is starting in ${mode} mode (version = ${getVersion()})`);

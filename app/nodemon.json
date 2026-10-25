@@ -1,5 +1,5 @@
 {
-    "exec": "ts-node index.ts | bunyan -L -o short",
+    "exec": "ts-node index.ts",
     "ext": ["ts", "mjs", "cjs", "json"],
     "env": {
         "WUD_VERSION": "dev",

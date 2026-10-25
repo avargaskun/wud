@@ -1,9 +1,11 @@
 // @ts-nocheck
 import log, { logAxiosError } from './index';
+import { PrettyStream } from './pretty';
 
 // Mock the configuration module
 jest.mock('../configuration', () => ({
     getLogLevel: jest.fn(() => 'info'),
+    getLogFormat: jest.fn(() => 'text'),
 }));
 
 describe('Logger', () => {
@@ -21,6 +23,24 @@ describe('Logger', () => {
 
     test('should have correct log level', async () => {
         expect(log.level()).toBe(30); // INFO level in bunyan
+    });
+
+    test('should pretty-print records in text format', async () => {
+        expect(log.streams).toHaveLength(1);
+        expect(log.streams[0].type).toBe('raw');
+        expect(log.streams[0].stream).toBeInstanceOf(PrettyStream);
+    });
+
+    test('should write json records to stdout in json format', async () => {
+        const { getLogFormat } = await import('../configuration');
+        getLogFormat.mockReturnValueOnce('json');
+        let jsonLog;
+        jest.isolateModules(() => {
+            jsonLog = require('./index').default;
+        });
+        expect(jsonLog.streams).toHaveLength(1);
+        expect(jsonLog.streams[0].type).toBe('stream');
+        expect(jsonLog.streams[0].stream).toBe(process.stdout);
     });
 });
 

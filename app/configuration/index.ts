@@ -66,6 +66,10 @@ export function getVersion() {
 export function getLogLevel() {
     return wudEnvVars.WUD_LOG_LEVEL || 'info';
 }
+
+export function getLogFormat(): 'json' | 'text' {
+    return wudEnvVars.WUD_LOG_FORMAT === 'json' ? 'json' : 'text';
+}
 /**
  * Get watcher configuration.
  */
