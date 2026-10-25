@@ -1,14 +1,17 @@
 /**
  * Self-check for the registry oracle. Stubs the https module and asserts the hardening
  * contract: never truncate, retry the right statuses, cache per endpoint, evict failures,
- * stay anonymous without credentials.
+ * stay anonymous without credentials, resume GHCR walks from a persisted tag cache.
  *
  * Run manually: cd e2e && npx ts-node features/support/oracle_selfcheck.ts
  * It monkeypatches https, so it must never be part of a real cucumber run.
  */
 /* eslint-disable max-classes-per-file -- three co-located test-only stub classes */
 import * as assert from 'assert';
+import * as fs from 'fs';
 import * as https from 'https';
+import * as os from 'os';
+import * as path from 'path';
 import { OutgoingHttpHeaders } from 'http';
 import { EventEmitter } from 'events';
 import registryOracle, { errorMessage } from './registry_oracle';
@@ -157,6 +160,39 @@ function tagsPage(tags: string[], next?: string): StubResponse {
         headers: next ? { link: `<${next}>; rel="next"` } : {},
         body: JSON.stringify({ tags }),
     };
+}
+
+function tagCacheName(image: string): string {
+    return `ghcr.io_${image.replace(/\//g, '_')}.json`;
+}
+
+function writeTagCache(dir: string, image: string, tags: string[]): void {
+    const content = JSON.stringify({ endpoint: `ghcr.io/v2/${image}`, tags });
+    fs.writeFileSync(path.join(dir, tagCacheName(image)), content);
+}
+
+function readTagCache(dir: string, image: string): string[] {
+    return JSON.parse(fs.readFileSync(path.join(dir, tagCacheName(image)), 'utf8')).tags;
+}
+
+function restoreEnv(name: string, value: string | undefined): void {
+    if (value === undefined) {
+        delete process.env[name];
+    } else {
+        process.env[name] = value;
+    }
+}
+
+async function withCacheDir<T>(fn: (dir: string) => Promise<T>): Promise<T> {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-selfcheck-'));
+    const saved = process.env.ORACLE_TAG_CACHE_DIR;
+    process.env.ORACLE_TAG_CACHE_DIR = dir;
+    try {
+        return await fn(dir);
+    } finally {
+        restoreEnv('ORACLE_TAG_CACHE_DIR', saved);
+        fs.rmSync(dir, { recursive: true, force: true });
+    }
 }
 
 class ExpectationError extends Error {}
@@ -372,6 +408,118 @@ async function main(): Promise<void> {
                 process.env.GITHUB_TOKEN = savedToken;
             }
         }
+    });
+
+    // 11 - warm cache resumes from the watermark across pages
+    await runCase(11, 'warm tag cache fetches only the delta', async () => withCacheDir(async (dir) => {
+        writeTagCache(dir, 'selfcheck/case11', ['1.0.0', '1.1.0', '1.2.0', '1.3.0']);
+        install((url) => {
+            if (url.includes('/token')) return TOKEN_OK;
+            if (url.includes('last=1.1.0')) {
+                return tagsPage(['1.2.0', '1.3.0', '1.4.0'], 'https://ghcr.io/v2/selfcheck/case11/tags/list?last=1.4.0&n=1000');
+            }
+            if (url.includes('last=1.4.0')) return tagsPage(['1.5.0']);
+            return { statusCode: 500, body: 'full walk not expected' };
+        });
+        const version = await registryOracle.getLatestVersion('ghcr.public', 'selfcheck/case11', '.*');
+        assert.strictEqual(version, '1.5.0');
+        assert.strictEqual(countRequests('/tags/list'), 2, 'expected the two delta pages only');
+        assert.deepStrictEqual(readTagCache(dir, 'selfcheck/case11'), ['1.0.0', '1.1.0', '1.2.0', '1.3.0', '1.4.0', '1.5.0']);
+        return 'resumed from last=1.1.0, 2 delta pages, cache extended to 6 tags';
+    }));
+
+    // 12 - an unproven cursor falls back to a full walk
+    await runCase(12, 'echo mismatch, null page and short echo fall back', async () => {
+        const anomalies: [string, StubResponse][] = [
+            ['mismatch', tagsPage(['x.y', '1.3.0', '1.4.0'])],
+            ['null', { statusCode: 200, body: JSON.stringify({ tags: null }) }],
+            ['short', tagsPage(['1.2.0'])],
+        ];
+        // eslint-disable-next-line no-restricted-syntax -- sequential cases share the https stub
+        for (const [name, delta] of anomalies) {
+            const image = `selfcheck/case12${name}`;
+            // eslint-disable-next-line no-await-in-loop -- sequential cases share the https stub
+            await withCacheDir(async (dir) => {
+                writeTagCache(dir, image, ['1.0.0', '1.1.0', '1.2.0', '1.3.0']);
+                install((url) => {
+                    if (url.includes('/token')) return TOKEN_OK;
+                    return url.includes('last=') ? delta : tagsPage(['1.0.0', '2.0.0']);
+                });
+                const version = await registryOracle.getLatestVersion('ghcr.public', image, '.*');
+                assert.strictEqual(version, '2.0.0', `${name}: expected the full walk's answer`);
+                assert.strictEqual(countRequests('/tags/list'), 2, `${name}: expected delta then full walk`);
+                assert.ok(warnings().some((w) => w.includes('full walk')), `${name}: fallback must be logged`);
+                assert.deepStrictEqual(readTagCache(dir, image), ['1.0.0', '2.0.0'], `${name}: cache must be replaced`);
+            });
+        }
+        return 'mismatch, null and short echo each re-walked and rewrote the cache';
+    });
+
+    // 13 - a cold cache is populated in registry order
+    await runCase(13, 'full walk writes the tag cache', async () => withCacheDir(async (dir) => {
+        install((url) => {
+            if (url.includes('/token')) return TOKEN_OK;
+            if (url.includes('last=')) return tagsPage(['3.0.0', '1.0.0']);
+            return tagsPage(['2.0.0', '0.5.0'], 'https://ghcr.io/v2/selfcheck/case13/tags/list?last=0.5.0&n=1000');
+        });
+        const version = await registryOracle.getLatestVersion('lscr.private', 'selfcheck/case13', '.*');
+        assert.strictEqual(version, '3.0.0');
+        assert.deepStrictEqual(readTagCache(dir, 'selfcheck/case13'), ['2.0.0', '0.5.0', '3.0.0', '1.0.0']);
+        return 'cold walk of 2 pages persisted 4 tags in registry order';
+    }));
+
+    // 14 - without ORACLE_TAG_CACHE_DIR nothing is read or written
+    await runCase(14, 'tag cache is opt-in', async () => {
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oracle-selfcheck-'));
+        try {
+            writeTagCache(dir, 'selfcheck/case14', ['9.0.0', '9.1.0', '9.2.0', '9.9.9']);
+            const saved = process.env.ORACLE_TAG_CACHE_DIR;
+            delete process.env.ORACLE_TAG_CACHE_DIR;
+            try {
+                install((url) => (url.includes('/token') ? TOKEN_OK : tagsPage(['1.0.0'])));
+                const version = await registryOracle.getLatestVersion('ghcr.public', 'selfcheck/case14', '.*');
+                assert.strictEqual(version, '1.0.0');
+                assert.strictEqual(countRequests('last='), 0, 'no delta fetch without the env var');
+                assert.deepStrictEqual(fs.readdirSync(dir), [tagCacheName('selfcheck/case14')], 'no file written');
+            } finally {
+                restoreEnv('ORACLE_TAG_CACHE_DIR', saved);
+            }
+            return 'unset env var: network answer, cache file untouched';
+        } finally {
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
+    });
+
+    // 15 - lexically ordered registries never use the cache
+    await runCase(15, 'GitLab never uses the tag cache', async () => withCacheDir(async (dir) => {
+        install((url) => (url.includes('/jwt/auth') ? TOKEN_OK : tagsPage(['16.0.0', '17.1.0'])));
+        const version = await registryOracle.getLatestVersion('gitlab.private', 'selfcheck/case15', '.*');
+        assert.strictEqual(version, '17.1.0');
+        assert.deepStrictEqual(fs.readdirSync(dir), [], 'GitLab must not persist a tag list');
+        return 'gitlab.private walked fully, nothing persisted';
+    }));
+
+    // 16 - a corrupt or foreign cache file degrades to a cold cache
+    await runCase(16, 'unreadable cache file degrades to a full walk', async () => {
+        const files: [string, string][] = [
+            ['corrupt', '{not json'],
+            ['foreign', JSON.stringify({ endpoint: 'ghcr.io/v2/someone/else', tags: ['1.0.0', '1.1.0', '1.2.0', '1.3.0'] })],
+        ];
+        // eslint-disable-next-line no-restricted-syntax -- sequential cases share the https stub
+        for (const [name, content] of files) {
+            const image = `selfcheck/case16${name}`;
+            // eslint-disable-next-line no-await-in-loop -- sequential cases share the https stub
+            await withCacheDir(async (dir) => {
+                fs.writeFileSync(path.join(dir, tagCacheName(image)), content);
+                install((url) => (url.includes('/token') ? TOKEN_OK : tagsPage(['4.0.0'])));
+                const version = await registryOracle.getLatestVersion('ghcr.public', image, '.*');
+                assert.strictEqual(version, '4.0.0');
+                assert.strictEqual(countRequests('last='), 0, `${name}: no delta fetch from a bad cache`);
+                assert.ok(warnings().some((w) => w.includes('tag cache')), `${name}: bad cache must be logged`);
+                assert.deepStrictEqual(readTagCache(dir, image), ['4.0.0']);
+            });
+        }
+        return 'corrupt and foreign files ignored, then overwritten';
     });
 
     let failed = 0;

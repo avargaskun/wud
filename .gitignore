@@ -112,6 +112,9 @@ ecr_test_credentials.json
 test/compose-stack/docker-compose.active.yml
 test/compose-stack/docker-compose.mirror.active.yml
 
+# E2E oracle tag lists persisted between runs (ORACLE_TAG_CACHE_DIR)
+e2e/.oracle-cache/
+
 # Agent tooling: .claude/ is ignored except what is shared on purpose
 .claude/*
 !.claude/settings.json

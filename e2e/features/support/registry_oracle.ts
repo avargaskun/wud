@@ -1,9 +1,12 @@
+import * as fs from 'fs';
 import * as https from 'https';
 import * as os from 'os';
+import * as path from 'path';
 import * as semver from 'semver';
 import { IncomingHttpHeaders, IncomingMessage } from 'http';
 
 const MAX_ATTEMPTS = 5;
+const WATERMARK_OFFSET = 3;
 const BASE_BACKOFF_MS = 500;
 const MAX_RETRY_AFTER_MS = 10000;
 const PAGE_CAP = 200;
@@ -262,8 +265,67 @@ interface TagPage {
     pages: number;
 }
 
+interface TagCacheFile {
+    endpoint: string;
+    tags: string[];
+}
+
+function tagCachePath(dir: string, host: string, image: string): string {
+    return path.join(dir, `${host}_${image.replace(/\//g, '_')}.json`);
+}
+
+function isTagCacheFile(value: unknown, endpoint: string): value is TagCacheFile {
+    const file = value as Partial<TagCacheFile> | null;
+    return !!file
+        && file.endpoint === endpoint
+        && Array.isArray(file.tags)
+        && file.tags.every((tag) => typeof tag === 'string');
+}
+
+/**
+ * Load a persisted registry-order tag list; any problem is a cold cache, never a failure.
+ */
+function loadTagCache(host: string, image: string, label: string): string[] | null {
+    const dir = process.env.ORACLE_TAG_CACHE_DIR;
+    if (!dir) {
+        return null;
+    }
+    const file = tagCachePath(dir, host, image);
+    if (!fs.existsSync(file)) {
+        return null;
+    }
+    try {
+        const parsed: unknown = JSON.parse(fs.readFileSync(file, 'utf8'));
+        if (isTagCacheFile(parsed, `${host}/v2/${image}`)) {
+            return parsed.tags;
+        }
+        console.warn(`[oracle] ${label}: ignoring tag cache ${file}: not a tag list for this endpoint`);
+    } catch (e) {
+        console.warn(`[oracle] ${label}: ignoring unreadable tag cache ${file}: ${errorMessage(e)}`);
+    }
+    return null;
+}
+
+function saveTagCache(host: string, image: string, tags: string[], label: string): void {
+    const dir = process.env.ORACLE_TAG_CACHE_DIR;
+    if (!dir) {
+        return;
+    }
+    const file = tagCachePath(dir, host, image);
+    const temp = `${file}.${process.pid}.tmp`;
+    const content: TagCacheFile = { endpoint: `${host}/v2/${image}`, tags };
+    try {
+        fs.mkdirSync(dir, { recursive: true });
+        fs.writeFileSync(temp, JSON.stringify(content));
+        fs.renameSync(temp, file);
+    } catch (e) {
+        console.warn(`[oracle] ${label}: could not write tag cache ${file}: ${errorMessage(e)}`);
+    }
+}
+
 /**
  * Walk a Docker Registry v2 /tags/list endpoint to completion. Any incomplete enumeration throws.
+ * With cachedTags it resumes from a watermark, re-walking fully unless the cached tail is echoed.
  */
 async function collectV2Tags(
     host: string,
@@ -271,6 +333,7 @@ async function collectV2Tags(
     label: string,
     mintToken: (ctx: RequestContext) => Promise<string>,
     deadline: Deadline,
+    cachedTags: string[] | null = null,
 ): Promise<TagPage> {
     const ctx: RequestContext = { label, deadline };
     let auth = await mintToken(ctx);
@@ -279,24 +342,47 @@ async function collectV2Tags(
         return auth;
     };
 
-    let url: string | null = `https://${host}/v2/${image}/tags/list?n=1000`;
-    let tags: string[] = [];
+    const baseUrl = `https://${host}/v2/${image}/tags/list`;
     let pages = 0;
 
-    while (url) {
+    const fetchPage = async (url: string): Promise<{ tags: string[]; next: string | null }> => {
         if (pages >= PAGE_CAP) {
             throw new Error(`Pagination cap (${PAGE_CAP}) reached for ${image} on ${host}; last=${url}`);
         }
         deadline.check(pages);
-        // eslint-disable-next-line no-await-in-loop -- pagination is necessarily sequential
         const res = await requestWithRetry(url, { headers: { Authorization: auth } }, ctx);
         const body = parseJson<{ tags?: string[] | null }>(res, url, label);
-        // GHCR answers {"tags": null} for an empty repository.
-        tags = tags.concat(body.tags || []);
-        url = nextPageUrl(res.headers.link, url);
         pages += 1;
+        // GHCR answers {"tags": null} for an empty repository and for an unknown cursor.
+        return { tags: body.tags || [], next: nextPageUrl(res.headers.link, url) };
+    };
+
+    const walkFrom = async (start: string | null, initial: string[]): Promise<string[]> => {
+        let url = start;
+        let tags = initial;
+        while (url) {
+            // eslint-disable-next-line no-await-in-loop -- pagination is necessarily sequential
+            const page = await fetchPage(url);
+            tags = tags.concat(page.tags);
+            url = page.next;
+        }
+        return tags;
+    };
+
+    if (cachedTags && cachedTags.length > WATERMARK_OFFSET) {
+        const watermarkIndex = cachedTags.length - WATERMARK_OFFSET;
+        const watermark = cachedTags[watermarkIndex];
+        const echo = cachedTags.slice(watermarkIndex + 1);
+        const first = await fetchPage(`${baseUrl}?last=${encodeURIComponent(watermark)}&n=1000`);
+        if (echo.every((tag, i) => first.tags[i] === tag)) {
+            const delta = await walkFrom(first.next, first.tags);
+            console.log(`[oracle] ${label}: resumed from tag cache, ${delta.length - echo.length} new tag(s) over ${pages} page(s)`);
+            return { tags: cachedTags.slice(0, watermarkIndex + 1).concat(delta), pages };
+        }
+        console.warn(`[oracle] ${label}: tag cache watermark ${watermark} was not echoed; falling back to a full walk`);
     }
 
+    const tags = await walkFrom(`${baseUrl}?n=1000`, []);
     return { tags, pages };
 }
 
@@ -409,7 +495,10 @@ async function resolveLatestVersion(
             const data = await requestJson<HubTagPage>(url, {}, { label, deadline });
             tags = (data.results || []).map((r) => r.name);
         } else if (registry === 'ghcr.public' || registry === 'lscr.private') {
-            const collected = await collectV2Tags('ghcr.io', image, label, (ctx) => mintGhcrToken(image, ctx), deadline);
+            // Only GHCR lists tags append-only behind a positional cursor, so only it may resume.
+            const cachedTags = loadTagCache('ghcr.io', image, label);
+            const collected = await collectV2Tags('ghcr.io', image, label, (ctx) => mintGhcrToken(image, ctx), deadline, cachedTags);
+            saveTagCache('ghcr.io', image, collected.tags, label);
             tags = collected.tags;
             pages = collected.pages;
         } else if (registry === 'gitlab.private') {
