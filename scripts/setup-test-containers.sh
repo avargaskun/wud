@@ -160,7 +160,7 @@ else
         ghcr.io/stefanprodan/podinfo:6.0.0
 
     # VERSION CEILING: a static ceiling must cap candidates without removing buckets
-    $DOCKER_CMD run -d --name zz_ceiling_static \
+    $DOCKER_CMD run -d --pull=never --name zz_ceiling_static \
         --label 'wud.watch=true' \
         --label 'wud.tag.include=^6\.\d+\.\d+$' \
         --label 'wud.tag.ceiling.version=6.0' \
