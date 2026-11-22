@@ -1198,6 +1198,49 @@ describe('Docker Watcher Utils', () => {
                 return { promise, resolve, reject };
             };
 
+            test('should resolve each platform of the same image separately', async () => {
+                mockProvider.getImageVersionLabel.mockImplementation(
+                    async (image) => {
+                        if (image.architecture === 'arm64') {
+                            throw new Error(
+                                'no manifest for platform [linux/arm64] in [stable]',
+                            );
+                        }
+                        return '2.37.9';
+                    },
+                );
+                const onPlatform = (architecture) => ({
+                    image: {
+                        name: 'test/image',
+                        registry: { url: 'https://registry-1' },
+                        os: 'linux',
+                        architecture,
+                    },
+                    labels: { 'wud.tag.ceiling': 'stable' },
+                });
+
+                const arm = await utils.resolveCeiling(
+                    onPlatform('arm64'),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const amd = await utils.resolveCeiling(
+                    onPlatform('amd64'),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+
+                expect(arm.error).toContain('linux/arm64');
+                expect(amd).toEqual({
+                    ceiling: { tag: 'stable', version: '2.37.9' },
+                });
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
+            });
+
             test('should share one in-flight lookup between concurrent calls', async () => {
                 const lookup = deferred();
                 mockProvider.getImageVersionLabel.mockReturnValue(

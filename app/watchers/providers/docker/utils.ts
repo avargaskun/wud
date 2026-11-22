@@ -453,10 +453,7 @@ export interface CeilingResolution {
     error?: string;
 }
 
-export interface CeilingLookup {
-    label?: string;
-    error?: string;
-}
+export type CeilingLookup = { label: string } | { error: string };
 
 export type CeilingCache = Map<string, Promise<CeilingLookup>>;
 
@@ -519,17 +516,18 @@ export async function resolveCeiling(
         return { ceiling: { version } };
     }
 
-    const cacheKey = `${container.image.registry?.url}|${container.image.name}|${ceilingTag}`;
+    const { os, architecture, variant } = container.image;
+    const cacheKey = `${container.image.registry?.url}|${container.image.name}|${ceilingTag}|${os}/${architecture}/${variant ?? ''}`;
     let pending = ceilingCache?.get(cacheKey);
     if (!pending) {
         pending = lookupCeilingLabel(container, registryProvider, ceilingTag);
         ceilingCache?.set(cacheKey, pending);
     }
     const lookup = await pending;
-    if (lookup.error !== undefined) {
+    if ('error' in lookup) {
         return fail(lookup.error);
     }
-    const label = lookup.label as string;
+    const { label } = lookup;
     const transformed = transformTag(container.transformTags, label);
     if (!isValidCeiling(transformed)) {
         const shownValue =
