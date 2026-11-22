@@ -31,8 +31,8 @@ import {
     normalizeContainer,
     getContainerName,
     findNewVersion,
-    resetCeilingCache,
     shouldWatchDigestForContainer,
+    type CeilingCache,
 } from './utils';
 import { parse as parseSemver, transform as transformTag } from '../../../tag';
 import { getRetryCount } from '../../../registries/retryStats';
@@ -443,8 +443,7 @@ export class Docker extends Watcher {
      */
     async watch(): Promise<ContainerReport[]> {
         let containers: Container[] = [];
-
-        resetCeilingCache();
+        const ceilingCache: CeilingCache = new Map();
 
         // Dispatch event to notify start watching
         event.emitWatcherStart(this);
@@ -459,7 +458,9 @@ export class Docker extends Watcher {
         }
         try {
             const containerReports = await Promise.all(
-                containers.map((container) => this.watchContainer(container)),
+                containers.map((container) =>
+                    this.watchContainer(container, ceilingCache),
+                ),
             );
             event.emitContainerReports(containerReports);
             return containerReports;
@@ -469,9 +470,6 @@ export class Docker extends Watcher {
             );
             return [];
         } finally {
-            // Keep the cache scoped to one scan; event-driven watches must not reuse it
-            resetCeilingCache();
-
             // Dispatch event to notify stop watching
             event.emitWatcherStop(this);
         }
@@ -480,7 +478,7 @@ export class Docker extends Watcher {
     /**
      * Watch a Container.
      */
-    async watchContainer(container: Container) {
+    async watchContainer(container: Container, ceilingCache?: CeilingCache) {
         // Child logger for the container to process
         const logContainer = this.log.child({ container: fullName(container) });
         const containerWithResult = container;
@@ -497,6 +495,7 @@ export class Docker extends Watcher {
                 container,
                 this.dockerApi,
                 logContainer,
+                ceilingCache,
             );
             containerWithResult.result = result;
             containerWithResult.updates = updates;

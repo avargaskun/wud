@@ -22,7 +22,6 @@ describe('Docker Watcher Utils', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        utils.resetCeilingCache();
         mockLogContainer = {
             info: jest.fn(),
             warn: jest.fn(),
@@ -907,9 +906,15 @@ describe('Docker Watcher Utils', () => {
         });
 
         describe('memoization', () => {
+            let cache;
+
             const containerOnRegistry = (url, labels) => ({
                 image: { name: 'test/image', registry: { url } },
                 labels,
+            });
+
+            beforeEach(() => {
+                cache = new Map();
             });
 
             test('should resolve the same image and ceiling tag only once', async () => {
@@ -922,11 +927,13 @@ describe('Docker Watcher Utils', () => {
                     container,
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
                 const second = await utils.resolveCeiling(
                     container,
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
 
                 expect(first).toEqual({
@@ -948,6 +955,7 @@ describe('Docker Watcher Utils', () => {
                     }),
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
                 await utils.resolveCeiling(
                     containerOnRegistry('https://registry-2', {
@@ -955,6 +963,7 @@ describe('Docker Watcher Utils', () => {
                     }),
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
                 await utils.resolveCeiling(
                     {
@@ -966,6 +975,7 @@ describe('Docker Watcher Utils', () => {
                     },
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
                 await utils.resolveCeiling(
                     containerOnRegistry('https://registry-1', {
@@ -973,6 +983,7 @@ describe('Docker Watcher Utils', () => {
                     }),
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
 
                 expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
@@ -980,7 +991,7 @@ describe('Docker Watcher Utils', () => {
                 );
             });
 
-            test('should resolve again after the cache is reset', async () => {
+            test('should resolve on every call without a cache', async () => {
                 mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
                 const container = containerOnRegistry('https://registry-1', {
                     'wud.tag.ceiling': 'stable',
@@ -991,7 +1002,6 @@ describe('Docker Watcher Utils', () => {
                     mockProvider,
                     mockLogContainer,
                 );
-                utils.resetCeilingCache();
                 await utils.resolveCeiling(
                     container,
                     mockProvider,
@@ -1001,6 +1011,113 @@ describe('Docker Watcher Utils', () => {
                 expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
                     2,
                 );
+            });
+
+            test('should not share results between distinct caches', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    new Map(),
+                );
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    new Map(),
+                );
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
+            });
+
+            const deferred = () => {
+                let resolve;
+                let reject;
+                const promise = new Promise((res, rej) => {
+                    resolve = res;
+                    reject = rej;
+                });
+                promise.catch(() => {});
+                return { promise, resolve, reject };
+            };
+
+            test('should share one in-flight lookup between concurrent calls', async () => {
+                const lookup = deferred();
+                mockProvider.getImageVersionLabel.mockReturnValue(
+                    lookup.promise,
+                );
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const both = Promise.all([
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                ]);
+                lookup.resolve('2.37.9');
+                const [first, second] = await both;
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+                expect(first).toEqual({
+                    ceiling: { tag: 'stable', version: '2.37.9' },
+                });
+                expect(second).toEqual(first);
+                expect(second.ceiling).not.toBe(first.ceiling);
+            });
+
+            test('should share an in-flight failure between concurrent calls', async () => {
+                const lookup = deferred();
+                mockProvider.getImageVersionLabel.mockReturnValue(
+                    lookup.promise,
+                );
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const both = Promise.all([
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                ]);
+                lookup.reject(new Error('Boom!'));
+                const [first, second] = await both;
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+                expect(first).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: Boom!',
+                });
+                expect(second).toEqual(first);
+                expect(mockLogContainer.warn).toHaveBeenCalledTimes(2);
             });
 
             test('should return a cached failure without calling the registry again', async () => {
@@ -1015,11 +1132,13 @@ describe('Docker Watcher Utils', () => {
                     container,
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
                 const second = await utils.resolveCeiling(
                     container,
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
 
                 expect(second).toEqual(first);
@@ -1041,11 +1160,13 @@ describe('Docker Watcher Utils', () => {
                     container,
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
                 await utils.resolveCeiling(
                     container,
                     mockProvider,
                     mockLogContainer,
+                    cache,
                 );
 
                 expect(
@@ -1442,6 +1563,51 @@ describe('Docker Watcher Utils', () => {
                 },
                 labels,
                 transformTags: undefined,
+            });
+
+            test('should resolve once for concurrent containers sharing a cache', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const cache = new Map();
+
+                await Promise.all([
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                        cache,
+                    ),
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                        cache,
+                    ),
+                ]);
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should resolve fresh without a cache', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+
+                await Promise.all([
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                    ),
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                    ),
+                ]);
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
             });
 
             test('should fail closed on a ceiling resolution error while still computing the digest bucket', async () => {
