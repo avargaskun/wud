@@ -5,9 +5,18 @@ import {
     transform as transformTag,
     diff as diffSemver,
     compare as compareSemver,
+    isAtOrBelowCeiling,
+    isValidCeiling,
+    normalizeCeiling,
 } from '../../../tag';
 import log from '../../../log';
-import { wudWatchDigest, wudWatchDigestSemver } from './label';
+import {
+    wudTagCeiling,
+    wudTagCeilingVersion,
+    wudWatchDigest,
+    wudWatchDigestSemver,
+} from './label';
+import type { Registry } from '../../../registries/Registry';
 import {
     validate as validateContainer,
     fullName,
@@ -16,6 +25,7 @@ import {
 import * as registry from '../../../registry';
 import {
     Container,
+    ContainerCeiling,
     ContainerResult,
     ContainerUpdate,
     ContainerUpdates,
@@ -52,6 +62,7 @@ export function getTagCandidates(
     container: Container,
     tags: string[],
     logContainer: any,
+    ceilingVersion?: string,
 ): string[] {
     let filteredTags = tags;
 
@@ -149,6 +160,19 @@ export function getTagCandidates(
                 ),
             ),
         );
+
+        if (ceilingVersion) {
+            const beforeCeiling = filteredTags.length;
+            filteredTags = filteredTags.filter((tag) =>
+                isAtOrBelowCeiling(
+                    transformTag(container.transformTags, tag),
+                    ceilingVersion,
+                ),
+            );
+            logContainer.debug(
+                `Ceiling ${ceilingVersion} filtered ${beforeCeiling - filteredTags.length} candidate(s)`,
+            );
+        }
 
         // Apply semver sort desc
         filteredTags.sort((t1, t2) => {
@@ -424,9 +448,113 @@ export function isContainerToWatch(
         : watchByDefault;
 }
 
+export interface CeilingResolution {
+    ceiling?: ContainerCeiling;
+    error?: string;
+}
+
+export type CeilingLookup = { label: string } | { error: string };
+
+export type CeilingCache = Map<string, Promise<CeilingLookup>>;
+
+async function lookupCeilingLabel(
+    container: Container,
+    registryProvider: Registry,
+    ceilingTag: string,
+): Promise<CeilingLookup> {
+    let versionLabel: string | undefined;
+    try {
+        versionLabel = await registryProvider.getImageVersionLabel(
+            container.image,
+            ceilingTag,
+        );
+    } catch (e) {
+        return {
+            error: `Could not resolve ceiling tag [${ceilingTag}]: ${e.message}`,
+        };
+    }
+    if (!versionLabel) {
+        return {
+            error: `Could not resolve ceiling tag [${ceilingTag}]: image has no org.opencontainers.image.version label`,
+        };
+    }
+    return { label: versionLabel };
+}
+
+/**
+ * Resolve the version ceiling declared by the container labels.
+ * @param container
+ * @param registryProvider
+ * @param logContainer
+ * @param ceilingCache optional per-scan memo of dynamic ceiling lookups
+ */
+export async function resolveCeiling(
+    container: Container,
+    registryProvider: Registry,
+    logContainer: any,
+    ceilingCache?: CeilingCache,
+): Promise<CeilingResolution> {
+    const ceilingTag = container.labels?.[wudTagCeiling];
+    const ceilingVersion = container.labels?.[wudTagCeilingVersion];
+
+    if (!ceilingTag && !ceilingVersion) {
+        return {};
+    }
+    if (ceilingTag && ceilingVersion) {
+        return fail(
+            'Ceiling misconfigured: both wud.tag.ceiling and wud.tag.ceiling.version are set; use only one',
+        );
+    }
+    if (ceilingVersion) {
+        if (!isValidCeiling(ceilingVersion)) {
+            return fail(
+                `Invalid wud.tag.ceiling.version [${ceilingVersion}]; expected a full or partial semver (e.g. 2, 2.1, 2.1.3)`,
+            );
+        }
+        const version = normalizeCeiling(ceilingVersion);
+        logContainer.debug(`Ceiling set to ${version}`);
+        return { ceiling: { version } };
+    }
+
+    const { os, architecture, variant } = container.image;
+    const cacheKey = `${container.image.registry?.url}|${container.image.name}|${ceilingTag}|${os}/${architecture}/${variant ?? ''}`;
+    let pending = ceilingCache?.get(cacheKey);
+    if (!pending) {
+        pending = lookupCeilingLabel(container, registryProvider, ceilingTag);
+        ceilingCache?.set(cacheKey, pending);
+    }
+    const lookup = await pending;
+    if ('error' in lookup) {
+        return fail(lookup.error);
+    }
+    const { label } = lookup;
+    const transformed = transformTag(container.transformTags, label);
+    if (!isValidCeiling(transformed)) {
+        const shownValue =
+            transformed === label
+                ? `[${label}]`
+                : `[${label}] (transformed to [${transformed}])`;
+        return fail(
+            `Could not resolve ceiling tag [${ceilingTag}]: value ${shownValue} is not a valid semver`,
+        );
+    }
+    const version = normalizeCeiling(transformed);
+    logContainer.debug(
+        `Ceiling resolved to ${version} (from tag ${ceilingTag})`,
+    );
+    return { ceiling: { tag: ceilingTag, version } };
+
+    function fail(message: string): CeilingResolution {
+        logContainer.warn(message);
+        return { error: message };
+    }
+}
+
 export interface FindNewVersionResult {
     result: ContainerResult;
     updates: ContainerUpdates;
+    ceiling?: ContainerCeiling;
+    error?: { message: string };
 }
 
 /**
@@ -434,11 +562,13 @@ export interface FindNewVersionResult {
  * @param container
  * @param dockerApi - Optional, used for v1 manifest legacy check
  * @param logContainer
+ * @param ceilingCache optional per-scan memo of dynamic ceiling lookups
  */
 export async function findNewVersion(
     container: Container,
     dockerApi: any,
     logContainer: any,
+    ceilingCache?: CeilingCache,
 ): Promise<FindNewVersionResult> {
     const registryProvider = getRegistry(container.image.registry.name);
     const result: ContainerResult = { tag: container.image.tag.value };
@@ -462,11 +592,31 @@ export async function findNewVersion(
             );
         }
 
-        // Get all available tags
-        const tags = await registryProvider.getTags(container.image);
+        // A ceiling cannot change the outcome for a non-semver tag (no candidates at all)
+        const ceilingResolution = container.image.tag.semver
+            ? await resolveCeiling(
+                  container,
+                  registryProvider,
+                  logContainer,
+                  ceilingCache,
+              )
+            : {};
+        const ceilingFailed = ceilingResolution.error !== undefined;
+
+        // Get all available tags (skipped when the ceiling failed, as no candidate can survive)
+        const tags = ceilingFailed
+            ? []
+            : await registryProvider.getTags(container.image);
 
         // Get candidate tags (based on tag name)
-        const tagsCandidates = getTagCandidates(container, tags, logContainer);
+        const tagsCandidates = ceilingFailed
+            ? []
+            : getTagCandidates(
+                  container,
+                  tags,
+                  logContainer,
+                  ceilingResolution.ceiling?.version,
+              );
 
         // Must watch digest? => Find local/remote digests on registry
         if (watchDigest && container.image.digest.repo) {
@@ -519,6 +669,12 @@ export async function findNewVersion(
         return {
             result,
             updates: computeUpdateBuckets(container, tagsCandidates, result),
+            ...(ceilingResolution.ceiling
+                ? { ceiling: ceilingResolution.ceiling }
+                : {}),
+            ...(ceilingResolution.error
+                ? { error: { message: ceilingResolution.error } }
+                : {}),
         };
     }
 }

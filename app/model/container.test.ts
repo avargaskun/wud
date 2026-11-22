@@ -396,6 +396,39 @@ test('model should not synthesise updates when the stored record has none', asyn
     expect(containerValidated.updates).toBeUndefined();
 });
 
+test('model should validate a container carrying a dynamic ceiling', async () => {
+    const ceiling = { tag: 'stable', version: '2.37.9' };
+    const containerValidated = container.validate(
+        containerWithUpdates({ ceiling }),
+    );
+    expect(containerValidated.ceiling).toStrictEqual(ceiling);
+});
+
+test('model should validate a container carrying a static ceiling', async () => {
+    const ceiling = { version: '2.1' };
+    const containerValidated = container.validate(
+        containerWithUpdates({ ceiling }),
+    );
+    expect(containerValidated.ceiling).toStrictEqual(ceiling);
+});
+
+test('model should reject a ceiling without a version', async () => {
+    expect(() => {
+        container.validate(
+            containerWithUpdates({ ceiling: { tag: 'stable' } }),
+        );
+    }).toThrow();
+});
+
+test('flatten should emit ceiling_tag and ceiling_version when called', async () => {
+    const containerValidated = container.validate(
+        containerWithUpdates({ ceiling: { tag: 'stable', version: '2.37.9' } }),
+    );
+    const containerFlatten = container.flatten(containerValidated);
+    expect(containerFlatten.ceiling_tag).toEqual('stable');
+    expect(containerFlatten.ceiling_version).toEqual('2.37.9');
+});
+
 test('model should validate a selectedUpdate', async () => {
     const selectedUpdate = {
         kind: 'tag',

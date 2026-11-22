@@ -23,6 +23,7 @@ describe('Docker Watcher Utils', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         mockLogContainer = {
+            info: jest.fn(),
             warn: jest.fn(),
             error: jest.fn(),
             debug: jest.fn(),
@@ -214,6 +215,103 @@ describe('Docker Watcher Utils', () => {
                     { tag: candidates[0] },
                 );
                 expect(updates.patch.remoteValue).toEqual(candidates[0]);
+            });
+        });
+
+        describe('ceiling filter', () => {
+            const actualTag = jest.requireActual('../../../tag');
+
+            const ceilingContainer = {
+                image: {
+                    tag: { value: '2.36.0', semver: true },
+                },
+                transformTags: undefined,
+            };
+
+            beforeEach(() => {
+                tag.parse.mockImplementation(actualTag.parse);
+                tag.isGreater.mockImplementation(actualTag.isGreater);
+                tag.transform.mockImplementation(actualTag.transform);
+                tag.compare.mockImplementation(actualTag.compare);
+                tag.isAtOrBelowCeiling.mockImplementation(
+                    actualTag.isAtOrBelowCeiling,
+                );
+            });
+
+            test('should drop the candidates above the ceiling', () => {
+                const tags = ['2.38.3', '2.37.9', '2.36.0', '2.36.1'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        '2.37.9',
+                    ),
+                ).toEqual(['2.37.9', '2.36.1', '2.36.0']);
+            });
+
+            test('should support a partial ceiling', () => {
+                const tags = ['3.0.0', '2.38.3', '2.37.9', '2.36.0'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        '2',
+                    ),
+                ).toEqual(['2.38.3', '2.37.9', '2.36.0']);
+            });
+
+            test('should not change the candidates when no ceiling is given', () => {
+                const tags = ['3.0.0', '2.38.3', '2.37.9', '2.36.0', '2.36.1'];
+                const expected = [
+                    '3.0.0',
+                    '2.38.3',
+                    '2.37.9',
+                    '2.36.1',
+                    '2.36.0',
+                ];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        [...tags],
+                        mockLogContainer,
+                    ),
+                ).toEqual(expected);
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        [...tags],
+                        mockLogContainer,
+                        undefined,
+                    ),
+                ).toEqual(expected);
+            });
+
+            test('should run after the greater-than and numeric segment filters', () => {
+                // '2.37' is below the ceiling but has 2 numeric segments;
+                // '2.35.0' is below the ceiling but below the running tag
+                const tags = ['2.37', '2.35.0', '2.36.1'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        '2.37.9',
+                    ),
+                ).toEqual(['2.36.1']);
+            });
+
+            test('should drop every candidate when the ceiling is invalid', () => {
+                const tags = ['2.38.3', '2.37.9', '2.36.1'];
+                expect(
+                    utils.getTagCandidates(
+                        ceilingContainer,
+                        tags,
+                        mockLogContainer,
+                        'stable',
+                    ),
+                ).toEqual([]);
             });
         });
     });
@@ -673,6 +771,605 @@ describe('Docker Watcher Utils', () => {
         });
     });
 
+    describe('resolveCeiling', () => {
+        const actualTag = jest.requireActual('../../../tag');
+
+        let mockProvider;
+
+        const containerWithLabels = (labels) => ({
+            image: { name: 'test/image' },
+            labels,
+        });
+
+        beforeEach(() => {
+            tag.isValidCeiling.mockImplementation(actualTag.isValidCeiling);
+            tag.normalizeCeiling.mockImplementation(actualTag.normalizeCeiling);
+            tag.transform.mockImplementation(actualTag.transform);
+            mockProvider = { getImageVersionLabel: jest.fn() };
+        });
+
+        describe('transform', () => {
+            const LS_SUFFIX = '^(\\d+\\.\\d+\\.\\d+)-ls\\d+$ => $1';
+            const LS_FOUR_PART = '^(\\d+\\.\\d+\\.\\d+)\\.\\d+-ls\\d+$ => $1';
+
+            const dynamicContainer = (transformTags?) => ({
+                image: { name: 'test/image', registry: { url: 'https://r' } },
+                labels: { 'wud.tag.ceiling': 'stable' },
+                transformTags,
+            });
+
+            test('should apply the container transform to a dynamic ceiling label', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '1.2.3-ls45',
+                );
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(LS_SUFFIX),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    ceiling: { tag: 'stable', version: '1.2.3' },
+                });
+            });
+
+            test('should accept a four-part label the transform turns into semver', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '7.0.3.10918-ls328',
+                );
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(LS_FOUR_PART),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    ceiling: { tag: 'stable', version: '7.0.3' },
+                });
+            });
+
+            test('should name the transformed value when a transformed label is invalid', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '7.0.3.10918-ls328',
+                );
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(`${LS_FOUR_PART}.0`),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: value [7.0.3.10918-ls328] (transformed to [7.0.3.0]) is not a valid semver',
+                });
+            });
+
+            test('should fall back to the raw label when the transform does not match', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('1.2.3');
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(LS_SUFFIX),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    ceiling: { tag: 'stable', version: '1.2.3' },
+                });
+            });
+
+            test("should apply each container's own transform to a shared cached label", async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '1.2.3-ls45',
+                );
+                const cache = new Map();
+                const withTransform = await utils.resolveCeiling(
+                    dynamicContainer(LS_SUFFIX),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const withoutTransform = await utils.resolveCeiling(
+                    dynamicContainer(),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                expect(withTransform.ceiling.version).toEqual('1.2.3');
+                expect(withoutTransform.ceiling.version).toEqual('1.2.3-ls45');
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should not memoize a validation failure', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '7.0.3.10918-ls328',
+                );
+                const cache = new Map();
+                const withoutTransform = await utils.resolveCeiling(
+                    dynamicContainer(),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const withTransform = await utils.resolveCeiling(
+                    dynamicContainer(LS_FOUR_PART),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                expect(withoutTransform).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: value [7.0.3.10918-ls328] is not a valid semver',
+                });
+                expect(withTransform).toEqual({
+                    ceiling: { tag: 'stable', version: '7.0.3' },
+                });
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should not transform a static ceiling', async () => {
+                const resolution = await utils.resolveCeiling(
+                    {
+                        image: { name: 'test/image' },
+                        labels: { 'wud.tag.ceiling.version': '2.1' },
+                        transformTags: '^(\\d+)\\.(\\d+)$ => $2',
+                    },
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({ ceiling: { version: '2.1' } });
+            });
+        });
+
+        test('should log a resolved ceiling at debug', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+            await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(mockLogContainer.debug).toHaveBeenCalledWith(
+                'Ceiling resolved to 2.37.9 (from tag stable)',
+            );
+            expect(mockLogContainer.info).not.toHaveBeenCalled();
+        });
+
+        test('should log a static ceiling at debug', async () => {
+            await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling.version': '2.1' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(mockLogContainer.debug).toHaveBeenCalledWith(
+                'Ceiling set to 2.1',
+            );
+            expect(mockLogContainer.info).not.toHaveBeenCalled();
+        });
+
+        test('should return an empty resolution when no ceiling label is set', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({}),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({});
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+        });
+
+        test('should fail when both ceiling labels are set', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({
+                    'wud.tag.ceiling': 'stable',
+                    'wud.tag.ceiling.version': '2.1',
+                }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Ceiling misconfigured: both wud.tag.ceiling and wud.tag.ceiling.version are set; use only one',
+            });
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+            expect(mockLogContainer.warn).toHaveBeenCalledWith(
+                resolution.error,
+            );
+        });
+
+        test('should fail when the static ceiling version is not a semver', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling.version': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Invalid wud.tag.ceiling.version [stable]; expected a full or partial semver (e.g. 2, 2.1, 2.1.3)',
+            });
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+        });
+
+        test('should normalize a valid static ceiling version', async () => {
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling.version': ' v2.1 ' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({ ceiling: { version: '2.1' } });
+            expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
+        });
+
+        test('should resolve a dynamic ceiling from the image version label', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+            const container = containerWithLabels({
+                'wud.tag.ceiling': 'stable',
+            });
+            const resolution = await utils.resolveCeiling(
+                container,
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                ceiling: { tag: 'stable', version: '2.37.9' },
+            });
+            expect(mockProvider.getImageVersionLabel).toHaveBeenCalledWith(
+                container.image,
+                'stable',
+            );
+        });
+
+        test('should fail when the ceiling tag image has no version label', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue(undefined);
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Could not resolve ceiling tag [stable]: image has no org.opencontainers.image.version label',
+            });
+        });
+
+        test('should fail when the resolved version label is not a semver', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue(
+                'not-a-version',
+            );
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Could not resolve ceiling tag [stable]: value [not-a-version] is not a valid semver',
+            });
+        });
+
+        test('should fail when the registry call throws', async () => {
+            mockProvider.getImageVersionLabel.mockRejectedValue(
+                new Error('Boom!'),
+            );
+            const resolution = await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(resolution).toEqual({
+                error: 'Could not resolve ceiling tag [stable]: Boom!',
+            });
+            expect(mockLogContainer.warn).toHaveBeenCalledWith(
+                resolution.error,
+            );
+        });
+
+        describe('memoization', () => {
+            let cache;
+
+            const containerOnRegistry = (url, labels) => ({
+                image: { name: 'test/image', registry: { url } },
+                labels,
+            });
+
+            beforeEach(() => {
+                cache = new Map();
+            });
+
+            test('should resolve the same image and ceiling tag only once', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const first = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const second = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+
+                expect(first).toEqual({
+                    ceiling: { tag: 'stable', version: '2.37.9' },
+                });
+                expect(second).toEqual(first);
+                expect(second.ceiling).not.toBe(first.ceiling);
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should resolve each distinct image and ceiling tag', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+
+                await utils.resolveCeiling(
+                    containerOnRegistry('https://registry-1', {
+                        'wud.tag.ceiling': 'stable',
+                    }),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                await utils.resolveCeiling(
+                    containerOnRegistry('https://registry-2', {
+                        'wud.tag.ceiling': 'stable',
+                    }),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                await utils.resolveCeiling(
+                    {
+                        image: {
+                            name: 'other/image',
+                            registry: { url: 'https://registry-1' },
+                        },
+                        labels: { 'wud.tag.ceiling': 'stable' },
+                    },
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                await utils.resolveCeiling(
+                    containerOnRegistry('https://registry-1', {
+                        'wud.tag.ceiling': 'lts',
+                    }),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    4,
+                );
+            });
+
+            test('should resolve on every call without a cache', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                );
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
+            });
+
+            test('should not share results between distinct caches', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    new Map(),
+                );
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    new Map(),
+                );
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
+            });
+
+            const deferred = () => {
+                let resolve;
+                let reject;
+                const promise = new Promise((res, rej) => {
+                    resolve = res;
+                    reject = rej;
+                });
+                promise.catch(() => {});
+                return { promise, resolve, reject };
+            };
+
+            test('should resolve each platform of the same image separately', async () => {
+                mockProvider.getImageVersionLabel.mockImplementation(
+                    async (image) => {
+                        if (image.architecture === 'arm64') {
+                            throw new Error(
+                                'no manifest for platform [linux/arm64] in [stable]',
+                            );
+                        }
+                        return '2.37.9';
+                    },
+                );
+                const onPlatform = (architecture) => ({
+                    image: {
+                        name: 'test/image',
+                        registry: { url: 'https://registry-1' },
+                        os: 'linux',
+                        architecture,
+                    },
+                    labels: { 'wud.tag.ceiling': 'stable' },
+                });
+
+                const arm = await utils.resolveCeiling(
+                    onPlatform('arm64'),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const amd = await utils.resolveCeiling(
+                    onPlatform('amd64'),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+
+                expect(arm.error).toContain('linux/arm64');
+                expect(amd).toEqual({
+                    ceiling: { tag: 'stable', version: '2.37.9' },
+                });
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
+            });
+
+            test('should share one in-flight lookup between concurrent calls', async () => {
+                const lookup = deferred();
+                mockProvider.getImageVersionLabel.mockReturnValue(
+                    lookup.promise,
+                );
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const both = Promise.all([
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                ]);
+                lookup.resolve('2.37.9');
+                const [first, second] = await both;
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+                expect(first).toEqual({
+                    ceiling: { tag: 'stable', version: '2.37.9' },
+                });
+                expect(second).toEqual(first);
+                expect(second.ceiling).not.toBe(first.ceiling);
+            });
+
+            test('should share an in-flight failure between concurrent calls', async () => {
+                const lookup = deferred();
+                mockProvider.getImageVersionLabel.mockReturnValue(
+                    lookup.promise,
+                );
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const both = Promise.all([
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                    utils.resolveCeiling(
+                        container,
+                        mockProvider,
+                        mockLogContainer,
+                        cache,
+                    ),
+                ]);
+                lookup.reject(new Error('Boom!'));
+                const [first, second] = await both;
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+                expect(first).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: Boom!',
+                });
+                expect(second).toEqual(first);
+                expect(mockLogContainer.warn).toHaveBeenCalledTimes(2);
+            });
+
+            test('should return a cached failure without calling the registry again', async () => {
+                mockProvider.getImageVersionLabel.mockRejectedValue(
+                    new Error('Boom!'),
+                );
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const first = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const second = await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+
+                expect(second).toEqual(first);
+                expect(second).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: Boom!',
+                });
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+                expect(mockLogContainer.warn).toHaveBeenCalledTimes(2);
+            });
+
+            test('should not cache a static ceiling', async () => {
+                const container = containerOnRegistry('https://registry-1', {
+                    'wud.tag.ceiling.version': '2.1',
+                });
+
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                await utils.resolveCeiling(
+                    container,
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+
+                expect(
+                    mockProvider.getImageVersionLabel,
+                ).not.toHaveBeenCalled();
+                expect(mockLogContainer.debug).toHaveBeenCalledTimes(2);
+            });
+        });
+    });
+
     describe('findNewVersion', () => {
         test('should throw error if no registry', async () => {
             registry.getState.mockReturnValue({ registry: {} });
@@ -1011,6 +1708,229 @@ describe('Docker Watcher Utils', () => {
             expect(result.digest).toBe(arm64ManifestDigest);
             expect(container.image.digest.value).toBe(arm64ManifestDigest);
             expect(container.image.digest.value).toBe(result.digest);
+        });
+
+        describe('ceiling', () => {
+            const actualTag = jest.requireActual('../../../tag');
+
+            let mockProvider;
+
+            beforeEach(() => {
+                tag.parse.mockImplementation(actualTag.parse);
+                tag.transform.mockImplementation(actualTag.transform);
+                tag.isGreater.mockImplementation(actualTag.isGreater);
+                tag.compare.mockImplementation(actualTag.compare);
+                tag.diff.mockImplementation(actualTag.diff);
+                tag.isAtOrBelowCeiling.mockImplementation(
+                    actualTag.isAtOrBelowCeiling,
+                );
+                tag.isValidCeiling.mockImplementation(actualTag.isValidCeiling);
+                tag.normalizeCeiling.mockImplementation(
+                    actualTag.normalizeCeiling,
+                );
+
+                mockProvider = {
+                    getTags: jest
+                        .fn()
+                        .mockResolvedValue([
+                            '2.36.0',
+                            '2.37.9',
+                            '2.38.3',
+                            '3.0.0',
+                        ]),
+                    getImageVersionLabel: jest.fn(),
+                    shouldWatchDigest: jest.fn().mockReturnValue(false),
+                };
+                registry.getState.mockReturnValue({
+                    registry: { docker: mockProvider },
+                });
+            });
+
+            const buildContainer = (labels, extraImage = {}) => ({
+                image: {
+                    registry: { name: 'docker' },
+                    name: 'test/image',
+                    tag: { value: '2.36.0', semver: true },
+                    digest: { watch: false },
+                    ...extraImage,
+                },
+                labels,
+                transformTags: undefined,
+            });
+
+            test('should resolve once for concurrent containers sharing a cache', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const cache = new Map();
+
+                await Promise.all([
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                        cache,
+                    ),
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                        cache,
+                    ),
+                ]);
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should resolve fresh without a cache', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+
+                await Promise.all([
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                    ),
+                    utils.findNewVersion(
+                        buildContainer({ 'wud.tag.ceiling': 'stable' }),
+                        undefined,
+                        mockLogContainer,
+                    ),
+                ]);
+
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    2,
+                );
+            });
+
+            test('should fail closed on a ceiling resolution error while still computing the digest bucket', async () => {
+                mockProvider.getImageVersionLabel.mockRejectedValue(
+                    new Error('Boom!'),
+                );
+                mockProvider.shouldWatchDigest = jest
+                    .fn()
+                    .mockReturnValue(true);
+                mockProvider.getImageManifestDigest = jest
+                    .fn()
+                    .mockResolvedValueOnce({
+                        digest: 'sha256:def456',
+                        created: '2023-01-01',
+                        version: 2,
+                    })
+                    .mockResolvedValueOnce({ digest: 'sha256:manifest123' });
+
+                const container = buildContainer(
+                    {
+                        'wud.tag.ceiling': 'stable',
+                        'wud.watch.digest.semver': 'true',
+                    },
+                    {
+                        id: 'image123',
+                        digest: { watch: true, repo: 'sha256:abc123' },
+                    },
+                );
+
+                const { result, updates, ceiling, error } =
+                    await utils.findNewVersion(
+                        container,
+                        null,
+                        mockLogContainer,
+                    );
+
+                expect(error).toEqual({
+                    message: 'Could not resolve ceiling tag [stable]: Boom!',
+                });
+                expect(ceiling).toBeUndefined();
+                expect(result.tag).toBe('2.36.0');
+                expect(updates.major).toBeNull();
+                expect(updates.minor).toBeNull();
+                expect(updates.patch).toBeNull();
+                expect(updates.digest).toEqual(
+                    expect.objectContaining({
+                        kind: 'digest',
+                        localValue: 'sha256:manifest123',
+                        remoteValue: 'sha256:def456',
+                    }),
+                );
+                expect(mockProvider.getTags).not.toHaveBeenCalled();
+            });
+
+            test('should cap the candidates with a static ceiling', async () => {
+                const container = buildContainer({
+                    'wud.tag.ceiling.version': '2.37.9',
+                });
+
+                const { result, updates, ceiling, error } =
+                    await utils.findNewVersion(
+                        container,
+                        null,
+                        mockLogContainer,
+                    );
+
+                expect(result.tag).toBe('2.37.9');
+                expect(ceiling).toEqual({ version: '2.37.9' });
+                expect(error).toBeUndefined();
+                expect(updates.minor.remoteValue).toBe('2.37.9');
+                expect(updates.major).toBeNull();
+                expect(
+                    mockProvider.getImageVersionLabel,
+                ).not.toHaveBeenCalled();
+            });
+
+            test('should cap the candidates with a dynamic ceiling', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+                const container = buildContainer({
+                    'wud.tag.ceiling': 'stable',
+                });
+
+                const { result, ceiling, error } = await utils.findNewVersion(
+                    container,
+                    null,
+                    mockLogContainer,
+                );
+
+                expect(ceiling).toEqual({ tag: 'stable', version: '2.37.9' });
+                expect(error).toBeUndefined();
+                expect(result.tag).toBe('2.37.9');
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledWith(
+                    container.image,
+                    'stable',
+                );
+            });
+
+            test('should behave identically when no ceiling label is set', async () => {
+                const findNewVersionResult = await utils.findNewVersion(
+                    buildContainer({}),
+                    null,
+                    mockLogContainer,
+                );
+
+                expect(findNewVersionResult.result.tag).toBe('3.0.0');
+                expect('ceiling' in findNewVersionResult).toBe(false);
+                expect('error' in findNewVersionResult).toBe(false);
+                expect(
+                    mockProvider.getImageVersionLabel,
+                ).not.toHaveBeenCalled();
+            });
+
+            test('should ignore a ceiling label on a non semver container', async () => {
+                const container = buildContainer(
+                    { 'wud.tag.ceiling': 'stable' },
+                    { tag: { value: 'latest', semver: false } },
+                );
+
+                const findNewVersionResult = await utils.findNewVersion(
+                    container,
+                    null,
+                    mockLogContainer,
+                );
+
+                expect(
+                    mockProvider.getImageVersionLabel,
+                ).not.toHaveBeenCalled();
+                expect('ceiling' in findNewVersionResult).toBe(false);
+                expect('error' in findNewVersionResult).toBe(false);
+            });
         });
     });
 });

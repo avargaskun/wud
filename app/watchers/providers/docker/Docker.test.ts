@@ -433,6 +433,36 @@ describe('Docker Watcher', () => {
             expect(docker.watchContainer).toHaveBeenCalled();
         });
 
+        test('should pass one ceiling cache to every container of a scan', async () => {
+            docker.getContainers = jest
+                .fn()
+                .mockResolvedValue([{ id: '1' }, { id: '2' }]);
+            docker.watchContainer = jest.fn().mockResolvedValue({});
+
+            await docker.watch();
+
+            const [[first, firstCache], [second, secondCache]] =
+                docker.watchContainer.mock.calls;
+            expect(first).toEqual({ id: '1' });
+            expect(second).toEqual({ id: '2' });
+            expect(firstCache).toBeInstanceOf(Map);
+            expect(secondCache).toBe(firstCache);
+        });
+
+        test('should use a fresh ceiling cache for each scan', async () => {
+            docker.getContainers = jest.fn().mockResolvedValue([{ id: '1' }]);
+            docker.watchContainer = jest.fn().mockResolvedValue({});
+
+            await docker.watch();
+            await docker.watch();
+
+            const [[, firstScanCache], [, secondScanCache]] =
+                docker.watchContainer.mock.calls;
+            expect(firstScanCache).toBeInstanceOf(Map);
+            expect(secondScanCache).toBeInstanceOf(Map);
+            expect(secondScanCache).not.toBe(firstScanCache);
+        });
+
         test('should filter store containers by agent when pruning', async () => {
             docker.name = 'docker-local';
             docker.configuration = { watchall: false, watchbydefault: true };
@@ -470,8 +500,37 @@ describe('Docker Watcher', () => {
                 container,
                 expect.anything(),
                 expect.anything(),
+                undefined,
             );
             expect(event.emitContainerReport).toHaveBeenCalled();
+        });
+
+        test('should forward the ceiling cache to findNewVersion', async () => {
+            const container = { id: 'test123', name: 'test' };
+            const mockLog = {
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+            };
+            docker.log = mockLog;
+            docker.configuration = { discoveryonly: false };
+            utils.findNewVersion.mockResolvedValue({
+                result: { tag: '2.0.0' },
+                updates: {},
+            });
+            docker.mapContainerToContainerReport = jest
+                .fn()
+                .mockReturnValue({ container, changed: false });
+
+            const ceilingCache = new Map();
+            await docker.watchContainer(container, ceilingCache);
+
+            expect(utils.findNewVersion).toHaveBeenCalledWith(
+                container,
+                expect.anything(),
+                expect.anything(),
+                ceilingCache,
+            );
         });
 
         test('should assign both result and updates from findNewVersion', async () => {
@@ -544,6 +603,59 @@ describe('Docker Watcher', () => {
             expect('updates' in container).toBe(false);
             expect('result' in container).toBe(false);
             expect(container.error).toEqual({ message: 'boom' });
+        });
+
+        test('should assign the ceiling and the error from findNewVersion', async () => {
+            const container = { id: 'test123', name: 'test' };
+            docker.log = {
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+            };
+            docker.configuration = { discoveryonly: false };
+            utils.findNewVersion.mockResolvedValue({
+                result: { tag: '1.0.0' },
+                updates: {},
+                ceiling: { tag: 'stable', version: '2.37.9' },
+                error: { message: 'Ceiling boom' },
+            });
+            docker.mapContainerToContainerReport = jest
+                .fn()
+                .mockImplementation((c) => ({ container: c, changed: false }));
+
+            await docker.watchContainer(container);
+
+            expect(container.ceiling).toEqual({
+                tag: 'stable',
+                version: '2.37.9',
+            });
+            expect(container.error).toEqual({ message: 'Ceiling boom' });
+        });
+
+        test('should clear a stale ceiling when findNewVersion returns none', async () => {
+            const container = {
+                id: 'test123',
+                name: 'test',
+                ceiling: { tag: 'stable', version: '2.37.9' },
+            };
+            docker.log = {
+                child: jest
+                    .fn()
+                    .mockReturnValue({ debug: jest.fn(), warn: jest.fn() }),
+            };
+            docker.configuration = { discoveryonly: false };
+            utils.findNewVersion.mockResolvedValue({
+                result: { tag: '1.0.0' },
+                updates: {},
+            });
+            docker.mapContainerToContainerReport = jest
+                .fn()
+                .mockImplementation((c) => ({ container: c, changed: false }));
+
+            await docker.watchContainer(container);
+
+            expect(container.ceiling).toBeUndefined();
+            expect('ceiling' in container).toBe(false);
         });
     });
 
@@ -645,6 +757,7 @@ describe('Docker Watcher', () => {
                 expect(docker.watchContainer).toHaveBeenCalledWith(
                     mockContainerWithDetails,
                 );
+                expect(docker.watchContainer.mock.calls[0]).toHaveLength(1);
                 expect(docker.watchCronDebounced).not.toHaveBeenCalled();
             });
 

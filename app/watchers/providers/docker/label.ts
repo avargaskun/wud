@@ -23,6 +23,16 @@ export const wudTagExclude = 'wud.tag.exclude';
 export const wudTagTransform = 'wud.tag.transform';
 
 /**
+ * Optional tag name whose current version caps the versions WUD will report.
+ */
+export const wudTagCeiling = 'wud.tag.ceiling';
+
+/**
+ * Optional static full or partial semver capping the versions WUD will report.
+ */
+export const wudTagCeilingVersion = 'wud.tag.ceiling.version';
+
+/**
  * Should container digest be tracked? (true | false).
  */
 export const wudWatchDigest = 'wud.watch.digest';

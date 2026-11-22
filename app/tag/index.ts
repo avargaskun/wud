@@ -118,3 +118,40 @@ export function compare(version1: string, version2: string): number | null {
     }
     return semver.compare(v1, v2);
 }
+
+/** Normalize a user- or registry-supplied ceiling value ("v2.1 " -> "2.1"). */
+export function normalizeCeiling(rawCeiling: string): string {
+    return rawCeiling.trim().replace(/^v/i, '');
+}
+
+/**
+ * True when `rawCeiling` is usable as a ceiling (full or partial semver).
+ * The version-shape gate is what keeps range expressions (`x`, `*`, `2 || >1`)
+ * out: they are valid ranges, so on their own they would uncap the container.
+ */
+export function isValidCeiling(rawCeiling: string): boolean {
+    const normalized = normalizeCeiling(rawCeiling);
+    const isVersionShaped =
+        /^\d+(\.\d+){0,2}$/.test(normalized) ||
+        semver.valid(normalized) !== null;
+    return isVersionShaped && semver.validRange(`<=${normalized}`) !== null;
+}
+
+/**
+ * True when `version` is at or below `rawCeiling`.
+ * includePrerelease keeps this a pure version cap: without it, node-semver would
+ * drop every prerelease, turning the ceiling into a prerelease filter as well.
+ */
+export function isAtOrBelowCeiling(
+    version: string,
+    rawCeiling: string,
+): boolean {
+    const versionSemver = parse(version);
+    const normalized = normalizeCeiling(rawCeiling);
+    if (versionSemver === null || !isValidCeiling(rawCeiling)) {
+        return false;
+    }
+    return semver.satisfies(versionSemver, `<=${normalized}`, {
+        includePrerelease: true,
+    });
+}

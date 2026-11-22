@@ -8,6 +8,8 @@ import {
     registerContainerRemoved,
 } from '../event';
 
+const CEILING_KEYS = ['ceiling_tag', 'ceiling_version'];
+
 let gaugeContainer;
 let metricsDirty = true;
 
@@ -29,6 +31,9 @@ function populateGauge() {
                 // undeclared labels that make prom-client throw -- and the catch below
                 // would silently drop the container from wud_containers entirely.
                 .filter((key) => typeof flatContainer[key] !== 'object')
+                // stripped here, not in flatten(), so k/v integrations keep
+                // publishing the ceiling; only the allowlisted gauge needs it gone
+                .filter((key) => !CEILING_KEYS.includes(key))
                 .reduce((obj, key) => {
                     obj[key] = flatContainer[key];
                     return obj;

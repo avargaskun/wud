@@ -44,6 +44,17 @@ export interface RegistryManifestResponse {
     }[];
 }
 
+export interface RegistryImageConfigBlob {
+    config?: {
+        Labels?: Record<string, string>;
+    };
+}
+
+const MANIFEST_ACCEPT_HEADER =
+    'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json';
+
+const OCI_VERSION_LABEL = 'org.opencontainers.image.version';
+
 const WATERMARK_OFFSET = 3;
 
 /**
@@ -299,6 +310,52 @@ export class Registry extends Component {
         });
     }
 
+    protected selectPlatformManifest(
+        responseManifests: RegistryManifestResponse,
+        image: ContainerImage,
+    ): { digest: string; mediaType: string } | undefined {
+        this.log.debug(
+            `Filter manifest for [arch=${image.architecture}, os=${image.os}, variant=${image.variant}]`,
+        );
+        if (!responseManifests.manifests) {
+            return undefined;
+        }
+        let manifestFound;
+        const manifestFounds = responseManifests.manifests.filter(
+            (manifest) =>
+                manifest.platform.architecture === image.architecture &&
+                manifest.platform.os === image.os,
+        );
+
+        // 1 manifest matching al least? Get the first one (better than nothing)
+        if (manifestFounds.length > 0) {
+            [manifestFound] = manifestFounds;
+        }
+
+        // Multiple matching manifests? Try to refine using variant filtering
+        if (manifestFounds.length > 1) {
+            const manifestFoundFilteredOnVariant = manifestFounds.find(
+                (manifest) => manifest.platform.variant === image.variant,
+            );
+
+            // Manifest exactly matching with variant? Select it
+            if (manifestFoundFilteredOnVariant) {
+                manifestFound = manifestFoundFilteredOnVariant;
+            }
+        }
+
+        if (!manifestFound) {
+            return undefined;
+        }
+        this.log.debug(
+            `Manifest found with [digest=${manifestFound.digest}, mediaType=${manifestFound.mediaType}]`,
+        );
+        return {
+            digest: manifestFound.digest,
+            mediaType: manifestFound.mediaType,
+        };
+    }
+
     /**
      * Get image manifest for a remote tag.
      */
@@ -317,7 +374,7 @@ export class Registry extends Component {
                 image,
                 url: `${image.registry.url}/${image.name}/manifests/${tagOrDigest}`,
                 headers: {
-                    Accept: 'application/vnd.docker.distribution.manifest.list.v2+json, application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.v2+json, application/vnd.oci.image.manifest.v1+json',
+                    Accept: MANIFEST_ACCEPT_HEADER,
                 },
             });
         if (responseManifests) {
@@ -335,42 +392,13 @@ export class Registry extends Component {
                     responseManifests.mediaType ===
                         'application/vnd.oci.image.index.v1+json'
                 ) {
-                    this.log.debug(
-                        `Filter manifest for [arch=${image.architecture}, os=${image.os}, variant=${image.variant}]`,
+                    const selectedManifest = this.selectPlatformManifest(
+                        responseManifests,
+                        image,
                     );
-                    let manifestFound;
-                    const manifestFounds = responseManifests.manifests.filter(
-                        (manifest: any) =>
-                            manifest.platform.architecture ===
-                                image.architecture &&
-                            manifest.platform.os === image.os,
-                    );
-
-                    // 1 manifest matching al least? Get the first one (better than nothing)
-                    if (manifestFounds.length > 0) {
-                        [manifestFound] = manifestFounds;
-                    }
-
-                    // Multiple matching manifests? Try to refine using variant filtering
-                    if (manifestFounds.length > 1) {
-                        const manifestFoundFilteredOnVariant =
-                            manifestFounds.find(
-                                (manifest: any) =>
-                                    manifest.platform.variant === image.variant,
-                            );
-
-                        // Manifest exactly matching with variant? Select it
-                        if (manifestFoundFilteredOnVariant) {
-                            manifestFound = manifestFoundFilteredOnVariant;
-                        }
-                    }
-
-                    if (manifestFound) {
-                        this.log.debug(
-                            `Manifest found with [digest=${manifestFound.digest}, mediaType=${manifestFound.mediaType}]`,
-                        );
-                        manifestDigestFound = manifestFound.digest;
-                        manifestMediaType = manifestFound.mediaType;
+                    if (selectedManifest) {
+                        manifestDigestFound = selectedManifest.digest;
+                        manifestMediaType = selectedManifest.mediaType;
                     }
                 } else if (
                     responseManifests.mediaType ===
@@ -454,6 +482,75 @@ export class Registry extends Component {
         }
         // Empty result...
         throw new Error('Unexpected error; no manifest found');
+    }
+
+    /**
+     * Resolve the org.opencontainers.image.version label of a remote tag.
+     * Returns undefined when the image publishes no such label; throws when no usable manifest exists.
+     */
+    async getImageVersionLabel(
+        image: ContainerImage,
+        tag: string,
+    ): Promise<string | undefined> {
+        this.log.debug(
+            `${this.getId()} - Get ${image.name}:${tag} version label`,
+        );
+        const responseManifests =
+            await this.callRegistry<RegistryManifestResponse>({
+                image,
+                url: `${image.registry.url}/${image.name}/manifests/${tag}`,
+                headers: { Accept: MANIFEST_ACCEPT_HEADER },
+            });
+        const noConfigError = new Error(
+            `manifest for [${tag}] has no image config`,
+        );
+        if (!responseManifests) {
+            throw noConfigError;
+        }
+        if (responseManifests.schemaVersion !== 2) {
+            throw new Error(
+                `manifest for [${tag}] is schema v1 and carries no labels`,
+            );
+        }
+
+        let configDigest = responseManifests.config?.digest;
+        const isIndex =
+            responseManifests.mediaType ===
+                'application/vnd.docker.distribution.manifest.list.v2+json' ||
+            responseManifests.mediaType ===
+                'application/vnd.oci.image.index.v1+json' ||
+            Array.isArray(responseManifests.manifests);
+        if (isIndex) {
+            const selectedManifest = this.selectPlatformManifest(
+                responseManifests,
+                image,
+            );
+            if (!selectedManifest) {
+                const platform = [image.os, image.architecture, image.variant]
+                    .filter(Boolean)
+                    .join('/');
+                throw new Error(
+                    `no manifest for platform [${platform}] in [${tag}]`,
+                );
+            }
+            const childManifest =
+                await this.callRegistry<RegistryManifestResponse>({
+                    image,
+                    url: `${image.registry.url}/${image.name}/manifests/${selectedManifest.digest}`,
+                    headers: { Accept: selectedManifest.mediaType },
+                });
+            configDigest = childManifest?.config?.digest;
+        }
+        if (!configDigest) {
+            throw noConfigError;
+        }
+
+        const configBlob = await this.callRegistry<RegistryImageConfigBlob>({
+            image,
+            url: `${image.registry.url}/${image.name}/blobs/${configDigest}`,
+            headers: { Accept: 'application/json' },
+        });
+        return configBlob?.config?.Labels?.[OCI_VERSION_LABEL];
     }
 
     async callRegistry<T = any>(options: {

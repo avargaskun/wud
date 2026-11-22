@@ -24,6 +24,9 @@ docker rm -f \
     zz_bucket_batch_1 \
     zz_bucket_batch_2 \
     zz_bucket_single \
+    zz_ceiling_dynamic \
+    zz_ceiling_static \
+    zz_ceiling_unresolvable \
     zz_compose_unresolvable \
     zz_digest_threshold \
     zz_mirror_app \
