@@ -66,6 +66,10 @@ export function getVersion() {
 export function getLogLevel() {
     return wudEnvVars.WUD_LOG_LEVEL || 'info';
 }
+
+export function getLogFormat(): 'json' | 'text' {
+    return wudEnvVars.WUD_LOG_FORMAT === 'json' ? 'json' : 'text';
+}
 /**
  * Get watcher configuration.
  */
@@ -109,6 +113,13 @@ export function getAgentConfigurations() {
  */
 export function getStoreConfiguration() {
     return get('wud.store', wudEnvVars);
+}
+
+/**
+ * Get Tag cache configuration.
+ */
+export function getTagCacheConfiguration() {
+    return get('wud.tagcache', wudEnvVars);
 }
 
 /**

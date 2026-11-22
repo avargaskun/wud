@@ -10,15 +10,23 @@ class Ghcr extends BaseRegistry {
     getConfigurationSchema(): AnySchema {
         return this.joi.alternatives([
             this.joi.string().allow(''),
-            this.joi.object().keys({
-                username: this.joi.string().required(),
-                token: this.joi.string().required(),
-            }),
+            this.joi
+                .object()
+                .keys({
+                    username: this.joi.string(),
+                    token: this.joi.string(),
+                    incrementaltags: this.joi.boolean().default(true),
+                })
+                .and('username', 'token'),
         ]);
     }
 
     maskConfiguration() {
         return this.maskSensitiveFields(['token']);
+    }
+
+    supportsIncrementalTagListing(): boolean {
+        return true;
     }
 
     match(imageUrl: string) {

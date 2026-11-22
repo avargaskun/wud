@@ -9,6 +9,7 @@ jest.mock('lokijs', () => {
             // Simulate successful database load
             callback(null);
         }),
+        close: jest.fn((callback) => callback()),
     }));
 });
 
@@ -70,6 +71,35 @@ describe('Store Module', () => {
             path: '/test/store',
             file: 'test.json',
         });
+    });
+
+    test('should close the database on close', async () => {
+        fs.existsSync.mockReturnValue(true);
+        const { default: Loki } = await import('lokijs');
+        await store.init();
+        const db = Loki.mock.results.at(-1).value;
+
+        await store.close();
+
+        expect(db.close).toHaveBeenCalledTimes(1);
+    });
+
+    test('should reject close when the final save fails', async () => {
+        fs.existsSync.mockReturnValue(true);
+        const { default: Loki } = await import('lokijs');
+        await store.init();
+        const db = Loki.mock.results.at(-1).value;
+        db.close.mockImplementationOnce((callback) =>
+            callback(new Error('disk full')),
+        );
+
+        await expect(store.close()).rejects.toThrow('disk full');
+    });
+
+    test('should resolve close when the store was never initialized', async () => {
+        jest.resetModules();
+        const freshStore = await import('./index');
+        await expect(freshStore.close()).resolves.toBeUndefined();
     });
 
     test('should handle database load error', async () => {

@@ -490,7 +490,7 @@ async function deregisterAgents() {
  * Deregister all components.
  * @returns {Promise}
  */
-async function deregisterAll() {
+export async function deregisterAll() {
     try {
         await deregisterWatchers();
         await deregisterTriggers();
@@ -519,10 +519,6 @@ export async function init(options: RegistrationOptions = {}) {
         // Register agents
         await registerAgents();
     }
-
-    // Gracefully exit when possible
-    process.on('SIGINT', deregisterAll);
-    process.on('SIGTERM', deregisterAll);
 }
 
 // The following exports are meant for testing only
@@ -538,6 +534,5 @@ export {
     deregisterTriggers as testable_deregisterTriggers,
     deregisterWatchers as testable_deregisterWatchers,
     deregisterAuthentications as testable_deregisterAuthentications,
-    deregisterAll as testable_deregisterAll,
     log as testable_log,
 };

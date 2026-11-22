@@ -35,7 +35,7 @@ ENV WUD_VERSION=$WUD_VERSION
 
 HEALTHCHECK --interval=30s --timeout=5s CMD if [[ -z ${WUD_SERVER_ENABLED} || ${WUD_SERVER_ENABLED} == 'true' ]]; then curl --fail http://localhost:${WUD_SERVER_PORT:-3000}/health || exit 1; else exit 0; fi;
 
-RUN apk add --no-cache tzdata openssl curl bash
+RUN apk add --no-cache tzdata openssl curl bash tini
 
 COPY Docker.entrypoint.sh /usr/bin/entrypoint.sh
 RUN chmod +x /usr/bin/entrypoint.sh
@@ -48,5 +48,5 @@ COPY --from=app-build /home/node/app/package.json ./package.json
 # Copy UI build output
 COPY --from=ui-build /home/node/ui/dist ./ui
 
-ENTRYPOINT ["/usr/bin/entrypoint.sh"]
+ENTRYPOINT ["/sbin/tini", "--", "/usr/bin/entrypoint.sh"]
 CMD ["node", "dist/index"]

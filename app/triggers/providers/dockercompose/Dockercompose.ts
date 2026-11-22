@@ -12,6 +12,9 @@ import type {
     TriggerRunResult,
 } from '../docker/types';
 import type { UnprocessableContainer } from '../Trigger';
+import { emptyHints, mergeHints } from '../docker/config';
+import type { UserConfigHints } from '../docker/config';
+import { collectComposeHints } from './hints';
 
 /**
  * Minimal shape of a compose service — only the fields this trigger reads.
@@ -19,6 +22,16 @@ import type { UnprocessableContainer } from '../Trigger';
 interface ComposeService {
     image?: string;
     build?: unknown;
+    environment?: unknown;
+    labels?: unknown;
+    command?: unknown;
+    entrypoint?: unknown;
+    user?: unknown;
+    working_dir?: unknown;
+    stop_signal?: unknown;
+    hostname?: unknown;
+    expose?: unknown;
+    healthcheck?: unknown;
 }
 
 /**
@@ -77,6 +90,7 @@ interface ComposeRewriteOutcome {
 interface ComposeResolution {
     file?: string;
     reason?: string;
+    parsedCandidates?: LoadedCompose[];
 }
 
 const COMPOSE_SERVICE_LABEL = 'com.docker.compose.service';
@@ -448,6 +462,7 @@ class Dockercompose extends Docker {
 
         const matching: string[] = [];
         const parseFailed: string[] = [];
+        const parsedCandidates: LoadedCompose[] = [];
         for (const file of existing) {
             let loaded: LoadedCompose | null;
             if (loadedByFile.has(file)) {
@@ -465,10 +480,11 @@ class Dockercompose extends Docker {
             }
             if (loaded === null) {
                 parseFailed.push(file);
-            } else if (
-                doesContainerBelongToCompose(loaded.compose, container)
-            ) {
-                matching.push(file);
+            } else {
+                parsedCandidates.push(loaded);
+                if (doesContainerBelongToCompose(loaded.compose, container)) {
+                    matching.push(file);
+                }
             }
         }
 
@@ -483,21 +499,23 @@ class Dockercompose extends Docker {
             };
         }
 
-        return { file: matching[matching.length - 1] };
+        return { file: matching[matching.length - 1], parsedCandidates };
     }
 
     /**
      * Resolve every container to its compose file in one pass, returning both the
      * grouping and the reason each rejected container cannot be processed.
      * @param containers the containers
-     * @returns {Promise<{groups: Map<string, Container[]>, unprocessable: UnprocessableContainer[]}>}
+     * @returns {Promise<{groups: Map<string, Container[]>, unprocessable: UnprocessableContainer[], hintsByContainerId: Map<string, UserConfigHints>}>}
      */
     async classifyContainers(containers: Container[]): Promise<{
         groups: Map<string, Container[]>;
         unprocessable: UnprocessableContainer[];
+        hintsByContainerId: Map<string, UserConfigHints>;
     }> {
         const groups = new Map<string, Container[]>();
         const unprocessable: UnprocessableContainer[] = [];
+        const hintsByContainerId = new Map<string, UserConfigHints>();
         const loadedByFile = new Map<string, LoadedCompose | null>();
 
         for (const container of containers) {
@@ -529,9 +547,58 @@ class Dockercompose extends Docker {
                 groups.set(resolution.file, []);
             }
             groups.get(resolution.file)!.push(container);
+            hintsByContainerId.set(
+                container.id,
+                this.collectHintsForContainer(
+                    container,
+                    resolution.parsedCandidates ?? [],
+                ),
+            );
         }
 
-        return { groups, unprocessable };
+        return { groups, unprocessable, hintsByContainerId };
+    }
+
+    /**
+     * Union the hints of every candidate compose file that declares the container's
+     * service. Over-inclusion is safe: a hint only means "keep the current value".
+     * @param container
+     * @param parsedCandidates
+     * @returns {UserConfigHints}
+     */
+    collectHintsForContainer(
+        container: Container,
+        parsedCandidates: LoadedCompose[],
+    ): UserConfigHints {
+        const serviceLabel: string | undefined = (container.labels ?? {})[
+            COMPOSE_SERVICE_LABEL
+        ];
+        const collected: UserConfigHints[] = [];
+        for (const loaded of parsedCandidates) {
+            const services: Record<string, ComposeService> =
+                loaded.compose?.services ?? {};
+            let service: ComposeService | undefined;
+            if (
+                typeof serviceLabel === 'string' &&
+                serviceLabel.length > 0 &&
+                Object.prototype.hasOwnProperty.call(services, serviceLabel)
+            ) {
+                service = services[serviceLabel];
+            } else {
+                const resolution: ServiceResolution = resolveComposeServiceName(
+                    loaded.compose,
+                    container,
+                    getCurrentImageRef(container),
+                );
+                if (resolution.status === 'resolved') {
+                    service = services[resolution.serviceName];
+                }
+            }
+            if (service !== undefined) {
+                collected.push(collectComposeHints(service));
+            }
+        }
+        return mergeHints(...collected);
     }
 
     /**
@@ -808,7 +875,8 @@ class Dockercompose extends Docker {
     ): Promise<TriggerRunResult | undefined> {
         // Validate + group (local-host only, resolvable/existing compose file,
         // container belongs to that file).
-        const groups = await this.groupByComposeFile(containers);
+        const { groups, hintsByContainerId } =
+            await this.classifyContainers(containers);
         const valid = [...groups.values()].flat();
         if (valid.length === 0) {
             return;
@@ -845,6 +913,14 @@ class Dockercompose extends Docker {
             outcome.staleIds.forEach((id) => staleIds.add(id));
             if (outcome.revert) {
                 revertsByFile.set(composeFile, outcome.revert);
+            }
+        }
+
+        for (const container of valid) {
+            const ctx = ctxByContainer.get(container);
+            if (ctx) {
+                ctx.userConfigHints =
+                    hintsByContainerId.get(container.id) ?? emptyHints();
             }
         }
 

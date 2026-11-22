@@ -2,19 +2,26 @@
 import { getVersion } from './configuration';
 import log from './log';
 import * as store from './store';
+import * as tagcache from './tagcache';
 import * as registry from './registry';
 import * as api from './api';
 import * as prometheus from './prometheus';
 import * as agentServer from './agent/api';
 import * as agentManager from './agent';
+import { registerShutdownHandlers } from './shutdown';
 
 async function main() {
+    registerShutdownHandlers();
+
     const isAgent = process.argv.includes('--agent');
     const mode = isAgent ? 'Agent' : 'Controller';
     log.info(`WUD is starting in ${mode} mode (version = ${getVersion()})`);
 
     // Init store
     await store.init({ memory: isAgent });
+
+    // Init tag cache
+    await tagcache.init();
 
     if (!isAgent) {
         // Start Prometheus registry

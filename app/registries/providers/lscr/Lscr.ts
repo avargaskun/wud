@@ -9,6 +9,7 @@ class Lscr extends Ghcr {
         return this.joi.object().keys({
             username: this.joi.string().required(),
             token: this.joi.string().required(),
+            incrementaltags: this.joi.boolean().default(true),
         });
     }
 

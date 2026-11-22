@@ -5,6 +5,7 @@ import * as prometheusWatcher from '../prometheus/watcher';
 
 jest.mock('../configuration', () => ({
     getLogLevel: jest.fn(() => 'info'),
+    getLogFormat: jest.fn(() => 'json'),
     getRegistryConfigurations: jest.fn(),
     getTriggerConfigurations: jest.fn(),
     getWatcherConfigurations: jest.fn(),
@@ -60,7 +61,7 @@ afterEach(async () => {
         await registry.testable_deregisterTriggers();
         await registry.testable_deregisterWatchers();
         await registry.testable_deregisterAuthentications();
-        await registry.testable_deregisterAll(); // Added to clean agents too
+        await registry.deregisterAll(); // Added to clean agents too
     } catch (e) {
         // ignore error
     }
@@ -391,7 +392,7 @@ test('deregisterAll should deregister all components', async () => {
         },
     };
     await registry.init();
-    await registry.testable_deregisterAll();
+    await registry.deregisterAll();
     expect(Object.keys(registry.getState().registry).length).toEqual(0);
     expect(Object.keys(registry.getState().trigger).length).toEqual(0);
     expect(Object.keys(registry.getState().watcher).length).toEqual(0);
@@ -407,7 +408,7 @@ test('deregisterAll should throw an error when any component fails to deregister
     registry.getState().trigger = {
         trigger1: component,
     };
-    expect(registry.testable_deregisterAll()).rejects.toThrowError(
+    expect(registry.deregisterAll()).rejects.toThrowError(
         'Error when deregistering component .',
     );
 });

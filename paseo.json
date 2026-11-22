@@ -1,0 +1,9 @@
+{
+  "worktree": {
+    "setup": "(cd app && npm ci) && (cd ui && npm ci) && cp \"$PASEO_SOURCE_CHECKOUT_PATH/.env\" .env",
+    "teardown": "scripts/lumen-prune.sh \"$PASEO_WORKTREE_PATH\" || true"
+  },
+  "scripts": {
+    "test": { "command": "(cd app && npm test) && (cd ui && npm test)" }
+  }
+}

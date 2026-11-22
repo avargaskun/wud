@@ -20,3 +20,21 @@ export class SwapFailedError extends Error {
         this.disposition = disposition;
     }
 }
+
+export interface PullErrorDetail {
+    code?: number;
+    message?: string;
+}
+
+export class PullError extends Error {
+    readonly image: string;
+
+    readonly detail?: PullErrorDetail;
+
+    constructor(image: string, message: string, detail?: PullErrorDetail) {
+        super(message);
+        this.name = 'PullError';
+        this.image = image;
+        this.detail = detail;
+    }
+}

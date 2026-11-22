@@ -20,6 +20,7 @@ jest.mock('../../../prometheus/watcher');
 jest.mock('parse-docker-image-name');
 jest.mock('fs');
 jest.mock('./utils');
+jest.mock('../../../registries/retryStats');
 
 import mockDockerode from 'dockerode';
 import mockCron from 'node-cron';
@@ -28,6 +29,7 @@ import mockFs from 'fs';
 import mockParse from 'parse-docker-image-name';
 import * as mockTag from '../../../tag';
 import * as mockPrometheus from '../../../prometheus/watcher';
+import * as mockRetryStats from '../../../registries/retryStats';
 
 describe('Docker Watcher', () => {
     let docker;
@@ -130,6 +132,53 @@ describe('Docker Watcher', () => {
         if (docker) {
             await docker.deregisterComponent();
         }
+    });
+
+    describe('watchFromCron', () => {
+        let mockLog;
+
+        beforeEach(() => {
+            mockLog = {
+                info: jest.fn(),
+                warn: jest.fn(),
+                debug: jest.fn(),
+                child: jest.fn().mockReturnThis(),
+            };
+            docker.log = mockLog;
+            docker.configuration = { cron: '0 * * * *' };
+        });
+
+        test('should report the registry retries that happened during the watch', async () => {
+            mockRetryStats.getRetryCount
+                .mockReturnValueOnce(5)
+                .mockReturnValueOnce(14);
+            docker.watch = jest.fn().mockResolvedValue([
+                { container: { updateAvailable: true } },
+                {
+                    container: {
+                        updateAvailable: false,
+                        error: { message: 'x' },
+                    },
+                },
+            ]);
+
+            await docker.watchFromCron();
+
+            expect(mockLog.info).toHaveBeenLastCalledWith(
+                'Cron finished (2 containers watched, 1 errors, 1 available updates, 9 registry retries)',
+            );
+        });
+
+        test('should report zero registry retries when none happened', async () => {
+            mockRetryStats.getRetryCount.mockReturnValue(7);
+            docker.watch = jest.fn().mockResolvedValue([]);
+
+            await docker.watchFromCron();
+
+            expect(mockLog.info).toHaveBeenLastCalledWith(
+                'Cron finished (0 containers watched, 0 errors, 0 available updates, 0 registry retries)',
+            );
+        });
     });
 
     describe('Initialization', () => {

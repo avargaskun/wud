@@ -4,10 +4,13 @@ import axios, {
     AxiosResponse,
     AxiosInstance,
 } from 'axios';
-import log, { registerAxiosErrorLogging } from '../log';
+import log, { logAxiosError } from '../log';
 import Component from '../registry/Component';
-import { getSummaryTags } from '../prometheus/registry';
+import { getRetryCounter, getSummaryTags } from '../prometheus/registry';
 import { ContainerImage } from '../model/container';
+import { deleteTagList, getTagList, setTagList } from '../tagcache';
+import { classifyHttpError, formatRetryMessage, withRetry } from './retry';
+import { recordRetry } from './retryStats';
 
 export interface RegistryManifest {
     digest?: string;
@@ -17,7 +20,7 @@ export interface RegistryManifest {
 
 export interface RegistryTagsList {
     name: string;
-    tags: string[];
+    tags: string[] | null;
 }
 
 export interface RegistryManifestResponse {
@@ -52,16 +55,19 @@ const MANIFEST_ACCEPT_HEADER =
 
 const OCI_VERSION_LABEL = 'org.opencontainers.image.version';
 
+const WATERMARK_OFFSET = 3;
+
 /**
  * Docker Registry Abstract class.
  */
 export class Registry extends Component {
     protected axiosInstance: AxiosInstance;
 
+    private tagListsInFlight: Map<string, Promise<string[]>> = new Map();
+
     constructor() {
         super();
         this.axiosInstance = axios.create();
-        registerAxiosErrorLogging(this.axiosInstance, () => this.log);
     }
 
     /**
@@ -104,8 +110,159 @@ export class Registry extends Component {
 
     /**
      * Get Tags.
+     *
+     * The returned array is shared between concurrent callers and must not be mutated.
      */
     async getTags(image: ContainerImage): Promise<string[]> {
+        const key = this.getTagListCacheKey(image);
+        const inFlight = this.tagListsInFlight.get(key);
+        if (inFlight) {
+            this.log.debug(
+                `Reuse in-flight tag list request for ${image.name}`,
+            );
+            return inFlight;
+        }
+        const request = this.resolveTagList(image, key);
+        this.tagListsInFlight.set(key, request);
+        try {
+            return await request;
+        } finally {
+            // Deregistration may have cleared the map and a newer request may already own the key
+            if (this.tagListsInFlight.get(key) === request) {
+                this.tagListsInFlight.delete(key);
+            }
+        }
+    }
+
+    /**
+     * Resolve the sorted tag list for an image.
+     */
+    private async resolveTagList(
+        image: ContainerImage,
+        key: string,
+    ): Promise<string[]> {
+        const incremental = this.isIncrementalTagListingEnabled();
+        if (incremental) {
+            const cached = await getTagList(key);
+            // Without this a short repository would log the fallback below every cycle
+            if (cached && cached.length > WATERMARK_OFFSET) {
+                const delta = await this.fetchTagsSinceWatermark(image, cached);
+                if (delta !== undefined) {
+                    const merged = this.mergeTagDelta(cached, delta);
+                    await setTagList(key, merged);
+                    this.log.debug(
+                        `${image.name}: incremental tag fetch returned ${delta.length} new tag(s) (${merged.length} total)`,
+                    );
+                    return this.sortTagsDesc(merged);
+                }
+                this.log.info(
+                    `${image.name}: incremental tag listing watermark is no longer valid; falling back to a full tag crawl`,
+                );
+                await deleteTagList(key);
+            }
+        }
+        const tags = await this.crawlAllTags(image);
+        if (incremental) {
+            await setTagList(key, tags);
+        }
+        return this.sortTagsDesc(tags);
+    }
+
+    /**
+     * Fetch the tags added since the cached watermark.
+     *
+     * Returns undefined when the registry response contradicts the cached list
+     * (the caller must then full-crawl); an empty array means nothing is new.
+     */
+    private async fetchTagsSinceWatermark(
+        image: ContainerImage,
+        cached: string[],
+    ): Promise<string[] | undefined> {
+        if (cached.length < WATERMARK_OFFSET + 1) {
+            return undefined;
+        }
+        const watermarkIndex = cached.length - WATERMARK_OFFSET;
+        const expectedEcho = cached.slice(watermarkIndex + 1);
+
+        let page = await this.getTagsPage(image, cached[watermarkIndex]);
+        let pageTags = page?.data?.tags ?? [];
+
+        if (pageTags.length < expectedEcho.length) {
+            return undefined;
+        }
+        for (let i = 0; i < expectedEcho.length; i += 1) {
+            if (pageTags[i] !== expectedEcho[i]) {
+                return undefined;
+            }
+        }
+
+        const collected: string[] = pageTags.slice(expectedEcho.length);
+        let link: string | undefined = page?.headers?.link;
+        // An empty page has no cursor, and getTagsPage without one restarts from page one
+        while (link !== undefined && pageTags.length > 0) {
+            page = await this.getTagsPage(
+                image,
+                pageTags[pageTags.length - 1],
+                link,
+            );
+            pageTags = page?.data?.tags ?? [];
+            link = page?.headers?.link;
+            collected.push(...pageTags);
+        }
+        return collected;
+    }
+
+    /**
+     * Append a delta to the cached registry-order tag list.
+     */
+    private mergeTagDelta(cached: string[], delta: string[]): string[] {
+        if (delta.length === 0) {
+            return cached;
+        }
+        const deltaSet = new Set(delta);
+        // A tag deleted then re-pushed reappears at the end of the creation-ordered list
+        return [...cached.filter((t) => !deltaSet.has(t)), ...delta];
+    }
+
+    /**
+     * Key uniquely identifying an image tag list across all registry instances.
+     */
+    private getTagListCacheKey(image: ContainerImage): string {
+        return `${this.getId()}|${image.registry.url}|${image.name}`;
+    }
+
+    /**
+     * To be overridden by registries whose tag list is append-only and whose
+     * last= cursor is positional.
+     */
+    supportsIncrementalTagListing(): boolean {
+        return false;
+    }
+
+    /**
+     * Whether incremental tag listing is both supported and consented to.
+     */
+    isIncrementalTagListingEnabled(): boolean {
+        if (!this.supportsIncrementalTagListing()) {
+            return false;
+        }
+        const configured = this.configuration?.incrementaltags;
+        return configured !== false && configured !== 'false';
+    }
+
+    /**
+     * Drop the in-flight tag list requests owned by this registry instance.
+     *
+     * The cached tag lists deliberately survive: deregistration happens on SIGTERM.
+     */
+    async deregisterComponent(): Promise<void> {
+        this.tagListsInFlight.clear();
+    }
+
+    /**
+     * Crawl all pages of the registry tag list; returns tags in registry order.
+     */
+    protected async crawlAllTags(image: ContainerImage): Promise<string[]> {
         this.log.debug(`Get ${image.name} tags`);
         const tags: string[] = [];
         let page: AxiosResponse<RegistryTagsList> | undefined = undefined;
@@ -125,10 +282,14 @@ export class Registry extends Component {
             tags.push(...pageTags);
         }
 
-        // Sort alpha then reverse to get higher values first
-        tags.sort();
-        tags.reverse();
         return tags;
+    }
+
+    /**
+     * Sort alpha then reverse to get higher values first.
+     */
+    protected sortTagsDesc(tags: string[]): string[] {
+        return [...tags].sort().reverse();
     }
 
     /**
@@ -411,9 +572,6 @@ export class Registry extends Component {
         headers?: any;
         resolveWithFullResponse?: boolean;
     }): Promise<T | AxiosResponse<T>> {
-        const start = new Date().getTime();
-
-        // Request options
         const axiosOptions: AxiosRequestConfig = {
             url,
             method,
@@ -427,13 +585,34 @@ export class Registry extends Component {
         );
 
         try {
-            const response = (await this.axiosInstance(
-                axiosOptionsWithAuth,
-            )) as AxiosResponse<T>;
-            this.observePrometheusSummaryTags(start);
-            return resolveWithFullResponse ? response : response.data;
+            return await withRetry(
+                async () => {
+                    const start = new Date().getTime();
+                    try {
+                        const response = (await this.axiosInstance(
+                            axiosOptionsWithAuth,
+                        )) as AxiosResponse<T>;
+                        this.observePrometheusSummaryTags(start);
+                        return resolveWithFullResponse
+                            ? response
+                            : response.data;
+                    } catch (error) {
+                        this.observePrometheusSummaryTags(start);
+                        throw error;
+                    }
+                },
+                {
+                    classify: classifyHttpError,
+                    onRetry: (event) => {
+                        logAxiosError(this.log, event.error, 'debug');
+                        this.log.debug(formatRetryMessage(event));
+                        this.countRetry(event.decision.status);
+                    },
+                    sleep: (ms) => this.sleep(ms),
+                },
+            );
         } catch (error) {
-            this.observePrometheusSummaryTags(start);
+            logAxiosError(this.log, error, 'warn');
             throw error;
         }
     }
@@ -448,6 +627,23 @@ export class Registry extends Component {
                 (end - start) / 1000,
             );
         }
+    }
+
+    private countRetry(status: number) {
+        recordRetry();
+        // The metric is undefined in Agent mode because Prometheus is disabled
+        getRetryCounter()?.inc({
+            type: this.type,
+            name: this.name,
+            status: String(status),
+        });
+    }
+
+    protected sleep(ms: number): Promise<void> {
+        return new Promise((resolve) => {
+            // A pending retry must not hold the process open on shutdown
+            setTimeout(resolve, ms).unref();
+        });
     }
 
     getImageFullName(image: ContainerImage, tagOrDigest: string) {

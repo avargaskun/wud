@@ -1,5 +1,54 @@
 # Changelog
 
+## [9.4.3](https://github.com/avargaskun/wud/compare/v9.4.2...v9.4.3) (2026-10-25)
+
+
+### Bug Fixes
+
+* shut down cleanly on SIGTERM (fixes [#70](https://github.com/avargaskun/wud/issues/70)) ([#71](https://github.com/avargaskun/wud/issues/71)) ([f53a157](https://github.com/avargaskun/wud/commit/f53a157b52f4c0cabb17d3b537415b4422c13bbd))
+
+## [9.4.2](https://github.com/avargaskun/wud/compare/v9.4.1...v9.4.2) (2026-10-10)
+
+
+### Bug Fixes
+
+* retry image pulls and reject failed pull streams (fixes [#67](https://github.com/avargaskun/wud/issues/67)) ([#68](https://github.com/avargaskun/wud/issues/68)) ([0ec609c](https://github.com/avargaskun/wud/commit/0ec609c9ff7d0d65058469ea7a20e9cc3f3ad455))
+
+## [9.4.1](https://github.com/avargaskun/wud/compare/v9.4.0...v9.4.1) (2026-09-22)
+
+
+### Bug Fixes
+
+* retry throttled and transient registry responses (fixes [#59](https://github.com/avargaskun/wud/issues/59)) ([#63](https://github.com/avargaskun/wud/issues/63)) ([6dd33ce](https://github.com/avargaskun/wud/commit/6dd33ce58dc82a7021dae72be95b2cf1bce11fcd))
+
+## [9.4.0](https://github.com/avargaskun/wud/compare/v9.3.0...v9.4.0) (2026-09-19)
+
+
+### Features
+
+* persist the incremental tag-listing watermark to an opt-in disk cache ([#56](https://github.com/avargaskun/wud/issues/56)) ([bf2880d](https://github.com/avargaskun/wud/commit/bf2880df6011e0896c5743bc031629d05120150e))
+
+## [9.3.0](https://github.com/avargaskun/wud/compare/v9.2.2...v9.3.0) (2026-09-18)
+
+
+### Features
+
+* resume GHCR tag listing from a watermark instead of crawling every tag ([#53](https://github.com/avargaskun/wud/issues/53)) ([#54](https://github.com/avargaskun/wud/issues/54)) ([69bf490](https://github.com/avargaskun/wud/commit/69bf49099a9918666b3004ef417b6b0d99cce587))
+
+## [9.2.2](https://github.com/avargaskun/wud/compare/v9.2.1...v9.2.2) (2026-09-13)
+
+
+### Bug Fixes
+
+* recreate on the new image's defaults with fresh compose labels (fixes [#49](https://github.com/avargaskun/wud/issues/49)) ([1dbf5e6](https://github.com/avargaskun/wud/commit/1dbf5e62a8716c276f9a9a2e11494d971cba6ba9))
+
+## [9.2.1](https://github.com/avargaskun/wud/compare/v9.2.0...v9.2.1) (2026-08-09)
+
+
+### Bug Fixes
+
+* never leave a container destroyed when an update fails (fixes [#39](https://github.com/avargaskun/wud/issues/39)) ([87bf17e](https://github.com/avargaskun/wud/commit/87bf17e40034584c92471ed514fb4c3f81455a99))
+
 ## [9.2.0](https://github.com/avargaskun/wud/compare/v9.1.0...v9.2.0) (2026-08-09)
 
 

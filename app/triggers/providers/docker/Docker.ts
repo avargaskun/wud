@@ -8,7 +8,16 @@ import type Registry from '../../../registries/Registry';
 import Logger from 'bunyan';
 import { wudPostupdateRestart } from '../../../watchers/providers/docker/label';
 import { getPostupdateBounceCounter } from '../../../prometheus/postupdate';
-import { ContainerGoneError, SwapFailedError } from './errors';
+import { ContainerGoneError, PullError, SwapFailedError } from './errors';
+import { classifyPullError } from './pullRetry';
+import { formatRetryMessage, withRetry } from '../../../registries/retry';
+import { getPullRetryCounter } from '../../../prometheus/pull';
+import {
+    deriveUserConfig,
+    emptyHints,
+    refreshComposeImageLabel,
+} from './config';
+import type { ContainerConfig } from './config';
 import type {
     ContainerUpdateContext,
     DependentOutcome,
@@ -36,6 +45,15 @@ type RollbackResult = {
     disposition: 'rolled_back' | 'left_stopped' | 'destroyed';
     rollbackError?: string;
 };
+
+interface PullProgressEntry {
+    error?: string;
+    errorDetail?: { code?: number; message?: string };
+}
+
+function errorMessage(error: unknown): string {
+    return error instanceof Error ? error.message : String(error);
+}
 
 /**
  * Replace a Docker container with an updated one.
@@ -183,7 +201,7 @@ class Docker extends Trigger {
     }
 
     /**
-     * Pull new image.
+     * Pull new image, retrying throttled and transient failures.
      */
     async pullImage(
         dockerApi: Dockerode,
@@ -193,20 +211,82 @@ class Docker extends Trigger {
     ): Promise<void> {
         logContainer.info(`Pull image ${newImage}`);
         try {
-            const pullStream = await dockerApi.pull(newImage, {
-                authconfig: auth,
+            await withRetry(() => this.pullOnce(dockerApi, auth, newImage), {
+                classify: classifyPullError,
+                onRetry: (event) => {
+                    logContainer.debug(
+                        `Error when pulling image ${newImage} (${errorMessage(event.error)})`,
+                    );
+                    logContainer.debug(formatRetryMessage(event));
+                    this.countPullRetry(event.decision.status);
+                },
+                sleep: (ms) => this.sleep(ms),
             });
-
-            await new Promise((res) =>
-                dockerApi.modem.followProgress(pullStream, res),
-            );
             logContainer.info(`Image ${newImage} pulled with success`);
-        } catch (e: any) {
+        } catch (e) {
             logContainer.warn(
-                `Error when pulling image ${newImage} (${e.message})`,
+                `Error when pulling image ${newImage} (${errorMessage(e)})`,
             );
             throw e;
         }
+    }
+
+    /**
+     * Pull an image once; rejects on a stream error or an error line in the progress output.
+     */
+    async pullOnce(
+        dockerApi: Dockerode,
+        auth: Dockerode.AuthConfig | undefined,
+        newImage: string,
+    ): Promise<void> {
+        const pullStream = await dockerApi.pull(newImage, {
+            authconfig: auth,
+        });
+        await new Promise<void>((resolve, reject) => {
+            dockerApi.modem.followProgress(
+                pullStream,
+                (err: Error | null, output?: PullProgressEntry[]) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    const failed = (output ?? []).find(
+                        (entry) =>
+                            entry.error !== undefined ||
+                            entry.errorDetail !== undefined,
+                    );
+                    if (failed) {
+                        reject(
+                            new PullError(
+                                newImage,
+                                failed.errorDetail?.message ??
+                                    failed.error ??
+                                    'Unknown pull error',
+                                failed.errorDetail,
+                            ),
+                        );
+                        return;
+                    }
+                    resolve();
+                },
+            );
+        });
+    }
+
+    protected sleep(ms: number): Promise<void> {
+        return new Promise((resolve) => {
+            // A pending retry must not hold the process open on shutdown
+            setTimeout(resolve, ms).unref();
+        });
+    }
+
+    private countPullRetry(status: number): void {
+        // The metric is undefined in Agent mode because Prometheus is disabled
+        getPullRetryCounter()?.inc({
+            type: this.type,
+            name: this.name,
+            status: String(status),
+        });
     }
 
     /**
@@ -579,11 +659,30 @@ class Docker extends Trigger {
     }
 
     /**
+     * Inspect an image; undefined (with a warning) instead of throwing, the swap degrades gracefully without it.
+     */
+    async inspectImage(
+        dockerApi: Dockerode,
+        imageRef: string,
+        logContainer: Logger,
+    ): Promise<Dockerode.ImageInspectInfo | undefined> {
+        try {
+            return await (await dockerApi.getImage(imageRef)).inspect();
+        } catch (e: any) {
+            logContainer.warn(
+                `Error when inspecting image ${imageRef} (${e.message})`,
+            );
+            return undefined;
+        }
+    }
+
+    /**
      * Clone container specs.
      */
     cloneContainer(
         currentContainer: Dockerode.ContainerInspectInfo,
         newImage: string,
+        config: ContainerConfig = currentContainer.Config,
     ): Dockerode.ContainerCreateOptions {
         const containerName = currentContainer.Name.replace('/', '');
         const endpointsConfig = currentContainer.NetworkSettings.Networks;
@@ -601,7 +700,7 @@ class Docker extends Trigger {
             );
         }
         const containerClone = {
-            ...currentContainer.Config,
+            ...config,
             name: containerName,
             Image: newImage,
             HostConfig: currentContainer.HostConfig,
@@ -621,6 +720,18 @@ class Docker extends Trigger {
         }
 
         return containerClone;
+    }
+
+    /**
+     * The create config for the replacement: the container's own settings on top of the new image's defaults.
+     */
+    buildSwapConfig(ctx: ContainerUpdateContext): ContainerConfig {
+        const user = deriveUserConfig(
+            ctx.currentContainerSpec,
+            ctx.currentImageSpec?.Config,
+            ctx.userConfigHints ?? emptyHints(),
+        );
+        return refreshComposeImageLabel(user, ctx.newImageId);
     }
 
     /**
@@ -686,6 +797,12 @@ class Docker extends Trigger {
             logContainer,
         );
 
+        const currentImageSpec = await this.inspectImage(
+            dockerApi,
+            currentContainerSpec.Image,
+            logContainer,
+        );
+
         // Try to remove previous pulled images
         if (this.configuration.prune) {
             await this.pruneImages(
@@ -699,12 +816,20 @@ class Docker extends Trigger {
         // Pull new image ahead of time
         await this.pullImage(dockerApi, auth, newImage, logContainer);
 
+        const newImageSpec = await this.inspectImage(
+            dockerApi,
+            newImage,
+            logContainer,
+        );
+
         return {
             dockerApi,
             registry,
             newImage,
             currentContainer,
             currentContainerSpec,
+            currentImageSpec,
+            newImageId: newImageSpec?.Id,
             state: currentContainerSpec.State,
         };
     }
@@ -795,6 +920,7 @@ class Docker extends Trigger {
         }
 
         try {
+            // Verbatim clone on purpose: recreated on its own image, the merged config is already the faithful one.
             const respec = this.cloneContainer(
                 ctx.currentContainerSpec,
                 ctx.currentContainerSpec.Config.Image,
@@ -876,6 +1002,7 @@ class Docker extends Trigger {
         const containerToCreateInspect = this.cloneContainer(
             currentContainerSpec,
             newImage,
+            this.buildSwapConfig(ctx),
         );
 
         const originalName = currentContainerSpec.Name.replace('/', '');
@@ -1191,6 +1318,7 @@ class Docker extends Trigger {
                 return { ...outcome, status: 'bounced', method: 'restart' };
             }
 
+            // Verbatim clone on purpose: recreated on its own image, the merged config is already the faithful one.
             const specToCreate = this.cloneContainer(
                 depSpec,
                 depSpec.Config.Image,

@@ -76,6 +76,18 @@ export async function init(options = {}) {
 }
 
 /**
+ * Close DB, flushing pending changes when autosave is enabled.
+ */
+export async function close(): Promise<void> {
+    if (!db) {
+        return;
+    }
+    return new Promise<void>((resolve, reject) => {
+        db.close((err?: Error) => (err ? reject(err) : resolve()));
+    });
+}
+
+/**
  * Get configuration.
  * @returns {*}
  */

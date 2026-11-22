@@ -35,6 +35,7 @@ import {
     shouldWatchDigestForContainer,
 } from './utils';
 import { parse as parseSemver, transform as transformTag } from '../../../tag';
+import { getRetryCount } from '../../../registries/retryStats';
 
 export interface DockerWatcherConfiguration extends ComponentConfiguration {
     socket: string;
@@ -413,7 +414,9 @@ export class Docker extends Watcher {
         this.log.info(`Cron started (${this.configuration.cron})`);
 
         // Get container reports
+        const retryCountBefore = getRetryCount();
         const containerReports = await this.watch();
+        const registryRetriesCount = getRetryCount() - retryCountBefore;
 
         // Count container reports
         const containerReportsCount = containerReports.length;
@@ -428,7 +431,7 @@ export class Docker extends Watcher {
             (containerReport) => containerReport.container.error !== undefined,
         ).length;
 
-        const stats = `${containerReportsCount} containers watched, ${containerErrorsCount} errors, ${containerUpdatesCount} available updates`;
+        const stats = `${containerReportsCount} containers watched, ${containerErrorsCount} errors, ${containerUpdatesCount} available updates, ${registryRetriesCount} registry retries`;
         if (this.log && typeof this.log.info === 'function') {
             this.log.info(`Cron finished (${stats})`);
         }
