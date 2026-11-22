@@ -486,7 +486,7 @@ export class Registry extends Component {
 
     /**
      * Resolve the org.opencontainers.image.version label of a remote tag.
-     * Returns undefined when the image publishes no such label.
+     * Returns undefined when the image publishes no such label; throws when no usable manifest exists.
      */
     async getImageVersionLabel(
         image: ContainerImage,
@@ -501,9 +501,16 @@ export class Registry extends Component {
                 url: `${image.registry.url}/${image.name}/manifests/${tag}`,
                 headers: { Accept: MANIFEST_ACCEPT_HEADER },
             });
-        // schemaVersion 1 manifests carry no OCI labels
-        if (!responseManifests || responseManifests.schemaVersion !== 2) {
-            return undefined;
+        const noConfigError = new Error(
+            `manifest for [${tag}] has no image config`,
+        );
+        if (!responseManifests) {
+            throw noConfigError;
+        }
+        if (responseManifests.schemaVersion !== 2) {
+            throw new Error(
+                `manifest for [${tag}] is schema v1 and carries no labels`,
+            );
         }
 
         let configDigest = responseManifests.config?.digest;
@@ -519,7 +526,12 @@ export class Registry extends Component {
                 image,
             );
             if (!selectedManifest) {
-                return undefined;
+                const platform = [image.os, image.architecture, image.variant]
+                    .filter(Boolean)
+                    .join('/');
+                throw new Error(
+                    `no manifest for platform [${platform}] in [${tag}]`,
+                );
             }
             const childManifest =
                 await this.callRegistry<RegistryManifestResponse>({
@@ -530,7 +542,7 @@ export class Registry extends Component {
             configDigest = childManifest?.config?.digest;
         }
         if (!configDigest) {
-            return undefined;
+            throw noConfigError;
         }
 
         const configBlob = await this.callRegistry<RegistryImageConfigBlob>({

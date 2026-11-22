@@ -711,21 +711,23 @@ describe('getImageVersionLabel', () => {
         ).resolves.toBeUndefined();
     });
 
-    test('should return undefined for a schemaVersion 1 manifest without calling the blob', async () => {
+    test('should reject a schemaVersion 1 manifest without calling the blob', async () => {
         const registryMocked = buildRegistry(() => ({
             schemaVersion: 1,
             history: [{ v1Compatibility: '{}' }],
         }));
         await expect(
             registryMocked.getImageVersionLabel(buildImage(), 'stable'),
-        ).resolves.toBeUndefined();
+        ).rejects.toThrow(
+            'manifest for [stable] is schema v1 and carries no labels',
+        );
         expect(registryMocked.callRegistry).toHaveBeenCalledTimes(1);
         expect(urlsOf(registryMocked)).not.toContainEqual(
             expect.stringContaining('/blobs/'),
         );
     });
 
-    test('should return undefined when no manifest matches the platform', async () => {
+    test('should reject when no manifest matches the platform', async () => {
         const registryMocked = buildRegistry(() => ({
             schemaVersion: 2,
             mediaType: 'application/vnd.oci.image.index.v1+json',
@@ -739,11 +741,79 @@ describe('getImageVersionLabel', () => {
         }));
         await expect(
             registryMocked.getImageVersionLabel(buildImage(), 'stable'),
-        ).resolves.toBeUndefined();
+        ).rejects.toThrow('no manifest for platform [linux/amd64] in [stable]');
         expect(registryMocked.callRegistry).toHaveBeenCalledTimes(1);
         expect(urlsOf(registryMocked)).not.toContainEqual(
             expect.stringContaining('/blobs/'),
         );
+    });
+
+    test('should include the variant in the platform error', async () => {
+        const registryMocked = buildRegistry(() => ({
+            schemaVersion: 2,
+            mediaType: 'application/vnd.oci.image.index.v1+json',
+            manifests: [
+                {
+                    platform: { architecture: 'arm64', os: 'linux' },
+                    digest: 'digest_arm64',
+                    mediaType: 'application/vnd.oci.image.manifest.v1+json',
+                },
+            ],
+        }));
+        await expect(
+            registryMocked.getImageVersionLabel(
+                buildImage({ architecture: 'arm', variant: 'v7' }),
+                'stable',
+            ),
+        ).rejects.toThrow(
+            'no manifest for platform [linux/arm/v7] in [stable]',
+        );
+    });
+
+    test('should reject a single-platform manifest without a config digest', async () => {
+        const registryMocked = buildRegistry(() => ({
+            schemaVersion: 2,
+            mediaType: 'application/vnd.oci.image.manifest.v1+json',
+        }));
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).rejects.toThrow('manifest for [stable] has no image config');
+        expect(urlsOf(registryMocked)).not.toContainEqual(
+            expect.stringContaining('/blobs/'),
+        );
+    });
+
+    test('should reject when the child manifest has no config digest', async () => {
+        const registryMocked = buildRegistry((options) => {
+            if (options.url === 'url/image/manifests/stable') {
+                return {
+                    schemaVersion: 2,
+                    mediaType: 'application/vnd.oci.image.index.v1+json',
+                    manifests: [
+                        {
+                            platform: { architecture: 'amd64', os: 'linux' },
+                            digest: 'digest_amd64',
+                            mediaType:
+                                'application/vnd.oci.image.manifest.v1+json',
+                        },
+                    ],
+                };
+            }
+            return { schemaVersion: 2 };
+        });
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).rejects.toThrow('manifest for [stable] has no image config');
+        expect(urlsOf(registryMocked)).not.toContainEqual(
+            expect.stringContaining('/blobs/'),
+        );
+    });
+
+    test('should reject an empty manifest response', async () => {
+        const registryMocked = buildRegistry(() => undefined);
+        await expect(
+            registryMocked.getImageVersionLabel(buildImage(), 'stable'),
+        ).rejects.toThrow('manifest for [stable] has no image config');
     });
 
     test('should propagate a registry error', async () => {
