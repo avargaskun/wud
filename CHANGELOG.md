@@ -1,5 +1,12 @@
 # Changelog
 
+## [9.5.0](https://github.com/avargaskun/wud/compare/v9.4.3...v9.5.0) (2026-11-22)
+
+
+### Features
+
+* Add a per-container version ceiling (wud.tag.ceiling / wud.tag.ceiling.version) ([#48](https://github.com/avargaskun/wud/issues/48)) ([937401e](https://github.com/avargaskun/wud/commit/937401e316ae61fd3be55f5e0b1eacc18a6ba341))
+
 ## [9.4.3](https://github.com/avargaskun/wud/compare/v9.4.2...v9.4.3) (2026-10-25)
 
 
