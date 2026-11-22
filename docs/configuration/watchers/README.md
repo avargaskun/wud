@@ -386,6 +386,8 @@ Two mutually exclusive labels are available:
 - `wud.tag.ceiling` — **dynamic**. The name of another tag (`stable`); the version it currently points to is resolved on every watch cycle from the remote image's `org.opencontainers.image.version` OCI label.
 - `wud.tag.ceiling.version` — **static**. A full or partial semver (`2`, `2.1`, `2.1.3`). A partial value caps the whole line: `2` allows every `2.x.y`, `2.1` allows every `2.1.z`.
 
+?> A dynamic ceiling's resolved label goes through `wud.tag.transform` before it is compared, exactly like every tag candidate. A linuxserver-style label such as `7.0.3.10918-ls328` therefore works with the same transform you use for the tags (`^(\d+\.\d+\.\d+)\.\d+-ls\d+$ => $1` caps at `7.0.3`). A static `wud.tag.ceiling.version` is compared as written.
+
 <!-- tabs:start -->
 
 #### **Docker Compose**

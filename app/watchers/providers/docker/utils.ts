@@ -481,12 +481,7 @@ async function lookupCeilingLabel(
             error: `Could not resolve ceiling tag [${ceilingTag}]: image has no org.opencontainers.image.version label`,
         };
     }
-    if (!isValidCeiling(versionLabel)) {
-        return {
-            error: `Could not resolve ceiling tag [${ceilingTag}]: value [${versionLabel}] is not a valid semver`,
-        };
-    }
-    return { label: normalizeCeiling(versionLabel) };
+    return { label: versionLabel };
 }
 
 /**
@@ -520,7 +515,7 @@ export async function resolveCeiling(
             );
         }
         const version = normalizeCeiling(ceilingVersion);
-        logContainer.info(`Ceiling set to ${version}`);
+        logContainer.debug(`Ceiling set to ${version}`);
         return { ceiling: { version } };
     }
 
@@ -534,8 +529,19 @@ export async function resolveCeiling(
     if (lookup.error !== undefined) {
         return fail(lookup.error);
     }
-    const version = lookup.label as string;
-    logContainer.info(
+    const label = lookup.label as string;
+    const transformed = transformTag(container.transformTags, label);
+    if (!isValidCeiling(transformed)) {
+        const shownValue =
+            transformed === label
+                ? `[${label}]`
+                : `[${label}] (transformed to [${transformed}])`;
+        return fail(
+            `Could not resolve ceiling tag [${ceilingTag}]: value ${shownValue} is not a valid semver`,
+        );
+    }
+    const version = normalizeCeiling(transformed);
+    logContainer.debug(
         `Ceiling resolved to ${version} (from tag ${ceilingTag})`,
     );
     return { ceiling: { tag: ceilingTag, version } };

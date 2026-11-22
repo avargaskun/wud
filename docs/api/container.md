@@ -99,7 +99,7 @@ Each populated entry is an object with the following fields.
 | Field     | Description                                                                                        |
 | --------- | ---------------------------------------------------------------------------------------------------- |
 | `tag`     | The tag the ceiling was resolved from. Present in **dynamic** mode only (`wud.tag.ceiling`)         |
-| `version` | The effective ceiling — no tag above this version is reported as an update                          |
+| `version` | The effective ceiling — no tag above this version is reported as an update (after `wud.tag.transform`, in dynamic mode) |
 
 `ceiling` is **absent** when no ceiling label is set, when the label is inert (non semver tag), and when
 resolution failed — a failed resolution is reported through the container `error` field instead, and no

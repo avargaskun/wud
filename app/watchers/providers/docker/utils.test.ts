@@ -784,7 +784,163 @@ describe('Docker Watcher Utils', () => {
         beforeEach(() => {
             tag.isValidCeiling.mockImplementation(actualTag.isValidCeiling);
             tag.normalizeCeiling.mockImplementation(actualTag.normalizeCeiling);
+            tag.transform.mockImplementation(actualTag.transform);
             mockProvider = { getImageVersionLabel: jest.fn() };
+        });
+
+        describe('transform', () => {
+            const LS_SUFFIX = '^(\\d+\\.\\d+\\.\\d+)-ls\\d+$ => $1';
+            const LS_FOUR_PART = '^(\\d+\\.\\d+\\.\\d+)\\.\\d+-ls\\d+$ => $1';
+
+            const dynamicContainer = (transformTags?) => ({
+                image: { name: 'test/image', registry: { url: 'https://r' } },
+                labels: { 'wud.tag.ceiling': 'stable' },
+                transformTags,
+            });
+
+            test('should apply the container transform to a dynamic ceiling label', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '1.2.3-ls45',
+                );
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(LS_SUFFIX),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    ceiling: { tag: 'stable', version: '1.2.3' },
+                });
+            });
+
+            test('should accept a four-part label the transform turns into semver', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '7.0.3.10918-ls328',
+                );
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(LS_FOUR_PART),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    ceiling: { tag: 'stable', version: '7.0.3' },
+                });
+            });
+
+            test('should name the transformed value when a transformed label is invalid', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '7.0.3.10918-ls328',
+                );
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(`${LS_FOUR_PART}.0`),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: value [7.0.3.10918-ls328] (transformed to [7.0.3.0]) is not a valid semver',
+                });
+            });
+
+            test('should fall back to the raw label when the transform does not match', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue('1.2.3');
+                const resolution = await utils.resolveCeiling(
+                    dynamicContainer(LS_SUFFIX),
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({
+                    ceiling: { tag: 'stable', version: '1.2.3' },
+                });
+            });
+
+            test("should apply each container's own transform to a shared cached label", async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '1.2.3-ls45',
+                );
+                const cache = new Map();
+                const withTransform = await utils.resolveCeiling(
+                    dynamicContainer(LS_SUFFIX),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const withoutTransform = await utils.resolveCeiling(
+                    dynamicContainer(),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                expect(withTransform.ceiling.version).toEqual('1.2.3');
+                expect(withoutTransform.ceiling.version).toEqual('1.2.3-ls45');
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should not memoize a validation failure', async () => {
+                mockProvider.getImageVersionLabel.mockResolvedValue(
+                    '7.0.3.10918-ls328',
+                );
+                const cache = new Map();
+                const withoutTransform = await utils.resolveCeiling(
+                    dynamicContainer(),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                const withTransform = await utils.resolveCeiling(
+                    dynamicContainer(LS_FOUR_PART),
+                    mockProvider,
+                    mockLogContainer,
+                    cache,
+                );
+                expect(withoutTransform).toEqual({
+                    error: 'Could not resolve ceiling tag [stable]: value [7.0.3.10918-ls328] is not a valid semver',
+                });
+                expect(withTransform).toEqual({
+                    ceiling: { tag: 'stable', version: '7.0.3' },
+                });
+                expect(mockProvider.getImageVersionLabel).toHaveBeenCalledTimes(
+                    1,
+                );
+            });
+
+            test('should not transform a static ceiling', async () => {
+                const resolution = await utils.resolveCeiling(
+                    {
+                        image: { name: 'test/image' },
+                        labels: { 'wud.tag.ceiling.version': '2.1' },
+                        transformTags: '^(\\d+)\\.(\\d+)$ => $2',
+                    },
+                    mockProvider,
+                    mockLogContainer,
+                );
+                expect(resolution).toEqual({ ceiling: { version: '2.1' } });
+            });
+        });
+
+        test('should log a resolved ceiling at debug', async () => {
+            mockProvider.getImageVersionLabel.mockResolvedValue('2.37.9');
+            await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling': 'stable' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(mockLogContainer.debug).toHaveBeenCalledWith(
+                'Ceiling resolved to 2.37.9 (from tag stable)',
+            );
+            expect(mockLogContainer.info).not.toHaveBeenCalled();
+        });
+
+        test('should log a static ceiling at debug', async () => {
+            await utils.resolveCeiling(
+                containerWithLabels({ 'wud.tag.ceiling.version': '2.1' }),
+                mockProvider,
+                mockLogContainer,
+            );
+            expect(mockLogContainer.debug).toHaveBeenCalledWith(
+                'Ceiling set to 2.1',
+            );
+            expect(mockLogContainer.info).not.toHaveBeenCalled();
         });
 
         test('should return an empty resolution when no ceiling label is set', async () => {
@@ -835,9 +991,6 @@ describe('Docker Watcher Utils', () => {
             );
             expect(resolution).toEqual({ ceiling: { version: '2.1' } });
             expect(mockProvider.getImageVersionLabel).not.toHaveBeenCalled();
-            expect(mockLogContainer.info).toHaveBeenCalledWith(
-                'Ceiling set to 2.1',
-            );
         });
 
         test('should resolve a dynamic ceiling from the image version label', async () => {
@@ -856,9 +1009,6 @@ describe('Docker Watcher Utils', () => {
             expect(mockProvider.getImageVersionLabel).toHaveBeenCalledWith(
                 container.image,
                 'stable',
-            );
-            expect(mockLogContainer.info).toHaveBeenCalledWith(
-                'Ceiling resolved to 2.37.9 (from tag stable)',
             );
         });
 
@@ -1172,7 +1322,7 @@ describe('Docker Watcher Utils', () => {
                 expect(
                     mockProvider.getImageVersionLabel,
                 ).not.toHaveBeenCalled();
-                expect(mockLogContainer.info).toHaveBeenCalledTimes(2);
+                expect(mockLogContainer.debug).toHaveBeenCalledTimes(2);
             });
         });
     });
