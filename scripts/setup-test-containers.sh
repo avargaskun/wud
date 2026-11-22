@@ -165,6 +165,16 @@ else
         --label 'wud.tag.include=^6\.\d+\.\d+$' \
         --label 'wud.tag.ceiling.version=6.0' \
         ghcr.io/stefanprodan/podinfo:6.0.0
+    $DOCKER_CMD run -d --pull=never --name zz_ceiling_dynamic \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.\d+\.\d+$' \
+        --label 'wud.tag.ceiling=6.1.0' \
+        ghcr.io/stefanprodan/podinfo:6.0.0
+    $DOCKER_CMD run -d --pull=never --name zz_ceiling_unresolvable \
+        --label 'wud.watch=true' \
+        --label 'wud.tag.include=^6\.\d+\.\d+$' \
+        --label 'wud.tag.ceiling=does-not-exist' \
+        ghcr.io/stefanprodan/podinfo:6.0.0
 
     # DIGEST-ONLY THRESHOLD: digest threshold must not suppress major/minor/patch reporting
     $DOCKER_CMD run -d --pull=never --name zz_digest_threshold \
@@ -232,7 +242,7 @@ else
         ghcr.io/stefanprodan/podinfo:5.0.0
     $DOCKER_CMD rm -f zz_atomic_donor
 
-    echo "✅ Test containers started (26 containers)"
+    echo "✅ Test containers started (28 containers)"
     $DOCKER_CMD ps --format "table {{.Names}}	{{.Image}}	{{.Status}}" | grep -E "(ecr_|ghcr_|gitlab_|hub_|lscr_|quay_|trueforge_|zz_atomic_|zz_batch_|zz_bucket_|zz_ceiling_|zz_compose_|zz_mirror_|zz_mv_|zz_postupdate_)"
 fi
 

@@ -22,3 +22,28 @@ Feature: WUD Tag Ceiling
     When I GET /metrics
     Then response code should be 200
     And response body should contain name="zz_ceiling_static"
+
+  # Pinned podinfo tags publish org.opencontainers.image.version equal to the tag, so 6.1.0 is a stable ceiling tag.
+  Scenario: WUD must cap tag candidates with a dynamic ceiling resolved from the registry
+    When I find the container with name "zz_ceiling_dynamic" and save its ID as "CID", version as "CV", and name as "CN"
+    And I resolve the latest version for image "stefanprodan/podinfo" on registry "ghcr.public" with strategy "dynamic" and pattern "^6\.0\.\d+$" and value "" as "EXPECTED_PATCH_TAG"
+    And I GET /api/containers/`CID`
+    Then response code should be 200
+    And response body should be valid json
+    And response body path $.ceiling.tag should be ^6\.1\.0$
+    And response body path $.ceiling.version should be ^6\.1\.0$
+    And response body path $.updates.minor.remoteValue should be ^6\.1\.0$
+    And response body path $.updates.patch.remoteValue should equal variable "EXPECTED_PATCH_TAG"
+    And response body path $.updates.major must be exactly null
+    And response body path $.error must be absent
+
+  Scenario: WUD must fail closed when a dynamic ceiling cannot be resolved
+    When I find the container with name "zz_ceiling_unresolvable" and save its ID as "CID", version as "CV", and name as "CN"
+    And I GET /api/containers/`CID`
+    Then response code should be 200
+    And response body should be valid json
+    And response body path $.error.message should be ^Could not resolve ceiling tag \[does-not-exist\]:
+    And response body path $.ceiling must be absent
+    And response body path $.updates.patch must be exactly null
+    And response body path $.updates.minor must be exactly null
+    And response body path $.updates.major must be exactly null
